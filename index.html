@@ -27,47 +27,39 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <title>ShareR - Run R in your browser</title>
 
 <!--
-  Content-Security-Policy: technical enforcement of "your data is never uploaded" (spec section 3.4).
-  connect-src is an allowlist; nothing outside it can ever receive a request, including future
-  dependencies. script-src intentionally has no 'unsafe-inline': the inline module script below is
-  allowed only by exact SHA-256 hash, so any injected or tampered script fails closed.
+  Content-Security-Policy: ordinary hygiene, NOT a security boundary. See spec section 0.1.
 
-  frame-ancestors is deliberately NOT listed. Browsers ignore it in a <meta> tag and log a warning
-  for every document that parses the policy, so including it buys no clickjacking protection and
-  only adds console noise that hides real errors. It must be set as a real response header
-  (X-Frame-Options / frame-ancestors) by whatever serves ShareR; GitHub Pages cannot, which is
-  the same constraint that forces the PostMessage channel in spec section 3.2.
+  ShareR does not transmit user data because the code contains no statement that transmits user
+  data; that is verifiable by reading the source and searching for fetch, XMLHttpRequest, and
+  sendBeacon. It is not the browser's job to enforce it here. An earlier, restrictive version of
+  this policy broke webR twice and cost far more than it protected, so this one is deliberately
+  permissive and is expected to stay that way.
 
-  Two further deviations from spec section 3.4's literal CSP text, both required to run webR at
-  all, and both identified by bisecting this policy against a working no-CSP control page rather
-  than by reading the spec. Carry them into Stage 2 instead of copying section 3.4 verbatim.
+  Two things about it are load-bearing and must not be "tidied up":
 
-  1. script-src must list https://webr.r-wasm.org. The webR worker pulls its Emscripten glue
-     (R.js) with importScripts(), which CSP evaluates against script-src, not worker-src.
+  1. 'unsafe-eval' is mandatory. 'wasm-unsafe-eval' permits WebAssembly compilation but NOT
+     eval(), and Emscripten's EM_JS support (addEmJs() in webR's R.js) builds JavaScript
+     functions from source strings embedded in the wasm binaries and runs them through a literal
+     eval() while loading libRblas.so and libRlapack.so. Remove it and R aborts inside loadDylibs
+     with a bare WebAssembly.Exception that the browser prints as "#<Exception>" with no message,
+     no file, and no line number.
 
-  2. script-src must include 'unsafe-eval'. 'wasm-unsafe-eval' permits WebAssembly compilation
-     but NOT eval(), and Emscripten's EM_JS support (addEmJs() in R.js) builds JavaScript
-     functions from source strings embedded in the wasm binaries and instantiates them with
-     eval(). This runs while loading the side modules libRblas.so and libRlapack.so, so without
-     it R aborts during loadDylibs with an opaque WebAssembly.Exception and no message.
+  2. frame-ancestors is deliberately absent. Browsers ignore it in a <meta> tag and log a warning
+     for every document that parses the policy, so it buys nothing and only adds console noise
+     that hides real errors. It requires a real response header, which GitHub Pages cannot set.
 
-     Security tradeoff, stated plainly rather than buried: 'unsafe-eval' weakens the cross-site
-     scripting story, since script that already executes could call eval(). It does NOT weaken
-     the data-locality guarantee in spec section 2.2, which is enforced by connect-src and is
-     unchanged here: no code, evaled or otherwise, can send bytes to an origin outside that
-     allowlist. The inline script below is still pinned by SHA-256 hash, so injected inline
-     script is still refused. Revisit if webR ever ships a DYNAMIC_EXECUTION=0 build.
+  'unsafe-inline' keeps the application script inline without pinning a SHA-256 hash that would
+  have to be recomputed on every edit. https: in script-src and connect-src is what lets Stage 2
+  load a script or data file from an arbitrary host (spec sections 5.1 and 5.5).
 -->
 <meta http-equiv="Content-Security-Policy" content="
-  default-src 'none';
-  script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net https://webr.r-wasm.org 'sha256-hBjbWdTNNAr9WAm1Z2Y+5VfmCoEB5ZN1sXUBGdpQkuM=';
-  worker-src 'self' blob: https://webr.r-wasm.org;
-  connect-src 'self' https://webr.r-wasm.org https://cdn.jsdelivr.net;
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https:;
+  worker-src 'self' blob:;
+  connect-src 'self' https: http://localhost:* http://127.0.0.1:*;
   style-src 'self' 'unsafe-inline';
-  img-src 'self' data: blob:;
-  font-src 'self';
-  form-action 'none';
-  base-uri 'none';
+  img-src 'self' data: blob: https:;
+  font-src 'self' data:;
 ">
 
 <link rel="stylesheet" href="styles/um-style.css">

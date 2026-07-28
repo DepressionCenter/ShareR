@@ -46,7 +46,20 @@ Three mature tools already run R in the browser via WebAssembly. This section re
 | **quarto-live / quarto-webr** | Embeds runnable R chunks in a rendered Quarto page. | Requires a Quarto build step per document, and the document must be authored for it. Reading a foreign repository at runtime is out of scope. |
 | **webR REPL** (`webr.sh`) | Interactive R console in the browser. | No repository sync, no data upload workflow, no report output, no packaging of results. |
 
-**ShareR's distinct claim:** point a URL at an *unmodified* GitHub repository containing plain `.R` or `.Rmd` files and run it against the visitor's own local data files, with zero build step on either side. Nobody has to install R, Quarto, or Node, and the script author does not have to change a single line of their analysis. Notably, ShareR is and will remain open source under a GPLv3 or later license.
+**ShareR's distinct claim:** point a URL at an *unmodified* GitHub repository, or at a single `.R`/`.Rmd` file hosted anywhere that allows cross-origin reads, and run it against data files that are either supplied by URL or opened locally by the visitor, with zero build step on either side. Nobody has to install R, Quarto, or Node, and the script author does not have to change a single line of their analysis. Notably, ShareR is and will remain open source under a GPLv3 or later license.
+
+### 0.1 Design principle: keep it simple
+
+**This is the highest-priority instruction in this document. Where any other section conflicts with it, simplicity wins and that section should be corrected.**
+
+Version 1 of this specification over-engineered several areas, and building it that way cost real time without protecting anyone. The corrections are recorded here rather than quietly applied, so the reasoning is not lost and the mistakes are not reintroduced:
+
+- **Do not treat the Content Security Policy as a privacy control.** An earlier draft claimed data locality was "enforced technically by a CSP `connect-src` allowlist, not by convention," and required a strict allowlist plus a SHA-256 hash pinning the inline script. In practice that policy silently broke webR twice, produced an error with no message, and consumed most of a working session. ShareR does not send user data anywhere because *the code does not contain any statement that sends user data anywhere*. That is the actual guarantee and it is a promise about the code, verifiable by reading it. Ship a permissive CSP as ordinary hygiene, not as a security boundary.
+- **Prefer the browser's own machinery over hand-built machinery.** Version-pinned engine URLs are immutable, so the ordinary HTTP cache already handles caching correctly; a bespoke service worker with version-keyed buckets is not needed to get that. Similarly, `webR.installPackages()` already resolves dependencies; ShareR does not need to reimplement dependency-closure resolution in JavaScript.
+- **Do not build defenses for threats this application does not face.** ShareR is a static page with no server, no accounts, no secrets, and no stored state. Subresource Integrity hashes, trust interstitials, and elaborate manifest bookkeeping add maintenance burden and failure modes disproportionate to that threat model.
+- **Write the smallest thing that solves the researcher's problem.** The measure of success is a researcher running their analysis, not the number of controls implemented.
+
+What is genuinely non-negotiable, and must not be simplified away, is short: **accessibility** (WCAG 2.2 AA, per `AGENTS.md` section 9), **not sending user data anywhere**, **sanitizing author-supplied HTML before rendering it** (a real and easily triggered cross-site scripting path, section 8.3), **rejecting path traversal in file paths** (cheap, section 5.2), and **never claiming compliance ShareR does not have** (section 2.3).
 
 
 ---
@@ -80,7 +93,7 @@ A static single-page application that executes R and R Markdown entirely inside 
 
 ### 2.2 Hard constraints
 
-- **Data locality.** Files the user supplies never leave the browser. There are no outbound requests carrying user data of any kind: no POST, no PUT, no beacon, no query-string payload, no analytics. This is enforced technically by a Content Security Policy `connect-src` allowlist (section 3.4), not by convention.
+- **Data locality.** Files the user supplies never leave the browser. There are no outbound requests carrying user data of any kind: no POST, no PUT, no beacon, no query-string payload, no analytics. This holds because no such code is written: every network request ShareR makes is a GET that *fetches* a script, a data file, or an R package, and none of them carry the contents of anything the user opened. It is a property of the source, and a reviewer can confirm it by searching for `fetch`, `XMLHttpRequest`, and `sendBeacon`. Keep it that way, and keep the request surface small enough that this remains easy to check.
 - **Static hosting only.** The deployed artifact is a folder of static files. It works on GitHub Pages, on a file share, or from ZippyServe on a laptop.
 - **Zero pre-compilation of user content.** ShareR reads raw `.R` and `.Rmd` text at runtime. There is no per-script build step, no export command, and no manifest the script author has to write.
 - **Single-page behavior.** All state transitions (setup, running, results, modals) happen in place through JavaScript. No full page navigation after load.
@@ -113,7 +126,7 @@ A static single-page application that executes R and R Markdown entirely inside 
 | Markdown rendering | `marked` plus `DOMPurify` | `.Rmd` prose contains author-supplied HTML. Sanitize it. |
 | Archiving | `fflate` | Small, fast, streaming, actively maintained. |
 | Repository listing | GitHub Git Trees API | One request per run. Section 6. |
-| Caching | Service Worker plus Cache Storage, version-keyed | Section 4. |
+| Caching | The browser's ordinary HTTP cache; no service worker | Section 4. |
 
 ### 3.2 The communication channel decision
 
@@ -140,7 +153,7 @@ The known workaround (`coi-serviceworker`, which synthesizes the COOP and COEP h
 
 1. Under `require-corp`, every cross-origin subresource must carry a `Cross-Origin-Resource-Policy` header. Neither `webr.r-wasm.org` nor `repo.r-wasm.org` guarantees one, so enabling isolation can break the very downloads it is meant to accelerate.
 2. The `credentialless` COEP variant avoids that, but Safari does not support it, so the app would behave differently per browser. Institutionally managed browsers are a hard constraint for this audience.
-3. It forces a page reload on first visit and it collides with the caching service worker in section 4.
+3. It forces a page reload on first visit, and a service worker is otherwise unnecessary in this design (section 4).
 
 **Consequence, and its mitigation.** Because `webR.interrupt()` does nothing on the `PostMessage` channel, the Stop button cannot interrupt R. Implement Stop as terminate and restart:
 
@@ -167,12 +180,11 @@ Verified against `webr@0.6.0` type definitions. Use these names exactly.
 
 ### 3.4 File layout and Content Security Policy
 
-A service worker must be a separate same-origin file at or above the scope it controls, so the application cannot be a literally single file. Target layout:
+Target layout. Everything is optional except `index.html`, `styles/`, and the license files:
 
 ```
 ShareR/
-  index.html            # the SPA: markup, CONFIG, all application JS and inline CSS hooks
-  sw.js                 # caching service worker (separate file; scope = ./)
+  index.html            # the whole application: markup, CONFIG, CSS, and JS
   .nojekyll
   AGENTS.md
   README.md
@@ -182,57 +194,45 @@ ShareR/
   styles/
     um-style.css        # shared UM navy and maize styles
   images/
-    ShareR-logo-wide.png
-    ShareR-preview.png
   docs/
-    ShareR-Technical-Specification-v1.md
+    ShareR-Technical-Specification.md
     quick-start.md
-    architecture.md
-    dependencies.md     # pinned versions and SRI hashes, section 3.6
-    security-privacy-accessibility.md
   bin/                  # ZippyServe binaries, copied from DepressionCenter/ZippyServe
   run-windows.ps1
   run-linux.sh
   run-mac.command
 ```
 
-Ship this CSP as a `<meta http-equiv="Content-Security-Policy">` in `index.html`. This is the technical enforcement of section 2.2:
+**The Content Security Policy is hygiene, not a security boundary. Keep it permissive.** Per section 0.1, do not use it to enforce data locality; that guarantee comes from the code containing no upload path, not from the browser refusing one. A restrictive policy here has already cost more than it protected.
+
+Ship exactly this as a `<meta http-equiv="Content-Security-Policy">` in `index.html`:
 
 ```
-default-src 'none';
-script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'
-           https://cdn.jsdelivr.net https://webr.r-wasm.org;
-worker-src 'self' blob: https://webr.r-wasm.org;
-connect-src 'self' https://webr.r-wasm.org https://repo.r-wasm.org
-            https://cdn.jsdelivr.net
-            https://api.github.com https://raw.githubusercontent.com;
+default-src 'self';
+script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https:;
+worker-src 'self' blob:;
+connect-src 'self' https: http://localhost:* http://127.0.0.1:*;
 style-src 'self' 'unsafe-inline';
-img-src 'self' data: blob:;
-font-src 'self';
-form-action 'none';
-base-uri 'none';
+img-src 'self' data: blob: https:;
+font-src 'self' data:;
 ```
 
-`connect-src` is an allowlist of five origins that receive only GET requests. Any code path, including a future dependency, that attempts to send data anywhere else fails at the browser level. Say so explicitly in the security documentation, because it is the strongest privacy claim ShareR can honestly make.
+Notes, each of which is a fact established by testing rather than a preference:
 
-**Three corrections to an earlier draft of this policy, all established empirically during the Stage 1 proof of concept by bisecting the policy against a working no-CSP control page.** A CSP that omits any of them does not merely warn; the first two prevent R from starting at all, and the failure is silent and extremely hard to read.
+- **`'unsafe-eval'` is mandatory and is not negotiable.** `'wasm-unsafe-eval'` permits WebAssembly compilation but **not** `eval()`, and Emscripten's `EM_JS` support (`addEmJs()` inside webR's `R.js`) builds JavaScript functions from source strings embedded in the wasm binaries and runs them through a literal `eval()` while loading the side modules `libRblas.so` and `libRlapack.so`. Omit it and R aborts inside `loadDylibs` throwing a bare `WebAssembly.Exception`, which browsers render as `#<Exception>` with **no message, no file, and no line number**. If webR ever fails to start with an unreadable error, check this first.
+- **`'unsafe-inline'` in `script-src` is deliberate.** It keeps the application script inline in `index.html` without pinning a SHA-256 hash that must be recomputed on every single edit. That hash was pure friction with no benefit at this threat model.
+- **`connect-src https:`** lets ShareR load a script or data file from any HTTPS host that permits it, which is required by sections 5.1 and 7. Note that CORS, not CSP, is the real constraint here; see section 5.5.
+- **`http://localhost:*` and `http://127.0.0.1:*`** are included so local testing against a ZippyServe instance works without editing the policy.
+- **Do not add `frame-ancestors`.** Browsers ignore it in a `<meta>` tag and log a warning for every document that parses the policy, so it provides no protection and only adds console noise that hides real errors. It requires a real response header, which GitHub Pages cannot set.
 
-1. **`script-src` must list `https://webr.r-wasm.org`.** The webR worker loads its Emscripten glue (`R.js`) with `importScripts()`, which CSP evaluates against `script-src` (falling back from an unset `script-src-elem`), **not** `worker-src`. Without it the console reports a blocked script load and engine startup hangs forever.
-
-2. **`script-src` must include `'unsafe-eval'`.** This is the non-obvious one. `'wasm-unsafe-eval'` permits WebAssembly compilation but **not** `eval()`, and Emscripten's `EM_JS` support (`addEmJs()` inside `R.js`) constructs JavaScript functions from source strings embedded in the wasm binaries and instantiates them with a literal `eval()`. That code path runs while loading the side modules `libRblas.so` and `libRlapack.so`, so without `'unsafe-eval'` R aborts inside `loadDylibs` and throws a bare `WebAssembly.Exception`, which browsers render as `#<Exception>` with **no message, no file, and no line number**. Budget for this: the symptom is indistinguishable from a network failure and is easy to misdiagnose as one.
-
-   State the tradeoff honestly in the security documentation rather than burying it. `'unsafe-eval'` weakens the cross-site-scripting posture, because script that already executes can call `eval()`. It does **not** weaken the data-locality guarantee in section 2.2, which is enforced by `connect-src` and is unchanged: no code, evaled or otherwise, can transmit bytes to an origin outside the allowlist. Keep the inline application script pinned by SHA-256 hash so injected inline script is still refused, and revisit this if webR ever ships a `DYNAMIC_EXECUTION=0` build.
-
-3. **Do not put `frame-ancestors` in the `<meta>` policy.** Browsers ignore it when delivered that way and log a warning for every document that parses the policy, so it provides zero clickjacking protection while adding console noise that masks real errors. Clickjacking protection must come from a real response header (`Content-Security-Policy: frame-ancestors` or `X-Frame-Options`) set by whatever serves ShareR. GitHub Pages cannot set it, which is the same limitation that forces the `PostMessage` channel in section 3.2. Document the residual risk instead of pretending the directive is active.
+**Two webR console messages are expected and benign.** Recorded here so they are not investigated again: `Refused to get unsafe header "Content-Encoding"` (Emscripten's lazy-file loader probing for gzip; verified harmless because those files are served uncompressed with an accurate `Content-Length`), and ``WebR is using `PostMessage` communication channel, nested R REPLs are not available.`` (the intended tradeoff from section 3.2).
 
 **Two console messages are expected and benign.** Record them here so future maintainers do not re-investigate what has already been chased down:
 
 - `Refused to get unsafe header "Content-Encoding"`, emitted by `R.js`. Emscripten's lazy-file loader probes that header to detect gzip, and CORS does not expose it cross-origin. Verified harmless: the lazily loaded files are served uncompressed and their `Content-Length` equals their true byte length, so the size arithmetic the loader actually depends on is correct.
 - ``WebR is using `PostMessage` communication channel, nested R REPLs are not available.`` This is the documented and intended tradeoff from section 3.2.
 
-Pin `script-src` to the single CDN actually used. Do not use a wildcard and do not list several CDNs "just in case"; each additional origin is an additional origin that could serve executable code into the page.
-
-If `CONFIG.SELF_HOST_WEBR` is enabled, drop `webr.r-wasm.org` from the policy.
+An earlier draft required pinning `script-src` to a single CDN and warned against wildcards. That instruction is withdrawn: it is inconsistent with `connect-src https:`, which sections 5.1 and 5.5 require so that a script or data file can be loaded from an arbitrary host, and it was premised on treating the policy as a security boundary, which section 0.1 rejects.
 
 ### 3.5 Reproducibility: pin everything
 
@@ -242,79 +242,53 @@ Research code that produces different numbers on different days is a defect. Pin
 - `WEBR_REPO_URL`, and the R minor version its package index is built for.
 - Every JavaScript library version, as an exact version in the URL. Never `@latest`, never a range.
 
-Every run emits `run-manifest.json` into the results ZIP (section 10.4) recording the ShareR version, webR version, R version from `R.version.string`, the resolved repository commit SHA, the entry file path, the SHA-256 of every input file, the installed package name and version list, wall-clock duration, and per-chunk status. This is what makes an in-browser run defensible in a methods section.
+Every run emits a small `run-manifest.json` into the results ZIP (section 10.4). Keep it to what a methods section actually needs: the ShareR version, the webR version, the R version from `R.version.string`, the resolved commit SHA when a repository was used, the entry file and where it came from, the list of staged input files with their sources, the installed packages, the wall-clock duration, and per-chunk status. Computing a SHA-256 of every input file was specified in an earlier draft and is dropped per section 0.1.
 
-### 3.6 JavaScript dependencies: pinned CDN with Subresource Integrity
+### 3.6 JavaScript dependencies: pinned CDN
 
-Load `js-yaml`, `marked`, `DOMPurify`, and `fflate` from a single pinned CDN. Every tag carries an exact version, an `integrity` attribute, and `crossorigin="anonymous"`:
+Load `js-yaml`, `marked`, `DOMPurify`, and `fflate` from a single pinned CDN:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
-        integrity="sha384-REPLACE_WITH_ACTUAL_HASH"
-        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
 ```
 
-Rules:
+Rules, now just two:
 
-- **Exact versions only.** `@4.1.0`, never `@4`, never `@latest`. A floating version silently changes the code running against participant data.
-- **`integrity` is mandatory.** Without it, CDN sourcing is a real integrity gap. With it, the browser refuses to execute any file whose hash does not match, so a compromised or swapped CDN asset fails closed instead of running. This is what makes the CDN approach equivalent in integrity to a local copy.
-- **`crossorigin="anonymous"` is mandatory**, because SRI validation requires a CORS-enabled response.
-- **Generate the hashes; do not copy them from a web page.** For each pinned URL:
+- **Exact versions only.** `@4.1.0`, never `@4`, never `@latest`. A floating version silently changes the code running against participant data, which is a reproducibility problem, and it costs nothing to avoid.
+- **Fail loudly.** If a library does not load, show an error naming that specific library and disable Run, rather than letting the page break in a confusing way later. Detect it by checking for the expected global (`jsyaml`, `marked`, `DOMPurify`, `fflate`) after load, which is more reliable than an `onerror` handler.
 
-  ```
-  curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
-  ```
+**Subresource Integrity hashes were specified in an earlier draft and are deliberately dropped**, per section 0.1. They require regenerating a hash on every version bump, a stale one breaks the whole page at load time, and they defend against a compromised jsDelivr, which is not a threat this static research tool meaningfully faces. Pin the versions and move on.
 
-  Prefix the result with `sha384-`.
-- **Record every pin in `docs/dependencies.md`**: library name, exact version, full URL, SRI hash, license, and upstream project URL. Regenerate and update that file in the same commit as any version bump. A version bump with a stale hash is a hard failure at load time, which is the intended behavior.
-- **Fail loudly.** If a library fails to load, whether from an outage or an integrity mismatch, show a specific error naming the library rather than a generic broken page, and disable Run. Detect this by checking for the expected global (`jsyaml`, `marked`, `DOMPurify`, `fflate`) after load rather than relying on `onerror` alone.
-
-The webR core also loads from its own pinned CDN URL. It is a large multi-file WebAssembly distribution loaded by webR's own loader rather than a single script tag, so SRI does not apply to it; version pinning plus the service worker cache is the integrity and stability story there.
+The webR core also loads from its own pinned CDN URL, using webR's own multi-file loader rather than a single script tag.
 
 **Which webR artifact to import, verified against the live registry and CDN during Stage 1.** Two easy mistakes here each cost a debugging cycle:
 
 - **The npm package is `webr`, not `@r-wasm/webr`.** The scoped package was renamed and is now deprecated upstream; it is frozen at `0.2.0` and will never carry a current release. Resolve versions against `webr`.
 - **Import `dist/webr.js`, not `dist/webr.mjs`.** The `.mjs` file is the bundler-target ESM build and carries a static top-level `import { createRequire } from 'module'`. A browser cannot resolve the bare Node builtin `module`, so importing it fails immediately with `Failed to resolve module specifier "module"`. `dist/webr.js` is the package's `browser` exports-condition build and has no Node-only bare specifiers. Note that `dist/webr.js` was introduced in `0.6.0`; earlier releases such as `0.5.4` ship only `.mjs`/`.cjs` and therefore cannot be loaded directly in a browser from a CDN. This is an additional reason the pin cannot drift backwards.
 
-At the pinned `WEBR_VERSION` of `0.6.0`, webR reports R **4.6.0**, and its own built-in default `baseUrl` is already `https://webr.r-wasm.org/v0.6.0/`. Set `WEBR_BASE_URL` explicitly anyway, per section 3.5, so a webR upgrade cannot silently move the engine URL. Use the R version to key the package cache bucket described in section 4.2, and read it at runtime rather than hard-coding it.
+At the pinned `WEBR_VERSION` of `0.6.0`, webR reports R **4.6.0**, and its own built-in default `baseUrl` is already `https://webr.r-wasm.org/v0.6.0/`. Set `WEBR_BASE_URL` explicitly anyway, per section 3.5, so a webR upgrade cannot silently move the engine URL.
 
-Licensing note, which is the reason for this approach as much as integrity is: linking to a CDN-hosted library is not redistribution, so ShareR does not take on the notice-preservation and file-level obligations that shipping copies of Apache-2.0, MPL-2.0, and MIT files in a GPLv3 repository would create. Attribution in the README remains appropriate and is done regardless. If a future requirement forces genuinely offline operation and the libraries must be served from the repository, revisit those obligations deliberately at that point. webR itself is GPL-3, which composes cleanly with ShareR's own GPLv3 licensing should self-hosting ever be enabled.
+Licensing note, which is the main reason for the CDN approach: linking to a CDN-hosted library is not redistribution, so ShareR does not take on the notice-preservation and file-level obligations that shipping copies of Apache-2.0, MPL-2.0, and MIT files in a GPLv3 repository would create. Attribution in the README remains appropriate and is done regardless. If a future requirement forces genuinely offline operation and the libraries must be served from the repository, revisit those obligations deliberately at that point. webR itself is GPL-3, which composes cleanly with ShareR's own GPLv3 licensing should self-hosting ever be enabled.
 
 ---
 
 ## 4. Caching
 
-### 4.1 No time-to-live
+**There is no service worker and no Cache Storage bookkeeping.** An earlier draft specified a custom caching worker with version-keyed buckets and an invalidation lifecycle. Per section 0.1 that is dropped, because the browser already does the job:
 
-With `WEBR_VERSION` pinned per section 3.5, every engine URL is immutable, and package binary URLs under `repo.r-wasm.org/bin/emscripten/contrib/<Rver>/` are likewise versioned. A time-based cache expiry would therefore force a periodic multi-tens-of-megabyte re-download that can only ever return byte-identical content, and, worse, it would open the possibility that two runs a week apart use different engine builds. That defeats section 3.5. Cache by version, not by clock.
+- Every engine URL is immutable, since `WEBR_VERSION` is pinned (section 3.5) and package binaries live under versioned `repo.r-wasm.org` paths. Those hosts serve long `Cache-Control` lifetimes, so the ordinary HTTP cache makes the second run fast without any code from us.
+- Bumping `WEBR_VERSION` changes every URL, so cache invalidation is automatic and needs no `activate` handler deleting stale buckets.
+- Removing the service worker also removes a class of bug that is genuinely nasty to diagnose: a worker updating mid-run while R is streaming output.
 
-### 4.2 Design
+Tell the user what to expect instead of managing it for them: state in the UI that the first run downloads roughly N MB and later runs reuse the browser cache. If a researcher on a managed laptop needs to reclaim that space, the browser's own "clear site data" is the correct tool and it already exists.
 
-- Cache Storage bucket names embed the pinned versions: `sharer-webr-v<WEBR_VERSION>` and `sharer-pkgs-v<R_MINOR>`.
-- The service worker serves **cache-first with no revalidation** for any URL whose origin is in `CONFIG.CACHEABLE_ORIGINS`.
-- Upgrading `WEBR_VERSION` in `CONFIG` changes the bucket name. On `activate`, the worker deletes every `sharer-*` bucket not in the current expected set. That is the whole invalidation story: no timestamps, no IndexedDB bookkeeping, no expiry logic.
-- The app shell (`index.html`, `sw.js`, `styles/`) uses **network-first with cache fallback**, so a redeploy is picked up immediately and the app still opens when offline.
-- CDN library URLs are cache-first as well, keyed by the exact pinned URL. Because SRI validates them on every load, a cached copy that has been tampered with still fails closed.
+Provide a small **Diagnostics** panel, because it makes support tickets answerable:
 
-### 4.3 Cache transparency
+- The pinned webR version and the R version reported by `R.version.string`.
+- The active communication channel and whether `crossOriginIsolated` is true.
+- Approximate storage in use via `navigator.storage.estimate()`, displayed for information only.
 
-Researchers on managed laptops with small disks need to see and control this. Provide a Diagnostics panel with:
-
-- Estimated cache use via `navigator.storage.estimate()`, displayed as "ShareR has cached about N MB of the R engine and packages."
-- A "Clear cached R engine and packages" button that deletes all `sharer-*` buckets.
-- `navigator.storage.persist()` called at startup, so the browser is less likely to silently evict a large package cache mid-session, with the returned boolean shown.
-- The active communication channel (`SharedArrayBuffer` or `PostMessage`) and whether `crossOriginIsolated` is true.
-- The pinned webR version, R version, and the resolved library versions.
-
-### 4.4 Service worker lifecycle
-
-Register with a relative URL so GitHub Pages project sites, served from `/ShareR/`, get the correct scope:
-
-```js
-navigator.serviceWorker.register('./sw.js', { scope: './' });
-```
-
-Use `skipWaiting()` plus `clients.claim()` only on explicit user action ("Update available. Reload to apply."), never automatically mid-run. Swapping the worker while R is streaming output is a real way to corrupt a session. If registration fails, for example in private browsing, with workers disabled, or over `file://`, the app must still work with HTTP caching only. Log the degradation to Diagnostics; do not block startup.
+Offline operation is explicitly not a goal (section 16).
 
 ---
 
@@ -324,49 +298,127 @@ Use `skipWaiting()` plus `clients.claim()` only on explicit user action ("Update
 
 | Parameter | Example | Default |
 | --- | --- | --- |
-| `repo` | `DepressionCenter/EMA-CleanR` | none; absent means upload mode |
+| `entry` | `EMA-CleanR.rmd`, or a full `https://` URL to a single `.R`/`.Rmd` file | auto-detected, section 5.3 |
+| `script` | alias for `entry` | |
+| `data` | one or more files **or directories**, as URLs or repo-relative paths, comma separated or repeated | none |
+| `repo` | `DepressionCenter/EMA-CleanR` | none |
 | `ref` | `main`, `v1.2.0`, or a 40-character SHA | repository default branch |
-| `branch` | alias for `ref`, accepted for convenience | |
-| `entry` | `EMA-CleanR.rmd` | auto-detected, section 5.3 |
-| `autorun` | `1` | `0`. When `1`, run immediately after preflight passes. |
-| `script` | `EMA-CleanR.rmd` | alias for `entry`, so also auto-detected, section 5.3 |
+| `branch` | alias for `ref` | |
+| `packages` | `dplyr,ggplot2,table1` | added to the packages detected by scanning, section 9.1 |
+| `repos` | `https://myorg.r-universe.dev` | additional package repositories, comma separated |
+| `autorun` | `1` | `0`. When `1`, run immediately once files are staged. |
 
-+ The `repo` parameter should support full github URLs (e.g. https://github.com/DepressionCenter/ShareR with or without trailing slash), @ name references plus repo name (@DepressionCenter/ShareR - simply ignore the `@` symbol), or simply the owner plus repo name (DepressionCenter/ShareR).
-+ The `entry` paramter should support URLs to R and Rmd files hosted over plain HTTP/HTTPS, over a localhost web server, and simple file names or relative file path+file name to load from a repo.
-+ The `script` parameter is an alias for the `entry` parameter, and users can use either one. The code will internally change `script` to `entry` (or use only `entry` if both are provided and both are non-empty).
+**Every configurable thing is a URL parameter.** ShareR never reads a config file from the researcher's repository; see section 5.3 for why that rule is absolute.
+
+**`entry` accepts three forms**, and which one is in use is decided by inspecting the value, not by a separate mode flag:
+
+1. A **full `http://` or `https://` URL** to a single `.R` or `.Rmd` file, hosted anywhere that permits cross-origin reads: GitHub Pages, an institutional web server, a localhost test server, or any similar host. This is the "one file, no repository" path and it must work without `repo` being present at all.
+2. A **repo-relative path** such as `analysis/clean.Rmd`, resolved against `repo` (section 6).
+3. **Absent**, in which case it is auto-detected per section 5.3, or the user opens files locally (section 7).
+
+**`data` supplies input files so that uploading is optional.** This is what makes a ShareR link runnable end to end by someone who has never seen the analysis: the author shares a link carrying both the script and its sample data, and the recipient presses Run. Accept both a repeated parameter and a comma-separated list:
+
+```
+?entry=https://example.org/analysis/EMA-CleanR.rmd&data=https://example.org/analysis/EMA-Data.csv
+?repo=DepressionCenter/EMA-CleanR&data=EMA-Data.csv&data=lookup.csv
+?repo=DepressionCenter/EMA-CleanR&data=data/
+```
+
+Each file is written into the working directory (section 6.4) under its **basename**, so `https://example.org/x/y/EMA-Data.csv` lands at `EMA-Data.csv` and a script calling `read.csv("EMA-Data.csv")` finds it. An optional rename may be given as `data=<url>|<filename>` for when the URL basename is wrong or absent, which is common for share links ending in an opaque identifier.
+
+**A value ending in `/` means a directory**, and every file directly inside it is staged. This avoids listing a dozen CSVs by hand. Directory listing is not universally possible, so resolve it in this order and be explicit when it cannot be done:
+
+1. **Repo-relative directory** such as `data=data/` together with `repo=`. Filter the tree listing already fetched in section 6.1. This costs **no extra request** and is the reliable path. Prefer it, and say so in the documentation.
+2. **A GitHub URL naming a directory**, such as `https://github.com/OWNER/REPO/tree/main/data/`. Convert it to a Git Trees or Contents API call for that path. Subject to the same unauthenticated rate limit as section 6.2.
+3. **Any other URL ending in `/`.** Fetch it and, if the response is HTML, treat it as a server-generated directory index: parse anchor `href` values, keep entries that resolve to a file directly beneath that directory, and discard parent links (`../`) and column-sort links (`?C=N;O=D`). This works for the common Apache and nginx autoindex formats.
+
+   Be candid that this is best-effort. Most web servers do not enable directory listing at all, and those that do have no standard format. If the response is not HTML, or no file links are found, report it plainly rather than silently staging nothing:
+
+   > `example.org/data/` did not return a file listing. Many web servers do not publish one. List the files individually instead, for example `data=a.csv,b.csv`, or open them from your computer.
+
+   Note for local testing: ZippyServe does not generate directory indexes, so use the explicit comma-separated form or a repository when testing locally.
+
+Recurse only one level deep, take only files, and apply `CONFIG.MAX_REPO_FILE_BYTES` and the traversal check in section 5.2 to every entry discovered this way. A directory listing is untrusted input exactly like a repository tree is.
+
+**Files supplied by `data` are defaults, not fixtures.** The UI must list every staged file and let the user replace any of them with a local file of their own, or add files that were not listed. A user-supplied file always wins over a URL-supplied file of the same name, and the substitution is announced. This is the primary workflow: run the shared analysis against *my* data.
+
+**`repo` accepts** a full GitHub URL (`https://github.com/DepressionCenter/ShareR`, trailing slash optional), an `@owner/repo` form (ignore the `@`), or plain `owner/repo`.
+
+**`script`** is an alias for `entry`. Normalize it to `entry` internally; if both are present and non-empty, `entry` wins.
 
 ### 5.2 Validation
 
-Every parameter is untrusted input interpolated into a URL and, for `entry`, into a VFS path. Validate with allowlists and reject on failure with a visible, specific error:
+Every parameter is untrusted input that ends up in a fetch URL and in a virtual filesystem path. Two checks matter, and they are cheap:
+
+**Validate URLs by parsing them, not by pattern matching.** Use the `URL` constructor, reject anything that throws, and allow only the `http:` and `https:` protocols. This rejects `javascript:`, `data:`, and `file:` cleanly without hand-written regular expressions:
 
 ```js
-const RE_REPO  = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const RE_REF   = /^[A-Za-z0-9._\/-]{1,255}$/;
-const RE_ENTRY = /^[A-Za-z0-9._\/-]{1,255}$/;
+function parseFileUrl(value) {
+  let u;
+  try { u = new URL(value, window.location.href); }
+  catch { throw new Error('Not a valid URL: ' + value); }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+    throw new Error('Only http and https URLs are supported, not ' + u.protocol);
+  }
+  return u;
+}
 ```
 
-Additionally reject any `ref` or `entry` that contains `..`, begins with `/`, contains a backslash, or contains a percent sign. Resolve every VFS write path through a normalizer and assert the result still begins with the run's working directory prefix before writing. A repository is untrusted content; a crafted path in a tree listing must not be able to write outside the sandbox root.
+**Never let a supplied path escape the working directory.** This is the one traversal control worth keeping, because repository tree listings and URL basenames are both attacker-influenceable. Normalize every write path and assert it still begins with `CONFIG.VFS_PROJECT_DIR` before calling `writeFile`. Reject any path segment equal to `..`, any leading `/`, and any backslash.
+
+For repo-relative values, keep the simple allowlists:
+
+```js
+const RE_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const RE_REF  = /^[A-Za-z0-9._\/-]{1,255}$/;
+const RE_PATH = /^[A-Za-z0-9._\/-]{1,255}$/;
+```
+
+Report every rejection with a visible, specific message naming the offending value. Do not fail silently.
 
 ### 5.3 Entry point auto-detection
 
+**ShareR never asks the researcher to add a file to their repository.** There is no `sharer.json`, no `.sharerignore`, and no manifest of any kind. This is not a simplification detail; it is the entire premise stated in section 0: point ShareR at an *unmodified* repository. A tool that requires the author to commit a config file has broken its own promise, and it is worse than that in practice, because the author must then maintain that file forever for the benefit of one tool. **Everything configurable is passed in the URL**, where it costs the author nothing and stays under the control of whoever is sharing the link.
+
 When `repo` is given and `entry` is not:
 
-1. If the repository root contains `sharer.json`, honor its `entry` field. This is the escape hatch for repository authors and it costs nothing to support.
-2. Otherwise look in the root, case-insensitively, for `main.R`, `run.R`, `main.Rmd`, `run.Rmd`, in that order (case insensitive).
-3. Otherwise collect all `.R` and `.Rmd` files, excluding anything matched by `.sharerignore` (section 6.5) and excluding conventional non-entry directories: `tests/`, `test/`, `man/`, `R/`, `inst/`, `vignettes/`, `renv/`, `packrat/`. If exactly one remains, use it.
-4. Otherwise open an in-app modal listing the candidates, sorted with root-level files first and `.Rmd` before `.R`, and ask the user to choose. The modal must be keyboard navigable and must trap focus.
+1. Look in the repository root, case-insensitively, for `main.R`, `run.R`, `main.Rmd`, `run.Rmd`, in that order.
+2. Otherwise collect all `.R` and `.Rmd` files, excluding conventional non-entry directories: `tests/`, `test/`, `man/`, `R/`, `inst/`, `vignettes/`, `renv/`, `packrat/`. If exactly one remains, use it.
+3. Otherwise show the candidates in the page, sorted with root-level files first and `.Rmd` before `.R`, and ask the user to choose. Keyboard operable, per section 11.2.
 
-Selecting from the modal updates the URL via `history.replaceState()` so the resulting link is shareable. This matters: shareability is the product.
+Choosing a file updates the URL via `history.replaceState()` so the resulting link is shareable and reproducible. This matters: shareability is the product.
 
-### 5.4 Owner trust gate
+### 5.4 Running code from elsewhere
 
-Because `?repo=` accepts any repository, ShareR is a general-purpose runner for arbitrary third-party R code. That code runs inside the WebAssembly sandbox and cannot touch the host machine, but it can read anything the user drags in, and it can render author-controlled markdown.
+ShareR runs R code the visitor did not write. That code executes inside the WebAssembly sandbox and cannot reach the host machine, but it can read any file the visitor adds to the page and it can render author-supplied markdown.
 
-Add `CONFIG.TRUSTED_OWNERS = ['DepressionCenter']`. When the requested owner is not on the list, show a blocking interstitial before any fetch:
+Keep this proportionate. **Show the source, do not gate it.** Display the resolved origin of the script prominently in the setup view, for example `Running EMA-CleanR.rmd from raw.githubusercontent.com/DepressionCenter/EMA-CleanR`, so the visitor can see where the code came from before pressing Run. Nothing runs until they press Run, which is the meaningful consent step. A blocking interstitial keyed to an owner allowlist was specified in an earlier draft and is dropped per section 0.1: it trains people to click through, and it does not stop anything the Run button does not already stop.
 
-> You are about to run code from `owner/repo`, which is not published by the Eisenberg Family Depression Center. The code runs in a sandbox in your browser and cannot access your computer, but it can read any file you add to this page. Only continue if you trust the author.
+The control that does matter is sanitizing author-supplied HTML before it is rendered, since `.Rmd` prose routinely contains raw HTML. That is required in section 8.3 and is not optional.
 
-with Continue and Cancel. This is cheap, it is honest, and it is the difference between a tool and an open redirect for arbitrary code execution.
+### 5.5 CORS: the real constraint on "any URL"
+
+**This is the limitation that will surprise users, so surface it in the UI and the README rather than letting them discover it as a broken page.** A browser can only fetch a file from another origin if that server sends an `Access-Control-Allow-Origin` header. ShareR cannot change this; it is the host's decision, and no CSP or code change on our side affects it.
+
+Verified by direct request during specification of this feature:
+
+| Host | Works? |
+| --- | --- |
+| `raw.githubusercontent.com` | Yes, sends `access-control-allow-origin: *` |
+| `gist.githubusercontent.com` | Yes |
+| GitHub Pages, `*.github.io` | Yes, confirmed against a real asset |
+| `cdn.jsdelivr.net/gh/<owner>/<repo>@<ref>/<path>` | Yes, and it serves any file from any public GitHub repository |
+| A web server you control, configured to send the header | Yes |
+| `http://localhost:PORT` during local testing | Yes, when ShareR itself is served over `http://localhost` |
+| Dropbox share links | **No.** No CORS header on the raw download host |
+| Google Drive | **No.** No CORS header |
+| Google Sites | **No.** No CORS header, and requests redirect to a login page |
+
+When a fetch fails in a way consistent with CORS, do not report a generic network error. Say what actually happened and what to do about it:
+
+> `example.com` did not allow this page to read that file. This is a setting on that server, not something ShareR can change. Files hosted on GitHub, on GitHub Pages, or on a server configured to allow cross-origin reads will work. You can also open the file from your computer using the button below.
+
+Then fall back to local file selection (section 7). **`cdn.jsdelivr.net/gh/` is the recommended escape hatch** for anyone whose file lives in a public GitHub repository but who wants a direct file URL: it works, it sends CORS headers, and it is already the CDN used for the JavaScript dependencies. Document it in the quick start.
 
 ---
 
@@ -378,7 +430,7 @@ with Continue and Cancel. This is cheap, it is honest, and it is the difference 
 GET https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1
 ```
 
-Send `Accept: application/vnd.github+json`. Do **not** send credentials. Never accept a token via URL parameter and never store one; that would put a secret in a shareable link, which `AGENTS.md` section 7 forbids outright. Private repositories are supported through upload mode only, and the README must say so.
+Send `Accept: application/vnd.github+json`. Do **not** send credentials. Never accept a token via URL parameter and never store one; that would put a secret in a shareable link, which `AGENTS.md` section 7 forbids outright. Private repositories are supported only by opening the files locally (section 7), and the README must say so.
 
 Handle `tree.truncated === true`: the API caps large trees. If truncated, fall back to listing the entry file's directory via the Contents API and warn the user that helper files elsewhere in the repository may be missing.
 
@@ -386,9 +438,9 @@ Handle `tree.truncated === true`: the API caps large trees. If truncated, fall b
 
 Only `api.github.com` requests count against GitHub's 60-per-hour unauthenticated limit. File contents are fetched from `raw.githubusercontent.com`, which is a separate service and is not subject to that quota. ShareR therefore uses **one** rate-limited request per run.
 
-Read `X-RateLimit-Remaining` and `X-RateLimit-Reset` from the tree response and surface them in Diagnostics. On HTTP 403 with `X-RateLimit-Remaining: 0`, show: "GitHub's anonymous request limit is reached for your network. It resets at HH:MM. You can still run your analysis now by uploading the script and your data files directly." Then switch the UI to upload mode. A graceful error state is not the same as a dead end.
+Read `X-RateLimit-Remaining` and `X-RateLimit-Reset` from the tree response and surface them in Diagnostics. On HTTP 403 with `X-RateLimit-Remaining: 0`, show: "GitHub's anonymous request limit is reached for your network. It resets at HH:MM. You can still run your analysis now by opening the script and your data files from your computer." Then show the local file controls (section 7). A graceful error state is not the same as a dead end.
 
-Cache the resolved tree JSON in IndexedDB keyed by `owner/repo@sha`, so re-running the same pinned ref costs zero API calls.
+Do not build an IndexedDB cache for tree listings. An earlier draft required one; per section 0.1 it is dropped. One API call per run against a 60-per-hour limit is not a problem worth a storage layer.
 
 ### 6.3 Fetching contents
 
@@ -396,7 +448,7 @@ Cache the resolved tree JSON in IndexedDB keyed by `owner/repo@sha`, so re-runni
 - Fetch each blob from `https://raw.githubusercontent.com/{owner}/{repo}/{sha}/{path}`.
 - **Always fetch as `arrayBuffer()`, never as `text()`.** Formats such as `.rds` and `.xlsx` are binary and would be silently corrupted by UTF-8 decoding. Write bytes and let R decide the encoding.
 - Concurrency capped at `CONFIG.FETCH_CONCURRENCY`, default 6. Retry each blob twice with exponential backoff and jitter. Report per-file failures individually rather than failing the whole sync.
-- Skip files larger than `CONFIG.MAX_REPO_FILE_BYTES`, default 25 MB, with a visible warning naming the file. Skip `.git/`, `.github/`, and anything matched by `.sharerignore`.
+- Skip files larger than `CONFIG.MAX_REPO_FILE_BYTES`, default 25 MB, with a visible warning naming the file. Skip `.git/` and `.github/`.
 - Total sync budget `CONFIG.MAX_REPO_TOTAL_BYTES`, default 100 MB. Stop and report if exceeded.
 
 ### 6.4 Writing to the VFS
@@ -416,25 +468,35 @@ setwd("/home/web_user/project")
 
 `EMA-CleanR.rmd` calls `read.csv(input_file)` with a relative path and `dir.create(output_dir)` with a relative path. Both depend on this being correct.
 
-### 6.5 `.sharerignore`
+### 6.5 Skipping files that are not needed
 
-Support an optional `.sharerignore` at the repository root using gitignore-style patterns. Repositories such as `EMA-CleanR` ship a large rendered `.html` output and screenshot images that nobody needs in the VFS. Honoring an ignore file makes ShareR polite about bandwidth and gives repository authors control without changing their analysis code.
+Skip `.git/`, `.github/`, and files above `CONFIG.MAX_REPO_FILE_BYTES`. That is sufficient.
+
+A `.sharerignore` file with gitignore-style pattern matching was specified in an earlier draft and is dropped, both because pattern semantics are easy to get subtly wrong and, more importantly, because it would require the researcher to add a file to their repository for ShareR's benefit. See section 5.3: ShareR never asks for that. The problem it was meant to solve, a repository shipping a large rendered HTML report, is already handled by the size cap.
 
 ---
 
-## 7. Upload Mode
+## 7. Staging Files: One List, Three Sources
 
-When no `repo` is present, or when repository sync fails, ShareR shows the local execution view.
+There are not separate "repository mode" and "upload mode". There is **one staged file list**, and entries arrive from three sources that compose freely:
 
-- A drag-and-drop zone that is also a real `<button>` opening a file picker, and that accepts paste. A drop-only zone is an accessibility failure.
+1. **Repository sync** (section 6), when `repo` is given.
+2. **URLs** from `entry` and `data` (section 5.1).
+3. **Local files** the visitor opens from their own computer.
+
+Later sources overwrite earlier ones by filename, so precedence is **local files > URL files > repository files**. Announce every overwrite visibly, for example `Using your EMA-Data.csv instead of the one from the repository`. This ordering is the product: the shared link brings the analysis and its sample data, and the researcher swaps in their own data.
+
+**The staged file list is a required UI element, not a nicety.** Show every file with its name, size, and source, with a control to remove it and a control to replace it with a local file. This list is the honest answer to "what does this thing have access to," and it is how a researcher confirms their data is the data being used.
+
+Local file selection requirements:
+
+- A drag-and-drop zone that is **also a real `<button>`** opening a file picker, and that accepts paste. A drop-only zone is an accessibility failure and is not acceptable (`AGENTS.md` section 9).
 - Accept a whole folder via `webkitdirectory` where supported, since analyses usually have helper files.
-- Accept `.R`, `.Rmd`, and any data files. Detect the entry using the same rules as section 5.3.
-- Read each file with `File.arrayBuffer()` and write bytes with `webR.FS.writeFile`. Never `FileReader.readAsText`, for the reason in section 6.3.
-- Enforce `CONFIG.MAX_UPLOAD_FILE_BYTES`, default 250 MB, per file, checked against `navigator.storage.estimate()` before accepting, with a clear message if the browser cannot hold it.
-- Files land in `/home/web_user/project/`, preserving relative paths from a folder drop.
-- Show every staged file in a removable list with name and size. Users need to see what they gave the app. This list is also the honest answer to "what does this thing have access to."
+- Read each file with `File.arrayBuffer()` and write bytes with `webR.FS.writeFile`. **Never `FileReader.readAsText`**, for the reason in section 6.3: `.rds` and `.xlsx` are binary and UTF-8 decoding silently corrupts them.
+- Enforce `CONFIG.MAX_UPLOAD_FILE_BYTES` per file with a clear message naming the file.
+- Files land in `CONFIG.VFS_PROJECT_DIR`, preserving relative paths from a folder drop, subject to the traversal check in section 5.2.
 
-**Mixed mode is required, not optional.** The headline use case is "run `EMA-CleanR` from GitHub with *my own* data", so repository sync and local upload must compose: repository files first, then user files written on top, with a visible warning when a user file overwrites a repository file of the same name. `EMA-CleanR` ships a sample `EMA-Data.csv`, and a researcher dropping in their own `EMA-Data.csv` is the primary workflow.
+ShareR must be fully usable with **no URL parameters at all**: open the page, add an `.R` or `.Rmd` file and its data from your computer, press Run. That path requires no network access beyond the R engine itself and is the fallback whenever a fetch fails for any reason, including CORS (section 5.5).
 
 ---
 
@@ -527,37 +589,32 @@ The reference script loads `dplyr`, `psych`, `tidyverse`, `lubridate`, `table1`,
 
 ### 9.1 Detection
 
-Statically scan all chunk source and any sourced `.R` files for `library(x)`, `require(x)`, `requireNamespace("x")`, and `x::`. Deduplicate. Exclude base and recommended packages already present in the webR image.
+Statically scan all chunk source and any sourced `.R` files for `library(x)`, `require(x)`, `requireNamespace("x")`, and `x::`. Deduplicate. Exclude base and recommended packages already present in the webR image. Always include `jsonlite`, which ShareR itself needs to materialize `params` (section 8.3).
 
-Also honor an optional `sharer.json` in the repository root, which lets an author be explicit and skip the guesswork:
+Scanning is a heuristic and will occasionally miss a package loaded indirectly. The override for that is a **URL parameter, never a file in the researcher's repository** (section 5.3):
 
-```json
-{
-  "entry": "EMA-CleanR.rmd",
-  "packages": ["dplyr", "psych", "tidyverse", "lubridate", "table1",
-               "corrplot", "ggplot2", "patchwork", "rlang", "jsonlite"],
-  "repos": ["https://repo.r-wasm.org"],
-  "dataFiles": ["EMA-Data.csv"]
-}
-```
+| Parameter | Example | Effect |
+| --- | --- | --- |
+| `packages` | `packages=dplyr,ggplot2,table1` | Install these in addition to whatever was detected |
+| `repos` | `repos=https://myorg.r-universe.dev` | Additional package repositories, comma separated |
 
-### 9.2 Resolution
+Both are additive to the scan rather than replacing it, so a partial list still helps rather than breaking the run.
 
-Fetch the repository's `PACKAGES` index once per session, cache it, and resolve the transitive `Depends` and `Imports` closure locally. Then show a preflight panel before the run starts:
+### 9.2 Installation
 
-- Packages already present.
-- Packages to be downloaded, with a count and an approximate total size.
-- **Packages not found in any configured repository**, listed by name, with a clear message: "These packages have no WebAssembly build available, so this script cannot run in the browser. Ask the script author to substitute them, or build wasm binaries with the `rwasm` package and add the repository URL below."
+**Let webR resolve dependencies. Do not reimplement it.** An earlier draft required fetching the `PACKAGES` index and computing the transitive `Depends`/`Imports` closure in JavaScript. Per section 0.1 that is dropped: `webR.installPackages()` already does exactly this, correctly, and a second implementation would be a large amount of code whose only possible outcome is to disagree with the first one.
 
-Allow the user to add extra repository URLs, for example an R-universe repository such as `https://<owner>.r-universe.dev`, persisted in `localStorage`. This is what makes ShareR usable beyond whatever packages `repo.r-wasm.org` happens to carry.
+Pass the detected list to a single `webR.installPackages(list)` call and stream progress to the log:
 
-**Do not assert in code or documentation that any specific package is available.** Availability changes and is not ours to promise. Resolve it at runtime and report what is actually there. This applies to every package in the reference script, `table1` and `psych` included.
+- Before starting, show the list of packages about to be installed and warn that the first run downloads a substantial amount, while later runs reuse the browser cache.
+- Guard the wall clock with `CONFIG.INSTALL_TIMEOUT_MS`, default 600000. On timeout, stop and offer a retry instead of hanging.
+- On failure, **name the specific package that failed** and keep whatever installed successfully. Then state the likely cause plainly, because it is usually the same one:
 
-### 9.3 Installation
+  > `table1` could not be installed. It may not have a WebAssembly build available. Packages must be precompiled for WebAssembly; webR cannot build them from source. Ask the script author whether a different package would work.
 
-Install the whole resolved set in one `webR.installPackages(list)` call, streaming progress to the log. Service worker cache hits make the second run fast; state the expected first-run cost in the UI: "First run downloads roughly N MB of R packages. Later runs use the cached copy."
+**Do not assert anywhere in the code or documentation that a particular package is available.** Availability changes over time and is not ours to promise. Find out at runtime and report what actually happened. This applies to every package in the reference script, `table1` and `psych` included.
 
-Guard the wall clock with `CONFIG.INSTALL_TIMEOUT_MS`, default 600000. On timeout, stop and offer to retry rather than hanging indefinitely.
+Optionally allow extra repository URLs, such as an R-universe repository like `https://<owner>.r-universe.dev`, passed to `installPackages`. This is worth supporting because it is what makes ShareR usable beyond whatever `repo.r-wasm.org` happens to carry, but it is a plain text input, not a managed repository list.
 
 ---
 
@@ -585,11 +642,10 @@ async function walkVfs(webR, root, out = new Map(), depth = 0) {
 
 Snapshot before the run, snapshot after, and treat paths present only in the second snapshot as generated outputs.
 
-**Known limitation, disclosed rather than hidden:** `FSNode` exposes no size and no mtime, so a script that *overwrites* an existing file produces no detectable diff. Ship all three mitigations:
+**Known limitation, disclosed rather than hidden:** `FSNode` exposes no size and no mtime, so a script that *overwrites* an existing file produces no detectable diff. Two mitigations are enough:
 
 1. Additionally treat everything under the resolved `output_dir` parameter, when the script declares one, as an output regardless of the diff.
-2. Provide a full file browser over `/home/web_user/project` so the user can download any file, generated or not.
-3. Record a SHA-256 of each input file at write time, so the run manifest can at least flag inputs that changed.
+2. Provide a file browser over the working directory so the user can download any file, generated or not. This also covers every case the diff misses, which is why the third mitigation in an earlier draft, recording a SHA-256 of every input file to detect changes, is dropped per section 0.1.
 
 ### 10.2 Rendering
 
@@ -655,11 +711,11 @@ Every failure mode gets a specific, actionable message. No stack traces in the U
 
 | Failure | User-facing behavior |
 | --- | --- |
-| GitHub API rate limited | Message with reset time, automatic switch to upload mode (section 6.2) |
-| Repository or ref not found (404) | Name what was not found; offer upload mode |
+| GitHub API rate limited | Message with reset time, fall back to local file selection (section 6.2) |
+| Repository or ref not found (404) | Name what was not found; offer local file selection |
 | Tree truncated | Warn that some files may be missing; continue |
 | Individual blob fetch fails | Name the file, continue, list skipped files before Run |
-| JavaScript library fails to load or fails SRI | Name the library, disable Run, state that a required component could not be verified (section 3.6) |
+| JavaScript library fails to load | Name the library, disable Run, state which component is missing (section 3.6) |
 | Package has no wasm build | Preflight blocks the run and names the packages (section 9.2) |
 | Package install fails mid-way | Name the package, offer retry, keep already-installed packages |
 | webR fails to initialize | Detect WebAssembly support; if missing, state the browser requirement. Otherwise show the diagnostic and a "Clear cache and retry" action |
@@ -678,15 +734,15 @@ A single frozen object at the top of `index.html`. No hard-coded values anywhere
 
 ```js
 const CONFIG = Object.freeze({
-  // Engine, pinned for reproducibility. See spec section 3.5.
+  // Engine, pinned for reproducibility. See sections 3.5 and 3.6.
+  // Import dist/webr.js, NOT dist/webr.mjs. Package is 'webr', not '@r-wasm/webr'.
   WEBR_VERSION:            '0.6.0',
   WEBR_BASE_URL:           'https://webr.r-wasm.org/v0.6.0/',
+  WEBR_CDN_URL:            'https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js',
   WEBR_REPO_URL:           'https://repo.r-wasm.org',
-  SELF_HOST_WEBR:          false,
   CHANNEL_TYPE:            'postmessage',   // 'postmessage' | 'auto'
 
-  // JavaScript libraries. Exact versions only; SRI hashes live in index.html
-  // script tags and are documented in docs/dependencies.md. See section 3.6.
+  // JavaScript libraries. Exact versions only. No SRI hashes; see section 3.6.
   CDN_ORIGIN:              'https://cdn.jsdelivr.net',
   LIB_VERSIONS:            Object.freeze({
     jsYaml:   '4.1.0',
@@ -698,12 +754,11 @@ const CONFIG = Object.freeze({
   // Repository sync
   GITHUB_API:              'https://api.github.com',
   GITHUB_RAW:              'https://raw.githubusercontent.com',
-  TRUSTED_OWNERS:          ['DepressionCenter'],
   FETCH_CONCURRENCY:       6,
   MAX_REPO_FILE_BYTES:     25 * 1024 * 1024,
   MAX_REPO_TOTAL_BYTES:    100 * 1024 * 1024,
 
-  // Local files
+  // Files supplied by URL or opened locally
   MAX_UPLOAD_FILE_BYTES:   250 * 1024 * 1024,
 
   // Virtual filesystem
@@ -715,16 +770,12 @@ const CONFIG = Object.freeze({
   FIG_HEIGHT_PX:           720,
   INSTALL_TIMEOUT_MS:      600000,
   STALL_WARNING_MS:        120000,
-
-  // Caching
-  CACHEABLE_ORIGINS:       ['https://webr.r-wasm.org',
-                            'https://repo.r-wasm.org',
-                            'https://cdn.jsdelivr.net'],
-  CACHE_PREFIX:            'sharer-',
 });
 ```
 
-The library version numbers in `LIB_VERSIONS` are illustrative. Resolve the actual current versions at implementation time, pin them exactly, generate their SRI hashes per section 3.6, and keep `CONFIG`, the script tags, and `docs/dependencies.md` in agreement.
+`TRUSTED_OWNERS`, `CACHEABLE_ORIGINS`, `CACHE_PREFIX`, and `SELF_HOST_WEBR` appeared in an earlier draft and are gone: the trust interstitial is dropped (section 5.4), there is no service worker to configure (section 4), and self-hosting is not a version 1 goal.
+
+The library version numbers in `LIB_VERSIONS` are illustrative. Resolve the actual current versions at implementation time, pin them exactly, and keep `CONFIG` and the script tags in agreement.
 
 ---
 
@@ -736,8 +787,8 @@ The library version numbers in `LIB_VERSIONS` are illustrative. Resolve the actu
 - Never assign anything derived from a repository, from R output, or from a filename to `innerHTML`. Prose goes through `DOMPurify`; everything else uses `textContent`.
 - Revoke every `URL.createObjectURL` you create.
 - Keep the R engine warm across runs within a session unless Stop was pressed. Re-initializing costs seconds.
-- Do not register `skipWaiting` on the service worker automatically during a run (section 4.4).
 - Instrument timings: engine init, package install, per chunk. Put them in the manifest. Performance complaints are otherwise unfalsifiable.
+- Before adding any mechanism not named in this document, re-read section 0.1. The default answer is no.
 
 ---
 
@@ -745,30 +796,40 @@ The library version numbers in `LIB_VERSIONS` are illustrative. Resolve the actu
 
 The build is not done until all of the following pass on current versions of Chrome, Firefox, and Safari, on a normal, non cross-origin isolated GitHub Pages deployment.
 
+**Single file by URL, the primary new capability:**
+
+1. `?entry=<https URL to a .R file>` fetches and runs that file with no `repo` parameter present.
+2. `?entry=<https URL to an .Rmd file>&data=<https URL to a CSV>` stages both, and the script reads the CSV by its basename with no user action beyond pressing Run.
+3. `data=` accepts a repeated parameter and a comma-separated list, and honors the `<url>|<filename>` rename form.
+3a. `data=data/` with `repo=` stages every file in that repository directory using the already-fetched tree, with no extra API call.
+3b. A directory URL on a host with no directory index produces the specific message from section 5.1, not a silent no-op.
+4. A URL on a host that does not send CORS headers produces the specific explanation from section 5.5 and an offer to open the file locally, not a generic network error.
+5. Every staged file is listed with its source, and replacing any of them with a local file works and is announced.
+
 **Reference case, `EMA-CleanR`:**
 
-1. `?repo=DepressionCenter/EMA-CleanR` auto-detects `EMA-CleanR.rmd` as the entry point.
-2. Preflight lists the nine `library()` packages plus `jsonlite`, resolves their dependency closure, and either reports a total download size or names precisely which packages have no wasm build.
-3. `params` exists in R before chunk one, with `input_file_has_headers` as logical `TRUE`, `ignore_surveys` as a 7-element character vector, and `unlist(params$ema_item_labels)` as a 13-element named character vector.
-4. The user drops in their own `EMA-Data.csv`, it overwrites the repository copy, and the overwrite is announced.
-5. All 24 chunks execute in order, and `include=FALSE` on the setup chunk suppresses it from the report.
-6. `dir.create("output")` succeeds and the six correlation CSVs are detected as outputs.
-7. ggplot output appears as plots in the report.
-8. Download all produces a ZIP containing outputs, report, log, manifest, and source.
-9. The run manifest records the resolved commit SHA, webR version, R version, and package versions.
+6. `?repo=DepressionCenter/EMA-CleanR` auto-detects `EMA-CleanR.rmd` as the entry point.
+7. The nine `library()` packages plus `jsonlite` are detected by scanning and installed by a single `installPackages` call, with a specific named error if any is unavailable.
+8. `params` exists in R before chunk one, with `input_file_has_headers` as logical `TRUE`, `ignore_surveys` as a 7-element character vector, and `unlist(params$ema_item_labels)` as a 13-element named character vector.
+9. The user supplies their own `EMA-Data.csv`, it takes precedence over the repository copy, and the substitution is announced.
+10. All 24 chunks execute in order, and `include=FALSE` on the setup chunk suppresses it from the report.
+11. `dir.create("output")` succeeds and the six correlation CSVs are detected as outputs.
+12. ggplot output appears as plots in the report.
+13. Download all produces a ZIP containing outputs, report, log, manifest, and source.
 
 **General:**
 
-10. Reload after a successful run pulls the engine and packages from cache with no network fetch to `webr.r-wasm.org`, verified in DevTools.
-11. Stop and reset terminates the worker, and the app remains usable without a page reload.
-12. Bumping `WEBR_VERSION` invalidates old cache buckets on next activate.
-13. Every CDN script tag has an exact version, an `integrity` attribute, and `crossorigin="anonymous"`; corrupting one hash by hand blocks that library and produces the named error from section 12, not a blank page.
-14. `?repo=` pointing at an untrusted owner shows the interstitial before any fetch.
-15. Path traversal attempts in `entry` and in tree paths are rejected.
-16. A repository with no `.R` or `.Rmd` produces a clear message, not a silent failure.
-17. Rate-limit exhaustion degrades to upload mode.
-18. axe-core reports zero violations, and the manual accessibility checklist is completed and recorded.
-19. With service workers unavailable, the app still runs.
+14. Reload after a successful run reuses the browser's HTTP cache rather than re-downloading the engine, verified in DevTools.
+15. Stop and reset terminates the worker, and the app remains usable without a page reload.
+16. Path traversal attempts in `entry`, in `data`, and in repository tree paths are rejected.
+17. A `javascript:` or `data:` URL in `entry` or `data` is rejected with a specific message.
+18. A repository with no `.R` or `.Rmd` produces a clear message, not a silent failure.
+19. GitHub rate-limit exhaustion degrades to local file selection with the reset time shown.
+20. `.Rmd` prose containing a `<script>` tag renders as inert text, confirming DOMPurify is applied.
+21. The application is fully usable with no URL parameters at all, using only local files.
+22. axe-core reports zero violations, and the manual accessibility checklist is completed and recorded.
+
+**No longer acceptance criteria**, because the mechanisms they tested are deliberately gone per section 0.1: service worker cache-bucket invalidation, SRI hash tampering, and the owner trust interstitial.
 
 ---
 
@@ -779,12 +840,14 @@ The build is not done until all of the following pass on current versions of Chr
 3. No inline R (`` `r expr` ``) and no child documents in this version.
 4. Only packages with precompiled WebAssembly binaries can be used. Source installation is impossible in webR.
 5. Browser memory is finite and 32-bit. Very large datasets combined with heavy package sets will fail. `tidyverse` is expensive; scripts that import specific packages instead will run faster and use less memory.
-6. Private repositories require upload mode.
+6. Private repositories require opening the files locally.
 7. File overwrites by the script are not detected by the output diff (section 10.1); use the file browser.
-8. First run downloads a substantial amount of WebAssembly. Subsequent runs are cached.
-9. The application requires a network connection on first load, and thereafter for any package not already cached. It is not an offline-first application.
-10. The Content Security Policy must allow `'unsafe-eval'`, because webR's Emscripten runtime evaluates JavaScript embedded in its WebAssembly binaries (section 3.4). This is a genuine, disclosed weakening of the cross-site-scripting posture. It does not affect the data-locality guarantee, which is enforced separately by `connect-src`.
-11. Clickjacking protection cannot be enforced from the page itself, because `frame-ancestors` is ignored in a `<meta>` policy (section 3.4). On a deployment target that cannot set response headers, such as GitHub Pages, ShareR can be framed by another site.
+8. First run downloads a substantial amount of WebAssembly. Subsequent runs reuse the browser cache.
+9. The application requires a network connection on first load, and thereafter for any package not already cached. It is not an offline-first application, and there is no service worker (section 4).
+10. **A file can only be loaded from a URL if that host allows cross-origin reads.** Dropbox, Google Drive, and Google Sites do not, and no change on ShareR's side can make them. GitHub, GitHub Pages, `cdn.jsdelivr.net/gh/`, and any server you configure will work. See section 5.5, which lists what was actually tested.
+11. Directory listing by URL is best-effort outside of GitHub, because most web servers publish no index and there is no standard format for the ones that do (section 5.1).
+12. The Content Security Policy is deliberately permissive and is **not** a security boundary (sections 0.1 and 3.4). `'unsafe-eval'` is required by webR's Emscripten runtime and cannot be removed. The guarantee that user data is never transmitted rests on the source code containing no upload path, which is verifiable by reading it, not on the browser refusing one.
+13. Clickjacking protection cannot be enforced from the page itself, because `frame-ancestors` is ignored in a `<meta>` policy. On a deployment target that cannot set response headers, such as GitHub Pages, ShareR can be framed by another site.
 
 
 ## Contact
