@@ -1,10 +1,13 @@
 <!--
-This file is part of ShareR.
+This file is part of ShareR™.
 index.html: Main HTML file for the ShareR application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
 Last Modified: 2026-07-27
 Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
+         Stage 2A: loads and runs a real .R file from a URL, a GitHub repository, or the visitor's
+         own computer, with input data staged the same three ways. R Markdown chunk execution and
+         package installation land in Stage 2B.
 Notes: See README file for documentation and full license information.
 
 Copyright (c) 2026 The Regents of the University of Michigan
@@ -24,7 +27,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ShareR - Run R in your browser</title>
+<title>ShareR™ - Run R in your browser</title>
 
 <!--
   Content-Security-Policy: ordinary hygiene, NOT a security boundary. See spec section 0.1.
@@ -33,24 +36,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
   data; that is verifiable by reading the source and searching for fetch, XMLHttpRequest, and
   sendBeacon. It is not the browser's job to enforce it here. An earlier, restrictive version of
   this policy broke webR twice and cost far more than it protected, so this one is deliberately
-  permissive and is expected to stay that way.
-
-  Two things about it are load-bearing and must not be "tidied up":
-
-  1. 'unsafe-eval' is mandatory. 'wasm-unsafe-eval' permits WebAssembly compilation but NOT
-     eval(), and Emscripten's EM_JS support (addEmJs() in webR's R.js) builds JavaScript
-     functions from source strings embedded in the wasm binaries and runs them through a literal
-     eval() while loading libRblas.so and libRlapack.so. Remove it and R aborts inside loadDylibs
-     with a bare WebAssembly.Exception that the browser prints as "#<Exception>" with no message,
-     no file, and no line number.
-
-  2. frame-ancestors is deliberately absent. Browsers ignore it in a <meta> tag and log a warning
-     for every document that parses the policy, so it buys nothing and only adds console noise
-     that hides real errors. It requires a real response header, which GitHub Pages cannot set.
-
-  'unsafe-inline' keeps the application script inline without pinning a SHA-256 hash that would
-  have to be recomputed on every edit. https: in script-src and connect-src is what lets Stage 2
-  load a script or data file from an arbitrary host (spec sections 5.1 and 5.5).
+  permissive and is expected to stay that way. Do not tighten it for Stage 2A: 'unsafe-eval' is
+  mandatory (see the comment retained from Stage 1 below) and 'connect-src https:' is what lets
+  this stage fetch a script or data file from an arbitrary host (spec sections 5.1 and 5.5) and
+  call the GitHub API (spec section 6).
 -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
@@ -64,10 +53,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
 <link rel="stylesheet" href="styles/um-style.css">
 <style>
-  /* Stage 1 layout only. Reuses styles/um-style.css for color tokens and button classes. */
   body {
     margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .skip-link {
+    position: absolute;
+    left: -999px;
+    top: 0;
+    background: var(--um-white);
+    color: var(--um-dark-blue);
+    padding: 0.5rem 1rem;
+    z-index: 100;
+  }
+  .skip-link:focus {
+    left: 0.5rem;
+    top: 0.5rem;
   }
   header.app-header {
     background-color: var(--um-dark-blue);
@@ -92,20 +93,38 @@ with this program. If not, see https://www.gnu.org/licenses/.
     margin: 0 auto;
     padding: 1.5rem;
   }
-  .field label {
+  .panel {
+    border: 1px solid var(--um-dark-grey);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .panel h2 {
+    margin-top: 0;
+  }
+  .field {
+    margin-bottom: 0.8rem;
+  }
+  .field label, .local-files-label {
     display: block;
     font-weight: bold;
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
   }
-  #r-code {
+  .field-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .field-row .field {
+    flex: 1 1 12rem;
+  }
+  input[type="text"], select {
     width: 100%;
     box-sizing: border-box;
-    font-family: ui-monospace, Consolas, "Courier New", monospace;
-    font-size: 0.95rem;
-    padding: 0.6rem;
+    font: inherit;
+    padding: 0.4rem 0.5rem;
     border: 1px solid var(--um-dark-grey);
     border-radius: 4px;
-    resize: vertical;
   }
   .controls {
     margin: 0.8rem 0;
@@ -114,7 +133,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
     align-items: center;
     flex-wrap: wrap;
   }
-  #status-line {
+  .btn-sm {
+    padding: 4px 10px;
+    font-size: 0.85rem;
+  }
+  #status-line, #staging-status {
     font-weight: bold;
   }
   .output-log {
@@ -132,47 +155,175 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .log-stderr, .log-error { color: #ffb3b3; }
   .log-warning { color: var(--um-maize); }
   .log-message { color: #b9d2ff; }
+  .run-source-line {
+    font-style: italic;
+  }
+  .local-add-controls {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.4rem;
+  }
+  .dropzone {
+    border: 2px dashed var(--um-dark-grey);
+    background-color: var(--um-maize);
+    color: var(--um-dark-blue);
+  }
+  .dropzone.drag-over {
+    border-color: var(--um-dark-blue);
+    background-color: var(--um-white);
+  }
+  .help-text {
+    font-size: 0.85rem;
+    color: var(--um-dark-grey);
+    margin: 0.2rem 0 0.8rem 0;
+  }
+  fieldset {
+    border: 1px solid var(--um-dark-grey);
+    border-radius: 4px;
+    margin: 0 0 0.8rem 0;
+  }
+  .staging-messages {
+    margin: 0.6rem 0;
+  }
+  .staging-msg {
+    padding: 0.3rem 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.3rem;
+    font-size: 0.9rem;
+  }
+  .staging-msg-error { background-color: #fdecea; color: #7a1a12; border: 1px solid #e5a19a; }
+  .staging-msg-warning { background-color: #fff6d9; color: #5c4600; border: 1px solid var(--um-maize); }
+  .staging-msg-info { background-color: #eaf1fb; color: var(--um-dark-blue); border: 1px solid var(--um-medium-blue); }
+  .staged-files-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+  }
+  .staged-files-table th, .staged-files-table td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--um-dark-grey);
+    font-size: 0.9rem;
+  }
+  .empty-row td {
+    font-style: italic;
+    color: var(--um-dark-grey);
+  }
   footer.app-footer {
     padding: 1rem 1.5rem;
     font-size: 0.85rem;
     color: var(--um-dark-grey);
   }
-  .poc-notice {
-    background-color: #fff6d9;
-    border: 1px solid var(--um-maize);
-    border-radius: 4px;
-    padding: 0.6rem 0.9rem;
-    margin-bottom: 1rem;
+  button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+    outline: 3px solid var(--um-medium-blue);
+    outline-offset: 2px;
   }
 </style>
 </head>
 <body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
 
 <header class="app-header">
   <h1>ShareR</h1>
   <p><span class="data-badge">Runs entirely in your browser. Your data is never uploaded.</span></p>
 </header>
 
-<main>
-  <p class="poc-notice">
-    Stage 1 proof of concept. Runs a single, self-contained R script with no external R packages
-    and no data files. GitHub repository sync, R Markdown, package installation, and file outputs
-    are not implemented yet.
-  </p>
+<main id="main-content">
 
-  <div class="field">
-    <label for="r-code">R code to run</label>
-    <textarea id="r-code" rows="8" spellcheck="false">print("Hello from ShareR!")
-summary(1:10)</textarea>
-  </div>
+  <section class="panel" aria-labelledby="setup-heading">
+    <h2 id="setup-heading">1. Choose what to run</h2>
+    <p class="help-text">
+      Paste a link to a script and, optionally, its data, or load a GitHub repository. You can also
+      skip this entirely and just add files from your computer below. Every field here corresponds
+      to a URL parameter (<code>entry</code>, <code>data</code>, <code>repo</code>, <code>ref</code>),
+      so a filled-in form is always a shareable link.
+    </p>
 
-  <div class="controls">
-    <button id="run-button" type="button" class="btn btn-primary">Run</button>
-    <button id="stop-button" type="button" class="btn btn-secondary">Stop and reset R</button>
-    <span id="status-line" role="status" aria-live="polite">Idle.</span>
-  </div>
+    <form id="source-form">
+      <div class="field">
+        <label for="entry-input">Script URL or repository-relative path (entry)</label>
+        <input type="text" id="entry-input" name="entry"
+          placeholder="https://example.org/analysis.R or analysis/clean.R" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="data-input">Data file(s) (comma-separated URLs or repository paths; optional)</label>
+        <input type="text" id="data-input" name="data"
+          placeholder="https://example.org/data.csv, lookup.csv, data/" autocomplete="off">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="repo-input">GitHub repository (optional)</label>
+          <input type="text" id="repo-input" name="repo" placeholder="owner/repo" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="ref-input">Branch, tag, or commit SHA</label>
+          <input type="text" id="ref-input" name="ref" placeholder="main" autocomplete="off">
+        </div>
+      </div>
+      <div class="controls">
+        <button type="submit" class="btn btn-secondary">Load</button>
+        <span id="staging-status" role="status" aria-live="polite"></span>
+      </div>
+    </form>
 
-  <div id="output-log" class="output-log" role="log" aria-live="polite" aria-atomic="false"></div>
+    <div class="field">
+      <span id="local-files-label" class="local-files-label">Add files from your computer</span>
+      <div class="local-add-controls">
+        <button type="button" id="add-files-button" class="btn btn-action dropzone"
+          aria-describedby="local-files-help">Add files (click, drop, or paste)</button>
+        <button type="button" id="add-folder-button" class="btn btn-action">Add a folder</button>
+      </div>
+      <p id="local-files-help" class="help-text">
+        Click to browse, drag files onto the button above, or paste files copied from your file
+        manager. Files added here always take priority over a file from a URL or repository with
+        the same name, and the substitution is announced below.
+      </p>
+      <input type="file" id="file-input" multiple hidden>
+      <input type="file" id="folder-input" multiple webkitdirectory hidden>
+    </div>
+
+    <div id="entry-candidates" hidden>
+      <fieldset>
+        <legend>Multiple script files were found in this repository. Choose one to run:</legend>
+        <div id="entry-candidates-list"></div>
+      </fieldset>
+      <button type="button" id="choose-entry-button" class="btn btn-secondary">Use selected file</button>
+    </div>
+
+    <div id="staging-messages" class="staging-messages" role="status" aria-live="polite"></div>
+
+    <h3>Staged files</h3>
+    <table id="staged-files-table" class="staged-files-table">
+      <caption class="help-text" style="text-align:left">
+        Everything ShareR currently has access to for this run. Local files override files from a
+        URL or repository with the same name.
+      </caption>
+      <thead>
+        <tr><th scope="col">File</th><th scope="col">Size</th><th scope="col">Source</th><th scope="col">Actions</th></tr>
+      </thead>
+      <tbody id="staged-files-body">
+        <tr class="empty-row"><td colspan="4">No files staged yet.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" aria-labelledby="run-heading">
+    <h2 id="run-heading">2. Run</h2>
+    <div class="field" id="entry-select-field" hidden>
+      <label for="entry-select">Script to run</label>
+      <select id="entry-select"></select>
+    </div>
+    <p id="run-source-line" class="run-source-line">Add or load a script above to get started.</p>
+    <div class="controls">
+      <button id="run-button" type="button" class="btn btn-primary" disabled>Run</button>
+      <button id="stop-button" type="button" class="btn btn-secondary" disabled>Stop and reset R</button>
+      <span id="status-line" role="status" aria-live="polite">Idle.</span>
+    </div>
+    <div id="output-log" class="output-log" role="log" aria-live="polite" aria-atomic="false"></div>
+  </section>
+
 </main>
 
 <footer class="app-footer">
@@ -182,37 +333,1337 @@ summary(1:10)</textarea>
     for any specific regulated data type. Confirm with your IRB and with your institution's
     Cybersecurity or Information Assurance office before using it with participant data.
   </p>
+  <p>
+    Stage 2A: runs a plain <code>.R</code> file from a URL, a GitHub repository, or your computer.
+    R Markdown chunk execution and package installation are not implemented yet.
+  </p>
 </footer>
 
 <script type="module">
 "use strict";
-
-/* ShareR CONFIG. Single source of truth for pinned versions and URLs; no magic values elsewhere.
-   WEBR_CDN_URL cannot be built from WEBR_VERSION at this call site because a dynamic import()
-   argument must still be kept in sync by hand with WEBR_VERSION below; Stage 2 revisits this.
-   Deliberately dist/webr.js, not dist/webr.mjs: the .mjs build is the bundler-target ESM output
-   and has a static top-level `import { createRequire } from 'module'` (a Node builtin), which a
-   real browser cannot resolve. dist/webr.js is the package's "browser" exports-condition target
-   and has no Node-only bare specifiers, confirmed by inspecting both files directly. */
+/* ShareR CONFIG. Single source of truth for pinned versions, limits, and paths (spec section 13).
+   Some fields (LIB_VERSIONS, INSTALL_TIMEOUT_MS) are not used until Stage 2B; kept here now so
+   CONFIG stays the single frozen object the whole app reads from, per spec section 1. */
 const CONFIG = Object.freeze({
-  WEBR_VERSION: "0.6.0",
-  WEBR_BASE_URL: "https://webr.r-wasm.org/v0.6.0/",
-  WEBR_CDN_URL: "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
-  CHANNEL_TYPE: "postmessage"
+  WEBR_VERSION:            "0.6.0",
+  WEBR_BASE_URL:           "https://webr.r-wasm.org/v0.6.0/",
+  WEBR_CDN_URL:            "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
+  WEBR_REPO_URL:           "https://repo.r-wasm.org",
+  CHANNEL_TYPE:            "postmessage",
+
+  CDN_ORIGIN:              "https://cdn.jsdelivr.net",
+  LIB_VERSIONS: Object.freeze({
+    jsYaml:    "4.1.0",
+    marked:    "15.0.7",
+    domPurify: "3.2.4",
+    fflate:    "0.8.2"
+  }),
+
+  GITHUB_API:              "https://api.github.com",
+  GITHUB_RAW:              "https://raw.githubusercontent.com",
+  FETCH_CONCURRENCY:       6,
+  MAX_REPO_FILE_BYTES:     25 * 1024 * 1024,
+  MAX_REPO_TOTAL_BYTES:    100 * 1024 * 1024,
+
+  MAX_UPLOAD_FILE_BYTES:   250 * 1024 * 1024,
+
+  VFS_PROJECT_DIR:         "/home/web_user/project",
+  MAX_VFS_DEPTH:           12,
+
+  FIG_WIDTH_PX:            1008,
+  FIG_HEIGHT_PX:           720,
+  INSTALL_TIMEOUT_MS:      600000,
+  STALL_WARNING_MS:        120000
 });
 
-const elCode = document.getElementById("r-code");
+/* ### Errors ### */
+
+class ShareRError extends Error {}
+
+class ShareRRateLimitError extends ShareRError {
+  constructor(resetDate) {
+    super("GitHub's anonymous request limit is reached for your network.");
+    this.resetDate = resetDate;
+  }
+}
+
+/* ### Small utilities ### */
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + " B";
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(v < 10 ? 1 : 0) + " " + units[i];
+}
+
+function basenameOf(path) {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+
+/* Decodes HTML entities (&amp;, &nbsp;, &#8211;, ...) that mail clients such as Outlook sometimes
+   inject into pasted links and paths. A no-op on text that has no entities in it. */
+function decodeHtmlEntities(value) {
+  const el = document.createElement("textarea");
+  el.innerHTML = value;
+  return el.value;
+}
+
+/* Researchers copy entry=/data=/repo= values out of email and chat clients, which routinely
+   "autocorrect" plain ASCII into visually-similar Unicode: Outlook turns "-" into an en dash or
+   non-breaking hyphen, curly quotes replace straight ones, and non-breaking spaces sneak in.
+   None of that is visible on screen, so nobody types it deliberately and nobody can be expected
+   to notice it; normalize it away rather than making every researcher get it byte-for-byte right
+   (spec section 0.1). Applied to every URL-parameter value before it is parsed or matched. */
+function sanitizePastedValue(value) {
+  if (!value) return value;
+  let v = decodeHtmlEntities(value);
+  // Hyphen/dash variants (non-breaking hyphen, figure/en/em dash, minus sign) -> "-".
+  v = v.replace(/[\u2010-\u2015\u2212]/g, "-");
+  // Curly/low single quotes -> "'".
+  v = v.replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+  // Curly/low double quotes -> '"'.
+  v = v.replace(/[\u201C\u201D\u201E\u201F]/g, '"');
+  // Non-breaking and other Unicode space variants -> ordinary space.
+  v = v.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  // Zero-width space/joiners and a stray byte-order mark -> removed entirely.
+  v = v.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  return v.trim();
+}
+
+/* Case-insensitive lookup against a GitHub tree listing. Researchers and end users routinely get
+   the case of an extension or folder wrong (".rmd" vs ".Rmd"); resolve it the way a case-blind
+   filesystem would, but keep the repository's own casing for the fetch URL and the staged name,
+   since the script's own read.csv("EMA-Data.csv") calls depend on that exact case. */
+function findTreeEntryCaseInsensitive(entries, wantedPath) {
+  const wantedLower = wantedPath.toLowerCase();
+  return entries.find((e) => e.path.toLowerCase() === wantedLower) || null;
+}
+
+/* fetch() rejects with a plain TypeError for both a CORS block and a genuine network failure;
+   the browser gives no way to tell them apart (spec section 5.5). This is a heuristic, not a
+   certainty, and the resulting message is worded to stay honest about that. */
+function isLikelyCorsFailure(err) {
+  return err instanceof TypeError;
+}
+
+function summarizeError(err) {
+  if (isLikelyCorsFailure(err)) {
+    return "the request could not be completed, possibly due to that server's cross-origin (CORS) settings";
+  }
+  if (err && typeof err.httpStatus === "number") return "HTTP " + err.httpStatus;
+  return (err && err.message) ? err.message : String(err);
+}
+
+function describeFetchFailure(url, err) {
+  let host = url;
+  try { host = new URL(url).hostname; } catch { /* leave host as the raw url */ }
+  if (isLikelyCorsFailure(err)) {
+    return host + " did not allow this page to read that file. This is a setting on that " +
+      "server, not something ShareR can change. Files hosted on GitHub, on GitHub Pages, or on " +
+      "a server configured to allow cross-origin reads will work. You can also open the file " +
+      "from your computer using the button below.";
+  }
+  if (err && typeof err.httpStatus === "number") {
+    return "HTTP " + err.httpStatus + " fetching " + url;
+  }
+  return "Could not fetch " + url + ": " + (err && err.message ? err.message : String(err));
+}
+
+/* ### URL and path validation (spec section 5.2) ### */
+
+const RE_REPO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const RE_REF  = /^[A-Za-z0-9._\/-]{1,255}$/;
+const RE_PATH = /^[A-Za-z0-9._\/-]{1,255}$/;
+
+function parseFileUrl(value) {
+  let u;
+  try { u = new URL(value, window.location.href); }
+  catch { throw new ShareRError("Not a valid URL: " + value); }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    throw new ShareRError("Only http and https URLs are supported, not " + u.protocol + " (" + value + ")");
+  }
+  return u;
+}
+
+/* Every write into the VFS goes through here. Rejects a leading slash, a backslash, and any ".."
+   segment, then asserts the resolved path still begins with CONFIG.VFS_PROJECT_DIR, per spec 5.2. */
+function vfsPathFor(relativePath) {
+  if (!relativePath || relativePath.startsWith("/") || relativePath.includes("\\")) {
+    throw new ShareRError("Rejected unsafe path: " + relativePath);
+  }
+  const segments = relativePath.split("/").filter((s) => s.length > 0);
+  if (segments.some((s) => s === "..")) {
+    throw new ShareRError("Rejected path traversal attempt: " + relativePath);
+  }
+  const normalized = segments.join("/");
+  if (!normalized) {
+    throw new ShareRError("Rejected empty path: " + relativePath);
+  }
+  const full = CONFIG.VFS_PROJECT_DIR + "/" + normalized;
+  if (full.indexOf(CONFIG.VFS_PROJECT_DIR + "/") !== 0) {
+    throw new ShareRError("Rejected path outside the project directory: " + relativePath);
+  }
+  return full;
+}
+
+function parseRepoParam(value) {
+  let s = value.trim();
+  const m = s.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  if (m) s = m[1] + "/" + m[2];
+  else if (s.startsWith("@")) s = s.slice(1);
+  if (!RE_REPO.test(s)) throw new ShareRError("Not a valid GitHub repository: " + value);
+  const [owner, repo] = s.split("/");
+  return { owner, repo };
+}
+
+function parseDataSpec(raw) {
+  const pipeIdx = raw.indexOf("|");
+  let target = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw).trim();
+  const rename = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : null;
+  return { target, rename, isDirectory: target.endsWith("/") };
+}
+
+/* GitHub's newer link format spells the ref as "refs/heads/<branch>" or "refs/tags/<tag>" instead
+   of a single path segment, so a branch name containing "/" is unambiguous. A branch name itself
+   containing "/" after that prefix is still ambiguous with no way to tell where the ref ends and
+   the path begins short of another API call; treating the next single segment as the whole ref
+   is a deliberate, documented simplification that covers the common case. Tries the "refs/..."
+   form first since the plain form's single-segment match would otherwise misread "refs" as the
+   entire ref. */
+function matchGithubRefAndPath(pathname, kindSegment) {
+  const kindPattern = "(?:" + kindSegment + ")";
+  let m = pathname.match(new RegExp("^/([^/]+)/([^/]+)/" + kindPattern + "/refs/(?:heads|tags)/([^/]+)/(.*)$"));
+  if (!m) m = pathname.match(new RegExp("^/([^/]+)/([^/]+)/" + kindPattern + "/([^/]+)/(.*)$"));
+  if (!m) return null;
+  return { owner: m[1], repo: m[2], ref: decodeURIComponent(m[3]), path: decodeURIComponent(m[4]) };
+}
+
+function matchGithubTreeUrl(u) {
+  if (u.hostname.toLowerCase() !== "github.com") return null;
+  const m = matchGithubRefAndPath(u.pathname, "tree");
+  if (!m) return null;
+  return { owner: m.owner, repo: m.repo, ref: m.ref, path: m.path.replace(/\/+$/, "") };
+}
+
+/* A github.com "blob" (file view) or "raw" link. Neither is fetchable directly from browser JS --
+   github.com sends no CORS header -- so this is used to recognize the link and redirect either
+   to a real repository sync (preferred: it also finds the script's referenced data files) or, as
+   a fallback, to the equivalent raw.githubusercontent.com URL. */
+function matchGithubBlobUrl(u) {
+  if (u.hostname.toLowerCase() !== "github.com") return null;
+  const m = matchGithubRefAndPath(u.pathname, "blob|raw");
+  return m && m.path ? m : null;
+}
+
+/* ### URL parameter parsing (spec section 5.1) ### */
+
+function parseAppParams(search) {
+  const qp = new URLSearchParams(search);
+  const entryRaw = sanitizePastedValue(qp.get("entry") || qp.get("script") || "");
+  const dataValues = qp.getAll("data")
+    .flatMap((v) => v.split(","))
+    .map((s) => sanitizePastedValue(s))
+    .filter(Boolean);
+  const repoRaw = sanitizePastedValue(qp.get("repo") || "");
+  const refRaw = sanitizePastedValue(qp.get("ref") || qp.get("branch") || "");
+  const packagesRaw = sanitizePastedValue(qp.get("packages") || "");
+  const reposRaw = sanitizePastedValue(qp.get("repos") || "");
+  const autorun = qp.get("autorun") === "1";
+  return { entryRaw, dataValues, repoRaw, refRaw, packagesRaw, reposRaw, autorun };
+}
+
+function syncUrlBar(overrides) {
+  const qp = new URLSearchParams(window.location.search);
+  qp.delete("script");
+  for (const key of Object.keys(overrides)) {
+    const value = overrides[key];
+    if (value) qp.set(key, value); else qp.delete(key);
+  }
+  const query = qp.toString();
+  const newUrl = window.location.pathname + (query ? "?" + query : "") + window.location.hash;
+  history.replaceState(null, "", newUrl);
+}
+
+/* ### Staged file store: one list, three sources (spec section 7) ### */
+
+const SOURCE_PRIORITY = { repository: 0, url: 1, local: 2 };
+
+/* Keyed by the lower-cased path so "EMA-CleanR.rmd" and "EMA-CleanR.Rmd" are the same file: end
+   users cannot be expected to type a case-sensitive extension or folder name correctly (this is
+   the reported reason EMA-CleanR failed to load). The first-seen casing is kept as the entry's
+   real path/name so a script's own exact-case read.csv("EMA-Data.csv") calls keep working
+   regardless of what case a later override arrived in. */
+class StagedFileStore {
+  constructor() {
+    this.byPath = new Map(); // key: path.toLowerCase(); value.path holds the canonical casing
+    this.onChange = null;
+  }
+  upsert(entry) {
+    const key = entry.path.toLowerCase();
+    const existing = this.byPath.get(key);
+    if (existing && SOURCE_PRIORITY[existing.source] > SOURCE_PRIORITY[entry.source]) {
+      return { applied: false };
+    }
+    const canonicalPath = existing ? existing.path : entry.path;
+    const finalEntry = Object.assign({}, entry, { path: canonicalPath, name: basenameOf(canonicalPath) });
+    const overwrote = !!existing && (existing.source !== entry.source || existing.sourceLabel !== entry.sourceLabel);
+    this.byPath.set(key, finalEntry);
+    if (this.onChange) this.onChange();
+    return { applied: true, overwrote, previous: existing };
+  }
+  get(path) {
+    return this.byPath.get(path.toLowerCase());
+  }
+  has(path) {
+    return this.byPath.has(path.toLowerCase());
+  }
+  remove(path) {
+    this.byPath.delete(path.toLowerCase());
+    if (this.onChange) this.onChange();
+  }
+  list() {
+    return Array.from(this.byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
+  }
+}
+
+function describeSource(entry) {
+  if (entry.source === "local") return "your computer";
+  if (entry.source === "url") return "URL (" + entry.sourceLabel + ")";
+  return "repository (" + entry.sourceLabel + ")";
+}
+
+/* Validates the target path, enforces the per-file size limit, and upserts into the store.
+   The single place responsible for path safety and size limits so every staging path (repo
+   mirror, data=, local add, replace) goes through the same checks. */
+function stageBytes(staged, relPath, bytes, source, sourceLabel, messages, maxBytes) {
+  let full;
+  try { full = vfsPathFor(relPath); }
+  catch (err) { messages.push({ level: "error", text: err.message }); return; }
+  if (maxBytes && bytes.byteLength > maxBytes) {
+    messages.push({ level: "warning", text: relPath + " (" + formatBytes(bytes.byteLength) +
+      ") exceeds the " + formatBytes(maxBytes) + " size limit and was skipped." });
+    return;
+  }
+  const normalized = full.slice(CONFIG.VFS_PROJECT_DIR.length + 1);
+  const entry = { path: normalized, name: basenameOf(normalized), size: bytes.byteLength, bytes, source, sourceLabel };
+  const result = staged.upsert(entry);
+  if (result.applied && result.overwrote) {
+    messages.push({ level: "info", text: "Using " + describeSource(entry) + "'s " + entry.name +
+      " instead of " + describeSource(result.previous) + "'s copy." });
+  }
+}
+
+async function fetchArrayBufferWithRetry(url, { retries = 2, headers } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        const err = new Error("HTTP " + res.status + " fetching " + url);
+        err.httpStatus = res.status;
+        err.response = res;
+        throw err;
+      }
+      const buffer = await res.arrayBuffer();
+      return { buffer, response: res };
+    } catch (err) {
+      lastErr = err;
+      if (err && typeof err.httpStatus === "number") break; // do not retry a definitive HTTP error
+      if (attempt < retries) await sleep(2 ** attempt * 300 + Math.random() * 200);
+    }
+  }
+  throw lastErr;
+}
+
+async function runWithConcurrency(items, limit, worker) {
+  let idx = 0;
+  const runners = new Array(Math.min(limit, items.length) || 0).fill(0).map(async () => {
+    while (idx < items.length) {
+      const current = idx++;
+      await worker(items[current], current);
+    }
+  });
+  await Promise.all(runners);
+}
+
+/* ### GitHub repository sync (spec section 6) ### */
+
+function checkGithubResponseForCommonErrors(res, owner, repo, refRaw) {
+  const remaining = res.headers.get("X-RateLimit-Remaining");
+  const reset = res.headers.get("X-RateLimit-Reset");
+  if (res.status === 403 && remaining === "0") {
+    throw new ShareRRateLimitError(reset ? new Date(parseInt(reset, 10) * 1000) : null);
+  }
+  if (res.status === 404) {
+    throw new ShareRError("Repository or ref not found: " + owner + "/" + repo + (refRaw ? " @ " + refRaw : ""));
+  }
+}
+
+/* Resolving the default branch when ref= is omitted costs one extra GitHub API call (repo info),
+   on top of the tree listing. Passing ref= explicitly avoids it and is the reproducible choice
+   anyway (spec section 3.5: pin everything). This is a deliberate, documented deviation from
+   section 6.2's "one request per run", made because raw.githubusercontent.com is only known to
+   reliably resolve branch/tag/commit-SHA path segments, not the tree API's bare "HEAD" alias. */
+async function resolveRef(owner, repo, refRaw) {
+  if (refRaw) return refRaw;
+  const res = await fetch(CONFIG.GITHUB_API + "/repos/" + owner + "/" + repo,
+    { headers: { Accept: "application/vnd.github+json" } });
+  checkGithubResponseForCommonErrors(res, owner, repo, refRaw);
+  if (!res.ok) throw new ShareRError("Could not look up repository " + owner + "/" + repo + " (HTTP " + res.status + ")");
+  const json = await res.json();
+  return json.default_branch;
+}
+
+async function fetchRepoTree(owner, repo, ref) {
+  const url = CONFIG.GITHUB_API + "/repos/" + owner + "/" + repo + "/git/trees/" +
+    encodeURIComponent(ref) + "?recursive=1";
+  const res = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  checkGithubResponseForCommonErrors(res, owner, repo, ref);
+  if (!res.ok) throw new ShareRError("GitHub returned an error (" + res.status + ") listing " + owner + "/" + repo);
+  const json = await res.json();
+  const entries = (json.tree || []).filter((e) => e.type === "blob" &&
+    !e.path.startsWith(".git/") && !e.path.startsWith(".github/"));
+  return { truncated: !!json.truncated, entries };
+}
+
+/* GitHub renamed the default default-branch name from "master" to "main" in 2020, so the
+   repository a visitor is looking at could reasonably use either one, and guessing wrong is a
+   common, unremarkable mistake -- not worth a failed run. If no ref= was given, ask GitHub for
+   the actual default branch first (correct regardless of its name); if that lookup itself fails,
+   or if the visitor explicitly named "main" or "master" and it turns out to be the wrong one of
+   the two, silently try the other before giving up. Any other explicit ref that fails is not
+   guessed at further: only this specific, well-known mismatch is worth a silent retry. */
+const COMMON_DEFAULT_BRANCH_NAMES = ["main", "master"];
+
+async function resolveRefAndTree(owner, repo, refRaw, messages) {
+  const candidates = [];
+  if (refRaw) {
+    candidates.push(refRaw);
+    const lower = refRaw.toLowerCase();
+    const other = lower === "main" ? "master" : lower === "master" ? "main" : null;
+    if (other) candidates.push(other);
+  } else {
+    try { candidates.push(await resolveRef(owner, repo, "")); }
+    catch (err) { if (err instanceof ShareRRateLimitError) throw err; }
+    for (const name of COMMON_DEFAULT_BRANCH_NAMES) {
+      if (!candidates.includes(name)) candidates.push(name);
+    }
+  }
+
+  let lastErr = null;
+  for (let i = 0; i < candidates.length; i++) {
+    const ref = candidates[i];
+    try {
+      const tree = await fetchRepoTree(owner, repo, ref);
+      if (i > 0) messages.push({ level: "info", text: 'Branch "' + candidates[0] +
+        '" was not found; used "' + ref + '" instead.' });
+      return { refUsed: ref, tree };
+    } catch (err) {
+      if (err instanceof ShareRRateLimitError) throw err;
+      lastErr = err;
+    }
+  }
+  if (candidates.length > 1) {
+    throw new ShareRError("Repository or ref not found: " + owner + "/" + repo +
+      " (tried " + candidates.join(", ") + ")");
+  }
+  throw lastErr;
+}
+
+function rawContentUrl(owner, repo, ref, path) {
+  return CONFIG.GITHUB_RAW + "/" + owner + "/" + repo + "/" + ref + "/" +
+    path.split("/").map(encodeURIComponent).join("/");
+}
+
+/* ### Static analysis of R source text: which files does this script actually reference? ###
+
+   Not a parser -- a set of narrow, honest heuristics over the raw text. Each one recognizes a
+   single common pattern and gives up (marking the reference "dynamic") rather than guessing, per
+   the user's explicit call: resolve what can be resolved with confidence, prefer a directory
+   over a guessed filename when only a prefix is known, and fall back to a wider fetch rather
+   than silently fetching the wrong thing or nothing at all. */
+
+const DATA_READ_FUNCS = [
+  "read\\.csv2?", "read\\.delim2?", "read\\.table",
+  "read_csv2?", "read_tsv", "read_delim", "read_table",
+  "read_excel", "read_xlsx", "read\\.xlsx", "read_ods",
+  "readRDS", "read_rds", "fromJSON", "read_json",
+  "read_sav", "read_dta", "read_por", "read_sas", "read\\.spss",
+  "fread", "read_parquet", "read_feather", "vroom", "load"
+];
+const DATA_FUNCS_ALT = DATA_READ_FUNCS.join("|");
+
+const DATA_FILE_EXTENSIONS = new Set([
+  "csv", "tsv", "json", "xlsx", "xls", "rds", "rdata", "rda",
+  "sav", "dta", "por", "sas7bdat", "parquet", "feather", "ods"
+]);
+function isDataFilePath(path) {
+  const ext = path.split(".").pop().toLowerCase();
+  return DATA_FILE_EXTENSIONS.has(ext);
+}
+
+/* Matches the user's convention of a folder named "data" or "data-*" anywhere in the tree. */
+function isInDataFolder(path) {
+  return path.split("/").slice(0, -1).some((seg) => /^data(-.*)?$/i.test(seg));
+}
+
+const RE_CHILD_LITERAL = /\bchild\s*=\s*(["'])([^"'()]+?)\1/gi;
+
+function extractLiteralOnly(text, re) {
+  const results = [];
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    results.push(m[2]);
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  return results;
+}
+
+/* Finds the index of the ")" matching the "(" at text[openIdx], skipping over quoted strings so a
+   paren inside a string literal is not mistaken for a real one. */
+function findMatchingParen(text, openIdx) {
+  let depth = 0;
+  for (let i = openIdx; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < text.length && text[i] !== quote) { if (text[i] === "\\") i++; i++; }
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")") { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/* Splits a call's argument text on top-level commas (not commas inside nested parens/brackets or
+   inside a quoted string). */
+function splitTopLevelArgs(inner) {
+  const args = [];
+  let depth = 0, current = "", i = 0;
+  while (i < inner.length) {
+    const c = inner[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      let j = i + 1;
+      while (j < inner.length && inner[j] !== quote) { if (inner[j] === "\\") j++; j++; }
+      current += inner.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    if (c === "," && depth === 0) { args.push(current); current = ""; i++; continue; }
+    current += c;
+    i++;
+  }
+  if (current.trim() !== "" || args.length > 0) args.push(current);
+  return args.map((a) => a.trim()).filter((a) => a.length > 0);
+}
+
+/* Returns the string value of a bare quoted literal ("x" or 'x'), or null if the trimmed
+   expression is not exactly one. Deliberately simple escape handling: good enough for the
+   plain ASCII paths R scripts actually use in source()/read.csv() calls. */
+function literalStringValue(expr) {
+  const m = expr.match(/^(["'])((?:\\.|(?!\1).)*)\1$/);
+  if (!m) return null;
+  return m[2].replace(/\\(.)/g, "$1");
+}
+
+/* Best-effort static evaluation of a single call-argument expression: a bare string literal, or a
+   file.path()/paste0()/paste() call built from literals (optionally with a named sep=/fsep=
+   argument, which is dropped rather than evaluated). Returns { exact } when the whole expression
+   resolved to a known string, { prefix } when only a leading literal portion resolved (the
+   caller fetches that directory rather than guessing a filename), or null when nothing useful
+   could be determined -- callers treat null as "dynamic" and widen the fetch. */
+function resolveStaticPathExpression(expr) {
+  let trimmed = expr.trim();
+  // A named first argument (source(file = "x.R"), read.csv(file = "x.csv")) is still a plain
+  // literal once the "name =" prefix is set aside; strip at most one, being careful not to
+  // mistake a "==" comparison for an assignment.
+  const namedArg = trimmed.match(/^[A-Za-z_.][A-Za-z0-9_.]*\s*=(?!=)\s*([\s\S]*)$/);
+  if (namedArg) trimmed = namedArg[1].trim();
+
+  const literal = literalStringValue(trimmed);
+  if (literal !== null) return { exact: literal };
+
+  const callMatch = trimmed.match(/^(file\.path|paste0|paste)\s*\(/i);
+  if (!callMatch) return null;
+  const openIdx = callMatch[0].length - 1;
+  const closeIdx = findMatchingParen(trimmed, openIdx);
+  if (closeIdx !== trimmed.length - 1) return null; // trailing content after the call; too risky to guess
+
+  const isFilePath = callMatch[1].toLowerCase() === "file.path";
+  const args = splitTopLevelArgs(trimmed.slice(openIdx + 1, closeIdx))
+    .filter((a) => !/^(sep|fsep|collapse)\s*=/i.test(a));
+
+  const parts = [];
+  let stoppedEarly = false;
+  for (const a of args) {
+    const lit = literalStringValue(a);
+    if (lit === null) { stoppedEarly = true; break; }
+    parts.push(lit);
+  }
+  if (parts.length === 0) return null;
+
+  const joined = isFilePath ? parts.join("/") : parts.join("");
+  if (!stoppedEarly) return { exact: joined };
+
+  // file.path()'s arguments are already discrete path segments, so whatever literal segments
+  // accumulated so far are already a complete directory on their own (file.path("data", x) ->
+  // "data/" is exactly right even though "data" itself has no slash in it). paste0()/paste()
+  // have no such structure -- the accumulated text could end mid-segment -- so only trust it as
+  // a directory once a "/" has actually appeared; otherwise it is too ambiguous to guess.
+  if (isFilePath) return { prefix: joined + "/" };
+  const lastSlash = joined.lastIndexOf("/");
+  const dirPrefix = lastSlash === -1 ? "" : joined.slice(0, lastSlash + 1);
+  return dirPrefix ? { prefix: dirPrefix } : null;
+}
+
+/* Finds every call to one of the given function names (optionally package::-qualified) in text
+   and resolves its first argument via resolveStaticPathExpression. Each result is { exact },
+   { prefix }, or null (could not be resolved at all -- treat as dynamic). */
+function findCallArgResolutions(text, funcNamesAlternation) {
+  const re = new RegExp("\\b(?:[A-Za-z_.][A-Za-z0-9_.]*::)?(?:" + funcNamesAlternation + ")\\s*\\(", "gi");
+  const results = [];
+  let m;
+  while ((m = re.exec(text))) {
+    const openIdx = re.lastIndex - 1;
+    const closeIdx = findMatchingParen(text, openIdx);
+    if (closeIdx === -1) { re.lastIndex = openIdx + 1; continue; }
+    const firstArg = splitTopLevelArgs(text.slice(openIdx + 1, closeIdx))[0];
+    results.push(firstArg === undefined ? null : resolveStaticPathExpression(firstArg));
+    re.lastIndex = closeIdx + 1;
+  }
+  return results;
+}
+
+/* ### Selective repository fetching: download only what the script needs ###
+
+   Mirroring an entire repository to run one script downloads reports, images, and rendered
+   HTML nobody asked for. Instead: resolve the entry point first (spec 5.3), fetch only that
+   file, statically resolve its own source()/data-read calls to fetch only what it references,
+   and widen to a full-repository fetch only when static resolution genuinely cannot tell what
+   is needed. A per-run "ctx" object threads a byte budget, a decoded-script-text cache (reused
+   for both the source() walk and the data-file scan so nothing is fetched twice), and the set
+   of files skipped for exceeding the per-file size cap (see fetchSkippedLargeFiles). */
+
+function makeRepoSyncCtx() {
+  return { budget: { totalBytes: 0, exceeded: false }, scriptTexts: new Map(), skippedForSize: new Set() };
+}
+
+/* Fetches and stages one repository blob, honoring the per-file cap and the total-byte budget.
+   Returns the raw bytes (for callers that need to scan script text) or null if skipped/failed/
+   already staged. Skipping is intentionally silent beyond a staging-message warning: this is the
+   single choke point every other function in this section funnels through, so the cap and budget
+   are enforced consistently regardless of which discovery path found the file. */
+async function fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, messages, ctx) {
+  if (staged.has(treeEntry.path)) return null;
+  if (typeof treeEntry.size === "number" && treeEntry.size > CONFIG.MAX_REPO_FILE_BYTES) {
+    messages.push({ level: "warning", text: treeEntry.path + " (" + formatBytes(treeEntry.size) +
+      ") exceeds the per-file limit and was skipped." });
+    ctx.skippedForSize.add(treeEntry.path);
+    return null;
+  }
+  if (ctx.budget.exceeded) return null;
+  try {
+    const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, treeEntry.path));
+    ctx.budget.totalBytes += buffer.byteLength;
+    if (ctx.budget.totalBytes > CONFIG.MAX_REPO_TOTAL_BYTES) {
+      ctx.budget.exceeded = true;
+      messages.push({ level: "warning", text: "Stopped downloading from the repository after exceeding " +
+        formatBytes(CONFIG.MAX_REPO_TOTAL_BYTES) + " total. Some files may be missing." });
+      return null;
+    }
+    const bytes = new Uint8Array(buffer);
+    stageBytes(staged, treeEntry.path, bytes, "repository",
+      repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    return bytes;
+  } catch (err) {
+    messages.push({ level: "warning", text: "Could not fetch " + treeEntry.path + " from the repository: " + summarizeError(err) });
+    return null;
+  }
+}
+
+/* Fetches every file directly under a resolved literal-or-partly-literal directory prefix
+   (spec: prefer a directory over guessing a single dynamic filename). optionalExtensionRe, when
+   given, restricts to matching paths (used to keep a directory-shaped source() dependency to
+   script files only); omit it to fetch everything in the directory (used for data references,
+   matching the existing data=<dir>/ convention). */
+async function stageDirectoryPrefix(repoInfo, tree, refUsed, prefix, staged, messages, ctx, optionalExtensionRe) {
+  const prefixLower = prefix.toLowerCase();
+  const matches = tree.entries.filter((e) => e.path.toLowerCase().startsWith(prefixLower) &&
+    (!optionalExtensionRe || optionalExtensionRe.test(e.path)));
+  await runWithConcurrency(matches, CONFIG.FETCH_CONCURRENCY, async (entry) => {
+    const bytes = await fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx);
+    if (bytes && /\.(r|rmd)$/i.test(entry.path)) ctx.scriptTexts.set(entry.path, decodeUtf8(bytes));
+  });
+}
+
+/* The safety net for "entry point could not be confidently determined" (multiple candidate root
+   scripts) and for a script whose own source() calls could not be statically resolved at all. */
+async function stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, ctx) {
+  const scriptEntries = tree.entries.filter((e) => /\.(r|rmd)$/i.test(e.path));
+  await runWithConcurrency(scriptEntries, CONFIG.FETCH_CONCURRENCY, async (entry) => {
+    const bytes = await fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx);
+    if (bytes) ctx.scriptTexts.set(entry.path, decodeUtf8(bytes));
+  });
+}
+
+/* Walks source()/knitr child= dependencies breadth-first starting from the entry script, fetching
+   only what is actually referenced. A reference that cannot be found in the repository is skipped
+   silently: a string literal that merely looks like a filename is not proof one exists (it could
+   be a URL, a table name, or a typo), and warning on every miss would be noise on every run. */
+async function syncScriptDependencies(repoInfo, tree, refUsed, entryPath, staged, messages, ctx) {
+  const visited = new Set();
+  const queue = [entryPath];
+  let dynamicDetected = false;
+
+  while (queue.length) {
+    const path = queue.shift();
+    const key = path.toLowerCase();
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    let text = ctx.scriptTexts.get(path);
+    if (text === undefined) {
+      const treeEntry = findTreeEntryCaseInsensitive(tree.entries, path);
+      if (!treeEntry) continue;
+      const bytes = await fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, messages, ctx);
+      if (!bytes) continue;
+      text = decodeUtf8(bytes);
+      ctx.scriptTexts.set(treeEntry.path, text);
+    }
+
+    for (const res of findCallArgResolutions(text, "source")) {
+      if (!res) { dynamicDetected = true; }
+      else if (res.exact) { queue.push(res.exact.replace(/^\.?\//, "")); }
+      else if (res.prefix) { await stageDirectoryPrefix(repoInfo, tree, refUsed, res.prefix, staged, messages, ctx, /\.(r|rmd)$/i); }
+    }
+    for (const childPath of extractLiteralOnly(text, RE_CHILD_LITERAL)) {
+      queue.push(childPath.replace(/^\.?\//, ""));
+    }
+  }
+
+  if (dynamicDetected) {
+    messages.push({ level: "info", text: "This script loads other scripts in a way ShareR could not " +
+      "fully resolve; downloading every .R/.Rmd file in the repository to be safe." });
+    await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, ctx);
+  }
+}
+
+/* Scans every script text already fetched (entry plus its resolved source() dependencies) for
+   literal or partly-literal data-file references, plus the explicit data/data-* folder convention.
+   Only runs when the visitor did not already name specific data via data= (spec 5.1: an explicit
+   data= list is authoritative and is never second-guessed by this heuristic). */
+async function autoDetectAndStageData(repoInfo, tree, refUsed, ctx, staged, messages) {
+  let dynamicDetected = false;
+  const exactWanted = new Set();
+  const prefixDirs = new Set();
+
+  for (const text of ctx.scriptTexts.values()) {
+    for (const res of findCallArgResolutions(text, DATA_FUNCS_ALT)) {
+      if (!res) { dynamicDetected = true; }
+      else if (res.exact) { exactWanted.add(res.exact.replace(/^\.?\//, "")); }
+      else if (res.prefix) { prefixDirs.add(res.prefix); }
+    }
+  }
+
+  for (const wanted of exactWanted) {
+    const found = findTreeEntryCaseInsensitive(tree.entries, wanted);
+    if (found) await fetchAndStageRepoEntry(repoInfo, refUsed, found, staged, messages, ctx);
+  }
+  for (const prefix of prefixDirs) {
+    await stageDirectoryPrefix(repoInfo, tree, refUsed, prefix, staged, messages, ctx, null);
+  }
+
+  // A folder literally named "data" or "data-*" anywhere in the repository is almost certainly
+  // input data regardless of whether any read call referencing it could be resolved.
+  const dataFolderEntries = tree.entries.filter((e) => isInDataFolder(e.path));
+  await runWithConcurrency(dataFolderEntries, CONFIG.FETCH_CONCURRENCY,
+    (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
+
+  if (dynamicDetected) {
+    messages.push({ level: "info", text: "This script loads data files in a way ShareR could not " +
+      "fully resolve; downloading every recognized data file in the repository to be safe." });
+    const dataExtEntries = tree.entries.filter((e) => isDataFilePath(e.path));
+    await runWithConcurrency(dataExtEntries, CONFIG.FETCH_CONCURRENCY,
+      (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
+  }
+}
+
+/* Last-resort recovery when a run fails on a missing file that static analysis did not catch
+   (spec-honest: this is a heuristic, not an R parser, and will occasionally miss something).
+   Fetches every remaining repository file regardless of type; already-staged files are skipped
+   for free by fetchAndStageRepoEntry's own check. */
+async function fallbackFetchEntireRepo(repoInfo, tree, refUsed, staged, messages, ctx) {
+  await runWithConcurrency(tree.entries, CONFIG.FETCH_CONCURRENCY,
+    (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
+}
+
+/* Re-fetches files that were skipped only for exceeding CONFIG.MAX_REPO_FILE_BYTES, bypassing
+   that cap up to the higher MAX_UPLOAD_FILE_BYTES ceiling. Called before fallbackFetchEntireRepo
+   on a missing-file retry: a run that just failed is proof the file is actually needed, which the
+   original "skip large files by default" heuristic could not have known in advance. */
+async function fetchSkippedLargeFiles(repoInfo, tree, refUsed, staged, messages, ctx) {
+  const paths = Array.from(ctx.skippedForSize);
+  ctx.skippedForSize.clear();
+  for (const path of paths) {
+    if (ctx.budget.exceeded) break;
+    const treeEntry = findTreeEntryCaseInsensitive(tree.entries, path);
+    if (!treeEntry || staged.has(treeEntry.path)) continue;
+    try {
+      const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, treeEntry.path));
+      ctx.budget.totalBytes += buffer.byteLength;
+      if (ctx.budget.totalBytes > CONFIG.MAX_REPO_TOTAL_BYTES) {
+        ctx.budget.exceeded = true;
+        messages.push({ level: "warning", text: "Stopped downloading from the repository after exceeding " +
+          formatBytes(CONFIG.MAX_REPO_TOTAL_BYTES) + " total. Some files may still be missing." });
+        break;
+      }
+      stageBytes(staged, treeEntry.path, new Uint8Array(buffer), "repository",
+        repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "warning", text: "Could not fetch " + treeEntry.path + " from the repository: " + summarizeError(err) });
+    }
+  }
+}
+
+/* Entry-point auto-detection (spec section 5.3), used only when repo= is given and entry= is not. */
+function autoDetectEntry(entries) {
+  const rootByLower = new Map();
+  for (const e of entries) if (!e.path.includes("/")) rootByLower.set(e.path.toLowerCase(), e.path);
+  for (const name of ["main.r", "run.r", "main.rmd", "run.rmd"]) {
+    if (rootByLower.has(name)) return { path: rootByLower.get(name), candidates: null };
+  }
+  const EXCLUDE_DIRS = ["tests/", "test/", "man/", "r/", "inst/", "vignettes/", "renv/", "packrat/"];
+  const scripts = entries.filter((e) => /\.(r|rmd)$/i.test(e.path) &&
+    !EXCLUDE_DIRS.some((d) => e.path.toLowerCase().startsWith(d)));
+  if (scripts.length === 0) throw new ShareRError("No .R or .Rmd files were found in this repository.");
+  if (scripts.length === 1) return { path: scripts[0].path, candidates: null };
+  const sorted = scripts.slice().sort((a, b) => {
+    const aRoot = !a.path.includes("/"), bRoot = !b.path.includes("/");
+    if (aRoot !== bRoot) return aRoot ? -1 : 1;
+    const aRmd = /\.rmd$/i.test(a.path), bRmd = /\.rmd$/i.test(b.path);
+    if (aRmd !== bRmd) return aRmd ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+  return { path: null, candidates: sorted.map((e) => e.path) };
+}
+
+/* ### Directory resolution for data= (spec section 5.1) ### */
+
+async function fetchDirectoryListingHtml(url) {
+  const res = await fetch(url.href);
+  if (!res.ok) throw new ShareRError("Could not list directory: " + url.href + " (HTTP " + res.status + ")");
+  const contentType = res.headers.get("Content-Type") || "";
+  const text = await res.text();
+  if (!/html/i.test(contentType) && !/^\s*<!doctype html|<html/i.test(text)) return null;
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  const files = [];
+  for (const a of doc.querySelectorAll("a[href]")) {
+    const href = a.getAttribute("href");
+    if (!href || href.startsWith("?") || href === "../" || href === ".." || href === "/") continue;
+    let abs;
+    try { abs = new URL(href, url.href); } catch { continue; }
+    if (abs.pathname.endsWith("/")) continue; // a subdirectory; one level deep only
+    const parentOfChild = abs.pathname.slice(0, abs.pathname.lastIndexOf("/") + 1);
+    if (parentOfChild !== url.pathname) continue; // not a direct child of this directory
+    files.push(abs);
+  }
+  return files;
+}
+
+async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, messages) {
+  if (repoInfo && !/^https?:\/\//i.test(target)) {
+    if (!RE_PATH.test(target)) throw new ShareRError("Not a valid repository path: " + target);
+    const prefix = target.endsWith("/") ? target : target + "/";
+    const prefixLower = prefix.toLowerCase();
+    const matches = tree.entries.filter((e) => e.path.toLowerCase().startsWith(prefixLower) &&
+      !e.path.slice(prefix.length).includes("/"));
+    if (matches.length === 0) { messages.push({ level: "warning", text: "No files found in repository directory: " + target }); return; }
+    const sourceLabel = repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed;
+    for (const m of matches) {
+      try {
+        const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, m.path));
+        stageBytes(staged, basenameOf(m.path), new Uint8Array(buffer), "repository", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+      } catch (err) {
+        messages.push({ level: "warning", text: "Could not fetch " + m.path + " from the repository: " + summarizeError(err) });
+      }
+    }
+    return;
+  }
+
+  const u = parseFileUrl(target);
+  const ghDir = matchGithubTreeUrl(u);
+  if (ghDir) {
+    const apiUrl = CONFIG.GITHUB_API + "/repos/" + ghDir.owner + "/" + ghDir.repo + "/contents/" +
+      ghDir.path.split("/").map(encodeURIComponent).join("/") + "?ref=" + encodeURIComponent(ghDir.ref);
+    const res = await fetch(apiUrl, { headers: { Accept: "application/vnd.github+json" } });
+    checkGithubResponseForCommonErrors(res, ghDir.owner, ghDir.repo, ghDir.ref);
+    if (!res.ok) { messages.push({ level: "warning", text: "Could not list GitHub directory: " + target + " (HTTP " + res.status + ")" }); return; }
+    const list = await res.json();
+    const files = Array.isArray(list) ? list.filter((e) => e.type === "file") : [];
+    if (files.length === 0) { messages.push({ level: "warning", text: "No files found in GitHub directory: " + target }); return; }
+    for (const f of files) {
+      try {
+        const { buffer } = await fetchArrayBufferWithRetry(f.download_url);
+        stageBytes(staged, f.name, new Uint8Array(buffer), "url", target, messages, CONFIG.MAX_REPO_FILE_BYTES);
+      } catch (err) {
+        messages.push({ level: "warning", text: describeFetchFailure(f.download_url, err) });
+      }
+    }
+    return;
+  }
+
+  let files;
+  try { files = await fetchDirectoryListingHtml(u); }
+  catch (err) { messages.push({ level: "warning", text: err.message || String(err) }); return; }
+  if (files === null) {
+    messages.push({ level: "warning", text: u.hostname + " did not return a file listing. Many web " +
+      "servers do not publish one. List the files individually instead, for example " +
+      "data=a.csv,b.csv, or open them from your computer." });
+    return;
+  }
+  if (files.length === 0) { messages.push({ level: "warning", text: "No files found at " + target }); return; }
+  for (const fileUrl of files) {
+    try {
+      const { buffer } = await fetchArrayBufferWithRetry(fileUrl.href);
+      stageBytes(staged, decodeURIComponent(basenameOf(fileUrl.pathname)), new Uint8Array(buffer), "url", target, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "warning", text: describeFetchFailure(fileUrl.href, err) });
+    }
+  }
+}
+
+/* ### Staging orchestration: entry + data, from URL, repo, or already-staged local files ### */
+
+async function stageEntryFileFromUrl(url, staged, messages) {
+  try {
+    const { buffer } = await fetchArrayBufferWithRetry(url.href);
+    const name = decodeURIComponent(basenameOf(url.pathname)) || "entry.R";
+    stageBytes(staged, name, new Uint8Array(buffer), "url", url.hostname, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    return name;
+  } catch (err) {
+    messages.push({ level: "error", text: describeFetchFailure(url.href, err) });
+    return null;
+  }
+}
+
+/* Mutates `staged` in place (it is the app's single persistent StagedFileStore, so local files
+   added before or after a Load are never lost) and reports progress/errors into `messages`. */
+async function stageFromParams(params, staged, messages, onProgress) {
+  const report = (text) => { if (onProgress) onProgress(text); };
+  let repoInfo = null, refUsed = null, tree = null, explicitEntryPath = null, candidates = null;
+  let repoSyncCtx = null;
+
+  // A github.com file-view ("blob") or "raw" link isn't fetchable directly -- github.com sends
+  // no CORS header, unlike raw.githubusercontent.com -- and fetching it as a single file would
+  // also miss the script's own referenced data files. Recognize it and treat it exactly as if
+  // repo=/ref=/entry= had been written out by hand, unless repo= was already given explicitly
+  // (which takes precedence; a conflicting entry= URL still falls through to the safety-net
+  // rewrite in stageEntryFileFromUrl below).
+  let effectiveEntryRaw = params.entryRaw, effectiveRepoRaw = params.repoRaw, effectiveRefRaw = params.refRaw;
+  if (!effectiveRepoRaw && effectiveEntryRaw && /^https?:\/\//i.test(effectiveEntryRaw)) {
+    let blobMatch = null;
+    try { blobMatch = matchGithubBlobUrl(parseFileUrl(effectiveEntryRaw)); } catch { /* not a valid URL; reported below as usual */ }
+    if (blobMatch) {
+      effectiveRepoRaw = blobMatch.owner + "/" + blobMatch.repo;
+      if (!effectiveRefRaw) effectiveRefRaw = blobMatch.ref;
+      effectiveEntryRaw = blobMatch.path;
+      messages.push({ level: "info", text: "Recognized " + params.entryRaw + " as a GitHub file link " +
+        "and loaded the repository, so its referenced data files can be found automatically." });
+      syncUrlBar({ repo: effectiveRepoRaw, ref: effectiveRefRaw, entry: effectiveEntryRaw });
+    }
+  }
+
+  if (effectiveRepoRaw) {
+    repoInfo = parseRepoParam(effectiveRepoRaw);
+    if (effectiveRefRaw && !RE_REF.test(effectiveRefRaw)) throw new ShareRError("Not a valid branch, tag, or commit: " + effectiveRefRaw);
+    report("Resolving " + repoInfo.owner + "/" + repoInfo.repo + "...");
+    const resolved = await resolveRefAndTree(repoInfo.owner, repoInfo.repo, effectiveRefRaw, messages);
+    refUsed = resolved.refUsed;
+    tree = resolved.tree;
+    if (tree.truncated) messages.push({ level: "warning", text: "GitHub truncated the file listing for this " +
+      "repository (it is very large); some helper files may be missing." });
+  }
+
+  // Resolve which script is the entry point before downloading anything, so only the files
+  // actually needed get fetched instead of mirroring the whole repository (spec section 0.1).
+  let repoEntryPath = null;
+  if (effectiveEntryRaw && !/^https?:\/\//i.test(effectiveEntryRaw)) {
+    if (!repoInfo) throw new ShareRError('entry="' + effectiveEntryRaw + '" looks like a repository-relative path, but no repo= parameter was given.');
+    if (!RE_PATH.test(effectiveEntryRaw)) throw new ShareRError("Not a valid repository path: " + effectiveEntryRaw);
+    const found = findTreeEntryCaseInsensitive(tree.entries, effectiveEntryRaw.replace(/^\/+/, ""));
+    if (found) repoEntryPath = found.path;
+    else messages.push({ level: "error", text: "Entry file not found in repository: " + effectiveEntryRaw });
+  } else if (!effectiveEntryRaw && repoInfo) {
+    const detected = autoDetectEntry(tree.entries);
+    if (detected.path) repoEntryPath = detected.path; else candidates = detected.candidates;
+  }
+
+  if (repoInfo) {
+    report("Downloading repository files...");
+    repoSyncCtx = makeRepoSyncCtx();
+    if (repoEntryPath) {
+      explicitEntryPath = repoEntryPath;
+      await syncScriptDependencies(repoInfo, tree, refUsed, repoEntryPath, staged, messages, repoSyncCtx);
+      if (params.dataValues.length === 0) {
+        await autoDetectAndStageData(repoInfo, tree, refUsed, repoSyncCtx, staged, messages);
+      }
+    } else if (candidates) {
+      // Entry is ambiguous; fetch every script so whichever the user picks is already staged.
+      // Data auto-detection runs once the choice is resolved (see completeCandidateSelection),
+      // since which script is authoritative is not known yet.
+      await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
+    }
+  }
+
+  if (effectiveEntryRaw && /^https?:\/\//i.test(effectiveEntryRaw)) {
+    report("Fetching entry script...");
+    explicitEntryPath = await stageEntryFileFromUrl(parseFileUrl(effectiveEntryRaw), staged, messages);
+  }
+
+  for (const raw of params.dataValues) {
+    const { target, rename, isDirectory } = parseDataSpec(raw);
+    report("Fetching " + target + "...");
+    try {
+      if (isDirectory) {
+        await stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, messages);
+      } else if (/^https?:\/\//i.test(target)) {
+        const url = parseFileUrl(target);
+        try {
+          const { buffer } = await fetchArrayBufferWithRetry(url.href);
+          const base = decodeURIComponent(basenameOf(url.pathname)) || "data";
+          stageBytes(staged, rename || base, new Uint8Array(buffer), "url", url.hostname, messages, CONFIG.MAX_REPO_FILE_BYTES);
+        } catch (err) {
+          messages.push({ level: "error", text: describeFetchFailure(url.href, err) });
+        }
+      } else {
+        if (!repoInfo) throw new ShareRError('data="' + target + '" is a repository-relative path but no repo= parameter was given.');
+        if (!RE_PATH.test(target)) throw new ShareRError("Not a valid repository path: " + target);
+        const found = findTreeEntryCaseInsensitive(tree.entries, target);
+        if (!found) { messages.push({ level: "error", text: "Data file not found in repository: " + target }); }
+        else {
+          try {
+            const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, found.path));
+            stageBytes(staged, rename || basenameOf(found.path), new Uint8Array(buffer), "repository",
+              repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+          } catch (err) {
+            messages.push({ level: "error", text: "Could not fetch " + target + " from the repository: " + summarizeError(err) });
+          }
+        }
+      }
+    } catch (err) {
+      messages.push({ level: "error", text: err.message || String(err) });
+    }
+  }
+
+  return { repoInfo, refUsed, tree, explicitEntryPath, candidates, repoSyncCtx };
+}
+
+/* ### Local file handling: real button, drop target, and paste target (spec section 7) ### */
+
+function readAllEntries(dirReader) {
+  return new Promise((resolve, reject) => {
+    const all = [];
+    function readBatch() {
+      dirReader.readEntries((batch) => {
+        if (!batch.length) { resolve(all); return; }
+        all.push(...batch);
+        readBatch();
+      }, reject);
+    }
+    readBatch();
+  });
+}
+
+function fileFromEntry(entry) {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+async function walkFileSystemEntry(entry, basePath, results) {
+  const path = basePath ? basePath + "/" + entry.name : entry.name;
+  if (entry.isFile) {
+    const file = await fileFromEntry(entry);
+    results.push({ file, relPath: path });
+  } else if (entry.isDirectory) {
+    const children = await readAllEntries(entry.createReader());
+    for (const child of children) await walkFileSystemEntry(child, path, results);
+  }
+}
+
+async function collectFilesFromDataTransfer(dataTransfer) {
+  const items = dataTransfer.items;
+  if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+    const entries = Array.from(items).map((it) => it.webkitGetAsEntry()).filter(Boolean);
+    const results = [];
+    for (const entry of entries) await walkFileSystemEntry(entry, "", results);
+    return results;
+  }
+  return Array.from(dataTransfer.files).map((f) => ({ file: f, relPath: f.name }));
+}
+
+/* ### Writing staged files into the webR virtual filesystem (spec sections 3.3 and 6.4) ### */
+
+async function writeStagedFilesToVfs(engine, list) {
+  const dirs = new Set([CONFIG.VFS_PROJECT_DIR]);
+  for (const f of list) {
+    const full = vfsPathFor(f.path);
+    let d = full.slice(0, full.lastIndexOf("/"));
+    while (d.length > CONFIG.VFS_PROJECT_DIR.length) {
+      dirs.add(d);
+      d = d.slice(0, d.lastIndexOf("/"));
+    }
+  }
+  const sortedDirs = Array.from(dirs).sort((a, b) => a.split("/").length - b.split("/").length);
+  for (const dir of sortedDirs) {
+    try { await engine.FS.mkdir(dir); }
+    catch (err) {
+      // webR.FS throws rather than returning null (spec 3.3); ignore only "already exists".
+      if (!/exist/i.test(String(err && err.message || err))) throw err;
+    }
+  }
+  for (const f of list) {
+    await engine.FS.writeFile(vfsPathFor(f.path), f.bytes);
+  }
+}
+
+async function confirmWorkingDirectory(engine) {
+  const shelter = await new engine.Shelter();
+  try {
+    // CONFIG.VFS_PROJECT_DIR is an app-controlled constant, never user input, so building this
+    // one line of R source directly is safe; nothing here is untrusted (spec section 14 still
+    // applies to params/params and repository content, which never reach evalR as source text).
+    await shelter.captureR('setwd("' + CONFIG.VFS_PROJECT_DIR + '")', { withAutoprint: false });
+    const cap = await shelter.captureR("getwd()", { withAutoprint: true, captureStreams: true });
+    const cwd = cap.output.filter((o) => o.type === "stdout").map((o) => o.data).join("").trim();
+    if (cwd.indexOf(CONFIG.VFS_PROJECT_DIR) === -1) {
+      throw new ShareRError("R's working directory did not change as expected (got: " + cwd + ").");
+    }
+  } finally {
+    await shelter.purge();
+  }
+}
+
+/* ### R engine (spec sections 3.2 and 8.1) ### */
+
+const App = {
+  stagedStore: null,
+  engine: null,
+  running: false,
+  repoInfo: null,
+  refUsed: null,
+  tree: null,
+  explicitEntryPath: null,
+  candidates: null,
+  selectedEntryPath: null,
+  repoSyncCtx: null,       // budget + decoded-script-text cache shared across the whole repo sync
+  dataValuesExplicit: false // true when data= was given; suppresses the data auto-detection heuristic
+};
+
+function decodeUtf8(bytes) {
+  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+/* Lazily initialize the R engine on first Run, then keep it warm across runs (spec section 14).
+
+   Two console messages from webR are expected and harmless, confirmed during Stage 1:
+   - 'Refused to get unsafe header "Content-Encoding"' from R.js (Emscripten's gzip probe).
+   - 'WebR is using `PostMessage` communication channel, nested R REPLs are not available.' */
+async function getEngine() {
+  if (App.engine) return App.engine;
+  setStatus("Loading R engine (first run downloads several megabytes)...");
+  const { WebR, ChannelType } = await import(CONFIG.WEBR_CDN_URL);
+  const instance = new WebR({ channelType: ChannelType.PostMessage, baseUrl: CONFIG.WEBR_BASE_URL });
+  await instance.init();
+  App.engine = instance;
+  attachLiveProgressIndicator(instance);
+  return instance;
+}
+
+/* Spec section 8.1 asks for a webR.stream() reader appending output live, run in parallel with
+   captureR. Stage 1 already proved captureR({captureStreams:true})'s returned transcript is
+   correct and complete; webR.stream()'s exact event shape on the PostMessage channel is not
+   independently verified in this environment. Rather than risk duplicated or dropped log lines
+   on an unverified API, the stream reader here only updates the status line with a running count,
+   so a long script does not look frozen, while captureR's result remains the single source of
+   truth for the log. Revisit if webR.stream() is confirmed reliable by hand. */
+function attachLiveProgressIndicator(engine) {
+  if (typeof engine.stream !== "function") return;
+  (async () => {
+    try {
+      let count = 0;
+      for await (const _msg of engine.stream()) {
+        if (!App.running) continue;
+        count++;
+        if (count % 5 === 0) setStatus("Running... (" + count + " output line(s) so far)");
+      }
+    } catch (err) {
+      console.warn("Live progress stream unavailable (non-fatal):", err);
+    }
+  })();
+}
+
+function describeCondition(item) {
+  if (item.type === "stdout" || item.type === "stderr") return item.data;
+  if (item.data && typeof item.data === "object" && "message" in item.data) return item.data.message;
+  return typeof item.data === "string" ? item.data : JSON.stringify(item.data);
+}
+
+/* Recognizes R's own wording for "the file was not there," not a specific missing path -- good
+   enough to decide whether a wider fetch is worth trying, without pretending to parse the error. */
+const RE_MISSING_FILE_ERROR = /cannot open (?:the )?(?:file|connection)|no such file or directory/i;
+
+/* R quotes the package name with curly quotes ('ggplot2') in an interactive session and straight
+   quotes ('ggplot2') when run non-interactively; matching both keeps this working either way. */
+const RE_MISSING_PACKAGE_ERROR = /there is no package called\s*[\u2018']([^\u2019']+)[\u2019']/i;
+
+function detectMissingFileError(outputItems) {
+  for (const item of outputItems) {
+    if (item.type !== "error") continue;
+    const text = describeCondition(item);
+    if (typeof text === "string" && RE_MISSING_FILE_ERROR.test(text)) return text;
+  }
+  return null;
+}
+
+async function runEntry() {
+  if (App.running || !App.selectedEntryPath) return;
+  const staged = App.stagedStore.get(App.selectedEntryPath);
+  if (!staged) { setStatus("The selected script is no longer staged."); return; }
+
+  if (/\.rmd$/i.test(App.selectedEntryPath)) {
+    appendLogLine("message", "This is an R Markdown file. R Markdown execution lands in Stage " +
+      "2B; Stage 2A can run plain .R scripts only.");
+    return;
+  }
+
+  App.running = true;
+  updateRunControls();
+  elLog.textContent = "";
+  await executeSelectedEntry(false);
+}
+
+/* isRetry guarantees at most one automatic recovery attempt per Run click: static analysis
+   (spec: resolve what is confidently knowable, widen otherwise) is a heuristic and will
+   occasionally miss a reference, so a run that fails on a missing file gets exactly one chance
+   to fetch more from the repository and try again, never a retry loop. */
+async function executeSelectedEntry(isRetry) {
+  try {
+    const engine = await getEngine();
+    setStatus("Preparing working directory...");
+    await writeStagedFilesToVfs(engine, App.stagedStore.list());
+    await confirmWorkingDirectory(engine);
+    setStatus("Running " + App.selectedEntryPath + "...");
+    const staged = App.stagedStore.get(App.selectedEntryPath);
+    const code = decodeUtf8(staged.bytes);
+    const shelter = await new engine.Shelter();
+    let capture;
+    try {
+      capture = await shelter.captureR(code, {
+        withAutoprint: true,
+        captureStreams: true,
+        captureConditions: true
+      });
+    } finally {
+      await shelter.purge();
+    }
+
+    const missing = !isRetry && App.repoInfo && App.tree && detectMissingFileError(capture.output);
+    if (missing) {
+      appendLogLine("message", "A required file seems to be missing (" + missing + "). " +
+        "Downloading more of the repository and retrying once...");
+      setStatus("Downloading more of the repository...");
+      const ctx = App.repoSyncCtx || makeRepoSyncCtx();
+      App.repoSyncCtx = ctx;
+      const fallbackMessages = [];
+      await fetchSkippedLargeFiles(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
+      await fallbackFetchEntireRepo(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
+      renderStagingMessages(fallbackMessages, true);
+      await executeSelectedEntry(true);
+      return;
+    }
+
+    for (const item of capture.output) {
+      const text = describeCondition(item);
+      appendLogLine(item.type, text);
+      if (item.type === "error" && typeof text === "string") {
+        const pkgMatch = text.match(RE_MISSING_PACKAGE_ERROR);
+        if (pkgMatch) {
+          appendLogLine("message", 'This script needs the R package "' + pkgMatch[1] + '", which ' +
+            "Stage 2A does not install automatically yet. Package installation lands in Stage 2B; " +
+            "only scripts that use base R can run end to end for now.");
+        }
+      }
+    }
+    setStatus("Done.");
+  } catch (err) {
+    appendLogLine("error", err && err.message ? err.message : String(err));
+    setStatus("Error. See log below.");
+    console.error(err);
+  } finally {
+    App.running = false;
+    updateRunControls();
+  }
+}
+
+/* No interrupt is possible on the PostMessage channel (spec section 3.2). Stop terminates the
+   worker and discards engine state; the next Run pays a re-initialization cost, not a re-download,
+   since engine assets are already cached by the browser's HTTP cache. */
+async function stopEngine() {
+  App.running = false;
+  if (App.engine) {
+    setStatus("Stopping and resetting R...");
+    try { await App.engine.close(); }
+    catch (err) { console.error(err); }
+    App.engine = null;
+  }
+  updateRunControls();
+  setStatus("Idle. R engine will restart on next Run.");
+}
+
+/* ### UI: element references ### */
+
+const elSourceForm = document.getElementById("source-form");
+const elEntryInput = document.getElementById("entry-input");
+const elDataInput = document.getElementById("data-input");
+const elRepoInput = document.getElementById("repo-input");
+const elRefInput = document.getElementById("ref-input");
+const elStagingStatus = document.getElementById("staging-status");
+const elStagingMessages = document.getElementById("staging-messages");
+const elStagedBody = document.getElementById("staged-files-body");
+
+const elAddFilesButton = document.getElementById("add-files-button");
+const elAddFolderButton = document.getElementById("add-folder-button");
+const elFileInput = document.getElementById("file-input");
+const elFolderInput = document.getElementById("folder-input");
+
+const elEntryCandidates = document.getElementById("entry-candidates");
+const elEntryCandidatesList = document.getElementById("entry-candidates-list");
+const elChooseEntryButton = document.getElementById("choose-entry-button");
+
+const elEntrySelectField = document.getElementById("entry-select-field");
+const elEntrySelect = document.getElementById("entry-select");
+const elRunSourceLine = document.getElementById("run-source-line");
+
 const elRun = document.getElementById("run-button");
 const elStop = document.getElementById("stop-button");
 const elStatus = document.getElementById("status-line");
 const elLog = document.getElementById("output-log");
 
-let webR = null;
-let running = false;
+/* ### UI: rendering ### */
 
-function setStatus(text) {
-  elStatus.textContent = text;
-}
+function setStatus(text) { elStatus.textContent = text; }
+function setStagingStatus(text) { elStagingStatus.textContent = text; }
 
 function appendLogLine(kind, text) {
   const prefixes = { stderr: "[stderr] ", message: "[message] ", warning: "[warning] ", error: "[error] " };
@@ -223,88 +1674,317 @@ function appendLogLine(kind, text) {
   elLog.scrollTop = elLog.scrollHeight;
 }
 
-/* Lazily initialize the R engine on first Run, then keep it warm across runs (spec section 14).
-
-   Two console messages from webR are expected and harmless. Both were investigated and confirmed
-   benign; do not spend time on them again:
-
-   - 'Refused to get unsafe header "Content-Encoding"' from R.js. Emscripten's lazy-file loader
-     probes that header to detect gzip, and CORS does not expose it. Verified irrelevant here: the
-     lazily loaded files are served uncompressed and their Content-Length equals their true byte
-     length, so the size math the loader actually depends on is correct.
-   - 'WebR is using `PostMessage` communication channel, nested R REPLs are not available.'
-     This is the documented and intended tradeoff from spec section 3.2. */
-async function getEngine() {
-  if (webR) {
-    return webR;
+function renderStagingMessages(messages, append) {
+  if (!append) elStagingMessages.innerHTML = "";
+  for (const m of messages) {
+    const div = document.createElement("div");
+    div.className = "staging-msg staging-msg-" + m.level;
+    const prefix = m.level === "error" ? "Error: " : m.level === "warning" ? "Warning: " : "Note: ";
+    div.textContent = prefix + m.text;
+    elStagingMessages.appendChild(div);
   }
-  setStatus("Loading R engine (first run downloads several megabytes)...");
-  const { WebR, ChannelType } = await import(CONFIG.WEBR_CDN_URL);
-  const instance = new WebR({
-    channelType: ChannelType.PostMessage,
-    baseUrl: CONFIG.WEBR_BASE_URL
-  });
-  await instance.init();
-  webR = instance;
-  return webR;
 }
 
-async function runCode() {
-  if (running) {
+function disableSourceForm(disabled) {
+  for (const el of elSourceForm.elements) el.disabled = disabled;
+}
+
+function replaceStagedFile(path) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.hidden = true;
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    document.body.removeChild(input);
+    if (!file) return;
+    const messages = [];
+    try {
+      const buffer = await file.arrayBuffer();
+      stageBytes(App.stagedStore, path, new Uint8Array(buffer), "local", "your computer", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "error", text: "Could not read " + file.name + ": " + (err && err.message ? err.message : err) });
+    }
+    renderStagingMessages(messages, true);
+    updateSelectedEntry();
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
+function renderStagedFiles() {
+  const list = App.stagedStore.list();
+  elStagedBody.innerHTML = "";
+  if (list.length === 0) {
+    const tr = document.createElement("tr");
+    tr.className = "empty-row";
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.textContent = "No files staged yet.";
+    tr.appendChild(td);
+    elStagedBody.appendChild(tr);
     return;
   }
-  running = true;
-  elRun.disabled = true;
-  elLog.textContent = "";
+  for (const f of list) {
+    const tr = document.createElement("tr");
+    const tdName = document.createElement("td"); tdName.textContent = f.path;
+    const tdSize = document.createElement("td"); tdSize.textContent = formatBytes(f.size);
+    const tdSource = document.createElement("td"); tdSource.textContent = describeSource(f);
+    const tdActions = document.createElement("td");
+    const replaceBtn = document.createElement("button");
+    replaceBtn.type = "button";
+    replaceBtn.className = "btn btn-secondary btn-sm";
+    replaceBtn.textContent = "Replace...";
+    replaceBtn.setAttribute("aria-label", "Replace " + f.path + " with a file from your computer");
+    replaceBtn.addEventListener("click", () => replaceStagedFile(f.path));
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "btn btn-secondary btn-sm";
+    removeBtn.textContent = "Remove";
+    removeBtn.setAttribute("aria-label", "Remove " + f.path);
+    removeBtn.addEventListener("click", () => { App.stagedStore.remove(f.path); updateSelectedEntry(); });
+    tdActions.append(replaceBtn, removeBtn);
+    tr.append(tdName, tdSize, tdSource, tdActions);
+    elStagedBody.appendChild(tr);
+  }
+}
+
+function renderEntryCandidates() {
+  if (!App.candidates) {
+    elEntryCandidates.hidden = true;
+    elEntryCandidatesList.innerHTML = "";
+    return;
+  }
+  elEntryCandidates.hidden = false;
+  elEntryCandidatesList.innerHTML = "";
+  App.candidates.forEach((path, i) => {
+    const id = "entry-candidate-" + i;
+    const wrap = document.createElement("div");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "entry-candidate";
+    radio.id = id;
+    radio.value = path;
+    if (i === 0) radio.checked = true;
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = " " + path;
+    wrap.append(radio, label);
+    elEntryCandidatesList.appendChild(wrap);
+  });
+}
+
+function renderEntrySelect(scripts, chosen) {
+  if (scripts.length === 0) { elEntrySelectField.hidden = true; return; }
+  elEntrySelectField.hidden = false;
+  elEntrySelect.innerHTML = "";
+  for (const f of scripts) {
+    const opt = document.createElement("option");
+    opt.value = f.path;
+    opt.textContent = f.path;
+    if (f.path === chosen) opt.selected = true;
+    elEntrySelect.appendChild(opt);
+  }
+}
+
+function renderRunSourceLine() {
+  if (!App.selectedEntryPath) {
+    elRunSourceLine.textContent = "Add or load a script above to get started.";
+    return;
+  }
+  const staged = App.stagedStore.get(App.selectedEntryPath);
+  elRunSourceLine.textContent = staged
+    ? "Running " + staged.path + " from " + describeSource(staged) + "."
+    : "Add or load a script above to get started.";
+}
+
+function updateRunControls() {
+  elRun.disabled = App.running || !App.selectedEntryPath;
+  elStop.disabled = !App.running && !App.engine;
+}
+
+function updateSelectedEntry() {
+  const list = App.stagedStore.list();
+  const scripts = list.filter((f) => /\.(r|rmd)$/i.test(f.path));
+  let chosen = null;
+  if (App.explicitEntryPath) {
+    const wantedLower = App.explicitEntryPath.toLowerCase();
+    const match = list.find((f) => f.path.toLowerCase() === wantedLower);
+    if (match) chosen = match.path;
+  }
+  if (!chosen && scripts.length === 1) chosen = scripts[0].path;
+  App.selectedEntryPath = chosen;
+  renderEntrySelect(scripts, chosen);
+  renderRunSourceLine();
+  updateRunControls();
+}
+
+/* ### Staging pipeline: ties URL-parameter parsing to the persistent staged file store ### */
+
+async function runStagingPipeline(params) {
+  setStagingStatus("Working...");
+  disableSourceForm(true);
+  const messages = [];
   try {
-    const engine = await getEngine();
-    setStatus("Running...");
-    const shelter = await new engine.Shelter();
-    try {
-      const capture = await shelter.captureR(elCode.value, {
-        withAutoprint: true,
-        captureStreams: true,
-        captureConditions: true
-      });
-      for (const item of capture.output) {
-        const isStream = item.type === "stdout" || item.type === "stderr";
-        const text = isStream ? item.data : (item.data && item.data.message) ? item.data.message : JSON.stringify(item.data);
-        appendLogLine(item.type, text);
-      }
-      setStatus("Done.");
-    } finally {
-      await shelter.purge();
-    }
+    const result = await stageFromParams(params, App.stagedStore, messages, setStagingStatus);
+    App.repoInfo = result.repoInfo;
+    App.refUsed = result.refUsed;
+    App.tree = result.tree;
+    App.candidates = result.candidates;
+    App.repoSyncCtx = result.repoSyncCtx;
+    App.dataValuesExplicit = params.dataValues.length > 0;
+    if (result.explicitEntryPath) App.explicitEntryPath = result.explicitEntryPath;
+    renderStagingMessages(messages, false);
+    renderEntryCandidates();
+    updateSelectedEntry();
+    setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
+    if (params.autorun && App.selectedEntryPath && !App.candidates) await runEntry();
   } catch (err) {
-    appendLogLine("error", err && err.message ? err.message : String(err));
-    setStatus("Error. See log below.");
+    if (err instanceof ShareRRateLimitError) {
+      const resetText = err.resetDate ? err.resetDate.toLocaleTimeString() : "an unknown time";
+      setStagingStatus("GitHub's anonymous request limit is reached for your network. It resets at " +
+        resetText + ". You can still run your analysis now by opening the script and your data " +
+        "files from your computer.");
+    } else {
+      setStagingStatus(err.message || String(err));
+    }
     console.error(err);
   } finally {
-    running = false;
-    elRun.disabled = false;
+    disableSourceForm(false);
   }
 }
 
-/* No interrupt is possible on the PostMessage channel (spec section 3.2). Stop terminates the
-   worker and discards engine state; the next Run pays a re-initialization cost, not a re-download,
-   since the engine assets are already cached by the browser's HTTP cache. */
-async function stopEngine() {
-  elRun.disabled = false;
-  running = false;
-  if (webR) {
-    setStatus("Stopping and resetting R...");
+/* ### Local file add handlers ### */
+
+async function handleLocalFiles(items) {
+  const messages = [];
+  for (const { file, relPath } of items) {
     try {
-      await webR.close();
+      const buffer = await file.arrayBuffer();
+      stageBytes(App.stagedStore, relPath, new Uint8Array(buffer), "local", "your computer", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
     } catch (err) {
-      console.error(err);
+      messages.push({ level: "error", text: "Could not read " + relPath + ": " + (err && err.message ? err.message : err) });
     }
-    webR = null;
   }
-  setStatus("Idle. R engine will restart on next Run.");
+  renderStagingMessages(messages, true);
+  updateSelectedEntry();
 }
 
-elRun.addEventListener("click", runCode);
+/* ### Event wiring ### */
+
+elSourceForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  syncUrlBar({
+    entry: elEntryInput.value.trim(),
+    data: elDataInput.value.trim(),
+    repo: elRepoInput.value.trim(),
+    ref: elRefInput.value.trim()
+  });
+  runStagingPipeline(parseAppParams(window.location.search));
+});
+
+elAddFilesButton.addEventListener("click", () => elFileInput.click());
+elAddFolderButton.addEventListener("click", () => elFolderInput.click());
+
+elFileInput.addEventListener("change", (e) => {
+  handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.name })));
+  elFileInput.value = "";
+});
+elFolderInput.addEventListener("change", (e) => {
+  handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.webkitRelativePath || f.name })));
+  elFolderInput.value = "";
+});
+
+elAddFilesButton.addEventListener("dragover", (e) => { e.preventDefault(); elAddFilesButton.classList.add("drag-over"); });
+elAddFilesButton.addEventListener("dragleave", () => elAddFilesButton.classList.remove("drag-over"));
+elAddFilesButton.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  elAddFilesButton.classList.remove("drag-over");
+  const collected = await collectFilesFromDataTransfer(e.dataTransfer);
+  handleLocalFiles(collected);
+});
+elAddFilesButton.addEventListener("paste", (e) => {
+  const files = e.clipboardData && e.clipboardData.files;
+  if (files && files.length) handleLocalFiles(Array.from(files).map((f) => ({ file: f, relPath: f.name })));
+});
+document.addEventListener("paste", (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  const files = e.clipboardData && e.clipboardData.files;
+  if (files && files.length) handleLocalFiles(Array.from(files).map((f) => ({ file: f, relPath: f.name })));
+});
+
+/* The initial ambiguous-entry sync only fetched every script's *text* (stageAllScriptFiles); it
+   never ran the data auto-detection, because which script is authoritative was not known yet.
+   Once the visitor picks one, resolve its own source() dependencies (almost certainly already
+   staged, but a script under an excluded directory, e.g. tests/, would not be) and then run data
+   auto-detection against the now-complete script-text cache, unless data= was given explicitly. */
+async function completeCandidateSelection(chosenPath) {
+  App.explicitEntryPath = chosenPath;
+  App.candidates = null;
+  syncUrlBar({ entry: chosenPath });
+  renderEntryCandidates();
+  updateSelectedEntry();
+
+  if (App.repoInfo && App.tree) {
+    elChooseEntryButton.disabled = true;
+    setStagingStatus("Fetching " + chosenPath + " and its dependencies...");
+    const messages = [];
+    const ctx = App.repoSyncCtx || makeRepoSyncCtx();
+    App.repoSyncCtx = ctx;
+    try {
+      await syncScriptDependencies(App.repoInfo, App.tree, App.refUsed, chosenPath, App.stagedStore, messages, ctx);
+      if (!App.dataValuesExplicit) {
+        await autoDetectAndStageData(App.repoInfo, App.tree, App.refUsed, ctx, App.stagedStore, messages);
+      }
+    } catch (err) {
+      messages.push({ level: "error", text: err.message || String(err) });
+      console.error(err);
+    } finally {
+      renderStagingMessages(messages, true);
+      setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
+      elChooseEntryButton.disabled = false;
+      updateSelectedEntry();
+    }
+  }
+}
+
+elChooseEntryButton.addEventListener("click", () => {
+  const checked = elEntryCandidatesList.querySelector('input[name="entry-candidate"]:checked');
+  if (!checked) return;
+  completeCandidateSelection(checked.value);
+});
+
+elEntrySelect.addEventListener("change", () => {
+  App.explicitEntryPath = elEntrySelect.value;
+  syncUrlBar({ entry: elEntrySelect.value });
+  updateSelectedEntry();
+});
+
+elRun.addEventListener("click", runEntry);
 elStop.addEventListener("click", stopEngine);
+
+/* ### Bootstrap ### */
+
+function bootstrap() {
+  App.stagedStore = new StagedFileStore();
+  App.stagedStore.onChange = renderStagedFiles;
+  renderStagedFiles();
+
+  const params = parseAppParams(window.location.search);
+  elEntryInput.value = params.entryRaw;
+  elDataInput.value = params.dataValues.join(", ");
+  elRepoInput.value = params.repoRaw;
+  elRefInput.value = params.refRaw;
+
+  if (params.entryRaw || params.dataValues.length || params.repoRaw) {
+    runStagingPipeline(params);
+  } else {
+    updateSelectedEntry();
+  }
+}
+
+bootstrap();
+
 </script>
 
 </body>
