@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareR - Refined UI</title>
+<style>
+  :root {
+    --um-dark-blue: #00274C;
+    --um-maize: #FFCB05;
+    --bg-page: #f0f2f5;
+    --panel-bg: #ffffff;
+    --border: #e5e7eb;
+    --text-main: #111827;
+    --text-muted: #6b7280;
+    --accent: #2563eb;
+  }
+  
+  * { box-sizing: border-box; }
+  
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  header {
+    background-color: var(--um-dark-blue);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+  
+  .run-btn {
+    background-color: var(--um-maize);
+    color: var(--um-dark-blue);
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  .run-btn:hover { background-color: #e6b700; }
+
+  main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .panel {
+    background: var(--panel-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+  
+  .panel-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    background: #fafafa;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--um-dark-blue);
+  }
+
+  /* Left Pane */
+  .left-pane { 
+    flex: 1; 
+    min-width: 320px; 
+    max-width: 350px; 
+    transition: max-width 0.3s ease; 
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  /* Optional: allows the user to manually drag and resize the left pane */
+  .left-pane.resizable {
+    resize: horizontal;
+    overflow-x: hidden;
+  }
+  
+  .section { padding: 1rem; border-bottom: 1px solid var(--border); }
+  .section-label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem; letter-spacing: 0.05em; }
+
+  /* Carousel File Upload */
+  .file-carousel {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    scrollbar-width: thin;
+  }
+  .data-card {
+    flex: 0 0 auto;
+    width: 140px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 6px;
+    padding: 1rem 0.5rem;
+    text-align: center;
+    background: #f8fafc;
+    cursor: pointer;
+  }
+  .data-card:hover { border-color: var(--accent); background: #eff6ff; }
+  .data-filename { font-weight: 600; font-size: 0.85rem; color: var(--text-main); margin: 0.5rem 0 0.25rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .data-status { font-size: 0.75rem; color: var(--text-muted); }
+
+  /* Script Selector */
+  .script-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .script-item {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .script-item.active { border-color: var(--accent); background: #eff6ff; }
+  .script-name { font-size: 0.9rem; font-weight: 500; }
+
+  /* Code Editor Toggle */
+  .code-toggle-wrapper { padding: 1rem; background: #fafafa; border-bottom: 1px solid var(--border); }
+  .toggle-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  /* Mock Code Editor */
+  .editor-container {
+    display: none; 
+    flex: 1;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .editor-header {
+    background: #2d2d2d;
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    color: #9cdcfe;
+    border-bottom: 1px solid #444;
+  }
+  .editor-lines {
+    padding: 1rem;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .syn-keyword { color: #c586c0; }
+  .syn-func { color: #dcdcaa; }
+  .syn-string { color: #ce9178; }
+  .syn-comment { color: #6a9955; font-style: italic; }
+
+  /* Right Pane */
+  .right-pane { flex: 2; display: flex; flex-direction: column; }
+  
+  .tabs {
+    display: flex;
+    background: #fafafa;
+    border-bottom: 1px solid var(--border);
+    padding: 0 1rem;
+  }
+  .tab {
+    padding: 0.75rem 1.25rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .tab.active { color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
+  
+  .download-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 0.4rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+
+  /* Outputs Area */
+  .tab-content { display: none; flex: 1; padding: 1.5rem; overflow-y: auto; background: white; }
+  .tab-content.active { display: block; }
+  .mock-report { max-width: 800px; margin: 0 auto; line-height: 1.6; font-size: 0.95rem; }
+
+  /* Console Log (Right Side Bottom) */
+  .console-wrapper {
+    border-top: 1px solid var(--border);
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+  }
+  .console-header {
+    padding: 0.5rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+  .console-title { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); }
+  .console-content {
+    display: none;
+    background: #000000;
+    color: #00ff00;
+    font-family: monospace;
+    font-size: 0.8rem;
+    padding: 1rem;
+    max-height: 150px;
+    overflow-y: auto;
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <h1>ShareR <span style="font-weight:400; opacity:0.8;">| DepressionCenter / EMA-CleanR</span></h1>
+    <button class="run-btn">▶ Run Analysis</button>
+  </header>
+
+  <main>
+    <!-- Left Pane: Inputs & Code -->
+    <div class="panel left-pane resizable" id="left-pane">
+      <div class="panel-header">
+        <h2 class="panel-title">Workspace</h2>
+      </div>
+      
+      <!-- File Carousel -->
+      <div class="section">
+        <div class="section-label">Input Data</div>
+        <div class="file-carousel">
+          <div class="data-card">
+            <div style="font-size: 1.5rem;">📄</div>
+            <div class="data-filename">EMA-Data.csv</div>
+            <div class="data-status">Default</div>
+          </div>
+          <div class="data-card">
+            <div style="font-size: 1.5rem;">📄</div>
+            <div class="data-filename">metadata.csv</div>
+            <div class="data-status">Default</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scripts -->
+      <div class="section">
+        <div class="section-label">Scripts</div>
+        <div class="script-list">
+          <label class="script-item active">
+            <input type="radio" name="script" checked>
+            <span class="script-name">main_analysis.Rmd</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Code Toggle -->
+      <div class="code-toggle-wrapper">
+        <button class="toggle-btn" onclick="toggleCode()" id="code-btn">▸ Show Source Code</button>
+      </div>
+
+      <!-- Editor (Hidden by Default) -->
+      <div class="editor-container" id="editor">
+        <div class="editor-header">main_analysis.Rmd</div>
+        <div class="editor-lines">
+          <span class="syn-comment"># Initialize libraries</span><br>
+          <span class="syn-func">library</span>(<span class="syn-string">dplyr</span>)<br>
+          <span class="syn-func">library</span>(<span class="syn-string">ggplot2</span>)<br><br>
+          <span class="syn-comment"># Load required files</span><br>
+          data &lt;- <span class="syn-func">read.csv</span>(<span class="syn-string">"EMA-Data.csv"</span>)<br><br>
+          <span class="syn-comment"># Generate summary</span><br>
+          <span class="syn-func">summary</span>(data)
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Pane: Outputs & Console -->
+    <div class="panel right-pane">
+      <div class="panel-header">
+        <h2 class="panel-title">Results</h2>
+        <button class="download-btn">↓ Download Zip</button>
+      </div>
+      
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('report')">Report</div>
+        <div class="tab" onclick="switchTab('plots')">Plots</div>
+        <div class="tab" onclick="switchTab('files')">Files</div>
+      </div>
+
+      <div id="tab-report" class="tab-content active">
+        <div class="mock-report">
+          <h3 style="margin-top:0;">Analysis Ready</h3>
+          <p>Click <strong>Run Analysis</strong> to process the data and generate the report preview.</p>
+        </div>
+      </div>
+      <div id="tab-plots" class="tab-content">
+        <p style="color: var(--text-muted); font-style: italic;">Plots will appear here.</p>
+      </div>
+      <div id="tab-files" class="tab-content">
+         <p style="color: var(--text-muted); font-style: italic;">Generated files will appear here.</p>
+      </div>
+
+      <!-- Collapsible Console -->
+      <div class="console-wrapper">
+        <div class="console-header" onclick="toggleConsole()">
+          <span class="console-title" id="console-title">▸ Execution Log</span>
+        </div>
+        <div class="console-content" id="console">
+          &gt; Initializing webR virtual environment...<br>
+          &gt; Environment ready. Waiting for execution...
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tabName).classList.add('active');
+    }
+
+    function toggleCode() {
+      const leftPane = document.getElementById('left-pane');
+      const editor = document.getElementById('editor');
+      const btn = document.getElementById('code-btn');
+      
+      if (editor.style.display === 'flex') {
+        editor.style.display = 'none';
+        leftPane.style.maxWidth = '350px';
+        btn.innerText = '▸ Show Source Code';
+      } else {
+        editor.style.display = 'flex';
+        leftPane.style.maxWidth = '50%';
+        btn.innerText = '▾ Hide Source Code';
+      }
+    }
+
+    function toggleConsole() {
+      const cons = document.getElementById('console');
+      const title = document.getElementById('console-title');
+      if (cons.style.display === 'block') {
+        cons.style.display = 'none';
+        title.innerText = '▸ Execution Log';
+      } else {
+        cons.style.display = 'block';
+        title.innerText = '▾ Execution Log';
+      }
+    }
+  </script>
+</body>
+</html>

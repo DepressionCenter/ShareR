@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareR - Linked Outputs UI</title>
+<style>
+  :root {
+    --um-dark-blue: #00274C;
+    --um-maize: #FFCB05;
+    --bg-page: #f0f2f5;
+    --panel-bg: #ffffff;
+    --border: #e5e7eb;
+    --text-main: #111827;
+    --text-muted: #6b7280;
+    --accent: #2563eb;
+    --link-color: #0056b3;
+  }
+  
+  * { box-sizing: border-box; }
+  
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  /* Header */
+  header {
+    background-color: var(--um-dark-blue);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 10;
+  }
+  
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  
+  .header-titles {
+    display: flex;
+    flex-direction: column;
+  }
+
+  header h1 { 
+    margin: 0; 
+    font-size: 1.25rem; 
+    font-weight: 700; 
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .slogan {
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    margin-top: 0.1rem;
+    font-weight: 400;
+  }
+  
+  .repo-name {
+    font-weight: 400; 
+    opacity: 0.8;
+    font-size: 1rem;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+  }
+  
+  .run-btn {
+    background-color: var(--um-maize);
+    color: var(--um-dark-blue);
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .run-btn:hover { background-color: #e6b700; }
+
+  .github-link {
+    color: white;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+  }
+  .github-link:hover { opacity: 1; }
+
+  /* Main App Area */
+  main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    padding: 1rem 1rem 0.5rem 1rem;
+    gap: 1rem;
+  }
+
+  .panel {
+    background: var(--panel-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+  
+  .panel-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: #fafafa;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .panel-title { margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--um-dark-blue); }
+
+  /* Left Pane */
+  .left-pane { 
+    flex: 1; 
+    min-width: 280px; 
+    max-width: 320px; 
+    transition: max-width 0.3s ease; 
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    resize: horizontal;
+    overflow-x: hidden;
+  }
+  
+  .section { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+  .section-label { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.4rem; letter-spacing: 0.05em; }
+
+  /* Smaller File Carousel */
+  .file-carousel {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+  .data-card {
+    flex: 0 0 auto;
+    width: 90px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 4px;
+    padding: 0.5rem;
+    text-align: center;
+    background: #f8fafc;
+    cursor: pointer;
+  }
+  .data-card:hover { border-color: var(--accent); background: #eff6ff; }
+  .data-icon { font-size: 1.25rem; line-height: 1; }
+  .data-filename { font-weight: 600; font-size: 0.75rem; color: var(--text-main); margin: 0.25rem 0 0.1rem 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .data-status { font-size: 0.65rem; color: var(--text-muted); }
+
+  /* Code Toggle */
+  .code-toggle-wrapper { padding: 0.75rem 1rem; background: #fafafa; border-bottom: 1px solid #444; }
+  .toggle-btn { background: none; border: none; color: var(--accent); font-weight: 600; font-size: 0.8rem; cursor: pointer; padding: 0; }
+
+  /* Mock Code Editor with Gutters */
+  .editor-container {
+    display: flex; 
+    flex: 1;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .editor-header {
+    background: #2d2d2d;
+    padding: 0.4rem 1rem;
+    font-size: 0.75rem;
+    color: #9cdcfe;
+    border-bottom: 1px solid #444;
+  }
+  .editor-body {
+    flex: 1;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 0.5rem 0;
+  }
+  
+  .code-line { display: flex; }
+  .code-line:hover { background: #2a2d2e; }
+  .gutter {
+    width: 40px;
+    min-width: 40px;
+    text-align: right;
+    padding-right: 8px;
+    color: #858585;
+    user-select: none;
+    border-right: 1px solid #404040;
+    margin-right: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .output-marker {
+    cursor: pointer;
+    font-size: 0.75rem;
+    opacity: 0.8;
+    transition: transform 0.1s;
+  }
+  .output-marker:hover { opacity: 1; transform: scale(1.2); }
+  
+  .syn-comment { color: #6a9955; font-style: italic; }
+  .syn-func { color: #dcdcaa; }
+  .syn-string { color: #ce9178; }
+
+  /* Right Pane */
+  .right-pane { flex: 2; display: flex; flex-direction: column; }
+  
+  .tabs { display: flex; background: #fafafa; border-bottom: 1px solid var(--border); padding: 0 1rem; }
+  .tab { padding: 0.6rem 1rem; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.85rem; }
+  .tab.active { color: var(--um-dark-blue); border-bottom-color: var(--um-dark-blue); }
+  
+  .download-btn { background: #10b981; color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 0.75rem; }
+
+  /* Outputs Area */
+  .tab-content { display: none; flex: 1; padding: 1.25rem; overflow-y: auto; background: white; }
+  .tab-content.active { display: block; }
+  
+  /* Output Items & Highlighting Animation */
+  .output-item {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    background: #f9fafb;
+    transition: all 0.3s ease;
+  }
+  .file-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    background: white;
+  }
+  
+  @keyframes flashHighlight {
+    0% { background-color: #fef08a; border-color: #eab308; box-shadow: 0 0 15px rgba(234, 179, 8, 0.4); transform: scale(1.01); }
+    100% { background-color: inherit; border-color: var(--border); box-shadow: none; transform: scale(1); }
+  }
+  .highlight-flash { animation: flashHighlight 1.5s ease-out forwards; }
+
+  /* Console Log */
+  .console-wrapper { border-top: 1px solid var(--border); background: #fafafa; display: flex; flex-direction: column; }
+  .console-header { padding: 0.4rem 1rem; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  .console-title { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
+  .console-content { display: none; background: #000000; color: #00ff00; font-family: monospace; font-size: 0.75rem; padding: 0.75rem 1rem; max-height: 120px; overflow-y: auto; }
+
+  /* Footer */
+  footer {
+    padding: 0.5rem 1rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: var(--bg-page);
+  }
+  footer a {
+    color: var(--link-color);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  footer a:hover { text-decoration: underline; }
+  .footer-divider { color: #ccc; margin: 0 0.5rem; }
+
+</style>
+</head>
+<body onload="toggleCode()">
+
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <!-- App Logo SVG -->
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="24" height="24" rx="6" fill="#FFCB05"/>
+        <path d="M7 17L12 7L17 17" stroke="#00274C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="7" r="2" fill="#00274C"/>
+        <circle cx="7" cy="17" r="2" fill="#00274C"/>
+        <circle cx="17" cy="17" r="2" fill="#00274C"/>
+      </svg>
+      
+      <div class="header-titles">
+        <h1>ShareR <span class="repo-name">| DepressionCenter / EMA-CleanR</span></h1>
+        <span class="slogan">Share your science. R in the browser, nothing to install.</span>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <button class="run-btn">▶ Run</button>
+      
+      <!-- Top Right GitHub Repo Link -->
+      <a href="https://github.com/DepressionCenter/ShareR" target="_blank" class="github-link" title="View Source Repository">
+        <svg height="28" viewBox="0 0 16 16" width="28" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+        </svg>
+      </a>
+    </div>
+  </header>
+
+  <!-- Main Content Area -->
+  <main>
+    <!-- Left Pane -->
+    <div class="panel left-pane resizable" id="left-pane">
+      <div class="panel-header">
+        <h2 class="panel-title">Workspace</h2>
+      </div>
+      
+      <!-- Miniature File Carousel -->
+      <div class="section">
+        <div class="section-label">Input Data</div>
+        <div class="file-carousel">
+          <div class="data-card">
+            <div class="data-icon">📄</div>
+            <div class="data-filename">EMA-Data.csv</div>
+            <div class="data-status">Default</div>
+          </div>
+          <div class="data-card">
+            <div class="data-icon">📄</div>
+            <div class="data-filename">metadata.csv</div>
+            <div class="data-status">Default</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code Toggle -->
+      <div class="code-toggle-wrapper">
+        <button class="toggle-btn" onclick="toggleCode()" id="code-btn">▸ Show Source Code</button>
+      </div>
+
+      <!-- Editor -->
+      <div class="editor-container" id="editor">
+        <div class="editor-header">main_analysis.R</div>
+        <div class="editor-body">
+          <div class="code-line"><div class="gutter"><span></span>1</div><div class="code-text"><span class="syn-comment"># Load required files</span></div></div>
+          <div class="code-line"><div class="gutter"><span></span>2</div><div class="code-text">data &lt;- <span class="syn-func">read.csv</span>(<span class="syn-string">"EMA-Data.csv"</span>)</div></div>
+          <div class="code-line"><div class="gutter"><span></span>3</div><div class="code-text"></div></div>
+          <div class="code-line"><div class="gutter"><span></span>4</div><div class="code-text"><span class="syn-comment"># Clean Data</span></div></div>
+          <div class="code-line"><div class="gutter"><span></span>5</div><div class="code-text">clean_data &lt;- <span class="syn-func">na.omit</span>(data)</div></div>
+          <div class="code-line"><div class="gutter"><span></span>6</div><div class="code-text"></div></div>
+          
+          <!-- Line 7: Produces a Plot -->
+          <div class="code-line">
+            <div class="gutter"><span class="output-marker" onclick="jumpToOutput('plots', 'plot-1')" title="View Plot">📊</span>7</div>
+            <div class="code-text"><span class="syn-func">plot</span>(clean_data$mood, clean_data$sleep)</div>
+          </div>
+          
+          <div class="code-line"><div class="gutter"><span></span>8</div><div class="code-text"></div></div>
+          <div class="code-line"><div class="gutter"><span></span>9</div><div class="code-text"><span class="syn-comment"># Save Output</span></div></div>
+          
+          <!-- Line 10: Produces a File -->
+          <div class="code-line">
+            <div class="gutter"><span class="output-marker" onclick="jumpToOutput('files', 'file-1')" title="View File">📄</span>10</div>
+            <div class="code-text"><span class="syn-func">write.csv</span>(clean_data, <span class="syn-string">"cleaned_output.csv"</span>)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Pane -->
+    <div class="panel right-pane">
+      <div class="panel-header">
+        <h2 class="panel-title">Results</h2>
+        <button class="download-btn">↓ Download Zip</button>
+      </div>
+      
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('report')">Report</div>
+        <div class="tab" onclick="switchTab('plots')">Plots</div>
+        <div class="tab" onclick="switchTab('files')">Files</div>
+      </div>
+
+      <!-- Tab: Report -->
+      <div id="tab-report" class="tab-content active">
+        <h3 style="margin-top:0;">Analysis Output</h3>
+        <p>Your knitted markdown preview goes here.</p>
+      </div>
+
+      <!-- Tab: Plots -->
+      <div id="tab-plots" class="tab-content">
+        <div class="output-item" id="plot-1">
+          <h4 style="margin-top:0; font-size: 0.9rem;">Mood vs Sleep Distribution</h4>
+          <div style="height: 200px; background: #e5e7eb; display:flex; align-items:center; justify-content:center; color: var(--text-muted); font-style:italic; border-radius: 4px;">
+            [ Generated Plot Graphic ]
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Files -->
+      <div id="tab-files" class="tab-content">
+        <p style="color: var(--text-muted); font-size: 0.8rem; margin-top:0;">Files generated during script execution:</p>
+        
+        <div class="file-item" id="file-1">
+          <div style="font-size: 1.25rem;">📄</div>
+          <div style="flex: 1;">
+            <div style="font-weight: 600; font-size: 0.8rem;">cleaned_output.csv</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted);">24 KB • Generated from Line 10</div>
+          </div>
+          <button style="padding: 0.25rem 0.5rem; background: var(--bg-page); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 0.7rem;">Preview (TODO)</button>
+        </div>
+      </div>
+
+      <!-- Collapsible Console -->
+      <div class="console-wrapper">
+        <div class="console-header" onclick="toggleConsole()">
+          <span class="console-title" id="console-title">▸ Execution Log</span>
+        </div>
+        <div class="console-content" id="console">
+          &gt; Running main_analysis.R...<br>
+          &gt; Plot generated successfully.<br>
+          &gt; File cleaned_output.csv written.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <span>&copy; 2026 The Regents of the University of Michigan</span>
+    <span class="footer-divider">|</span>
+    <a href="https://depressioncenter.org" target="_blank">Eisenberg Family Depression Center</a>
+    <span class="footer-divider">|</span>
+    <a href="https://github.com/DepressionCenter/ShareR" target="_blank">
+      <svg height="12" viewBox="0 0 16 16" width="12" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+      </svg>
+      View Code on GitHub
+    </a>
+  </footer>
+
+  <script>
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      const tabElement = Array.from(document.querySelectorAll('.tab')).find(el => el.innerText.toLowerCase().includes(tabName));
+      if (tabElement) tabElement.classList.add('active');
+      
+      document.getElementById('tab-' + tabName).classList.add('active');
+    }
+
+    function jumpToOutput(tabName, elementId) {
+      switchTab(tabName);
+      
+      const targetEl = document.getElementById(elementId);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetEl.classList.remove('highlight-flash');
+        void targetEl.offsetWidth; 
+        targetEl.classList.add('highlight-flash');
+      }
+    }
+
+    function toggleCode() {
+      const leftPane = document.getElementById('left-pane');
+      const editor = document.getElementById('editor');
+      const btn = document.getElementById('code-btn');
+      
+      if (editor.style.display === 'flex') {
+        editor.style.display = 'none';
+        leftPane.style.maxWidth = '320px';
+        btn.innerText = '▸ Show Source Code';
+      } else {
+        editor.style.display = 'flex';
+        leftPane.style.maxWidth = '50%';
+        btn.innerText = '▾ Hide Source Code';
+      }
+    }
+
+    function toggleConsole() {
+      const cons = document.getElementById('console');
+      const title = document.getElementById('console-title');
+      if (cons.style.display === 'block') {
+        cons.style.display = 'none';
+        title.innerText = '▸ Execution Log';
+      } else {
+        cons.style.display = 'block';
+        title.innerText = '▾ Execution Log';
+      }
+    }
+  </script>
+</body>
+</html>

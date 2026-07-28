@@ -1247,13 +1247,20 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
 /* ### Staging orchestration: entry + data, from URL, repo, or already-staged local files ### */
 
 async function stageEntryFileFromUrl(url, staged, messages) {
+  // Normally intercepted earlier (stageFromParams rewrites a github.com entry= to repo=/entry=
+  // before this ever runs), but a repo= given explicitly alongside a *different* repository's
+  // blob URL as entry= skips that rewrite; this is the safety net for that case, since github.com
+  // itself sends no CORS header and a direct fetch would otherwise fail no matter what.
+  const blobMatch = matchGithubBlobUrl(url);
+  const fetchUrl = blobMatch ? rawContentUrl(blobMatch.owner, blobMatch.repo, blobMatch.ref, blobMatch.path) : url.href;
   try {
-    const { buffer } = await fetchArrayBufferWithRetry(url.href);
+    const { buffer } = await fetchArrayBufferWithRetry(fetchUrl);
     const name = decodeURIComponent(basenameOf(url.pathname)) || "entry.R";
-    stageBytes(staged, name, new Uint8Array(buffer), "url", url.hostname, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    const sourceLabel = blobMatch ? blobMatch.owner + "/" + blobMatch.repo + "@" + blobMatch.ref : url.hostname;
+    stageBytes(staged, name, new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
     return name;
   } catch (err) {
-    messages.push({ level: "error", text: describeFetchFailure(url.href, err) });
+    messages.push({ level: "error", text: describeFetchFailure(fetchUrl, err) });
     return null;
   }
 }
@@ -1340,12 +1347,34 @@ async function stageFromParams(params, staged, messages, onProgress) {
         await stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, messages);
       } else if (/^https?:\/\//i.test(target)) {
         const url = parseFileUrl(target);
-        try {
-          const { buffer } = await fetchArrayBufferWithRetry(url.href);
-          const base = decodeURIComponent(basenameOf(url.pathname)) || "data";
-          stageBytes(staged, rename || base, new Uint8Array(buffer), "url", url.hostname, messages, CONFIG.MAX_REPO_FILE_BYTES);
-        } catch (err) {
-          messages.push({ level: "error", text: describeFetchFailure(url.href, err) });
+        // A github.com blob/raw link for data=, same as for entry=, sends no CORS header and
+        // cannot be fetched directly. Resolve it through the repository tree when it names the
+        // same repo already in use (gets the benefit of case-insensitive matching too); otherwise
+        // rewrite it to the equivalent raw.githubusercontent.com URL.
+        const blobMatch = matchGithubBlobUrl(url);
+        if (blobMatch && repoInfo && blobMatch.owner.toLowerCase() === repoInfo.owner.toLowerCase() &&
+            blobMatch.repo.toLowerCase() === repoInfo.repo.toLowerCase()) {
+          const found = findTreeEntryCaseInsensitive(tree.entries, blobMatch.path);
+          if (!found) { messages.push({ level: "error", text: "Data file not found in repository: " + target }); }
+          else {
+            try {
+              const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, found.path));
+              stageBytes(staged, rename || basenameOf(found.path), new Uint8Array(buffer), "repository",
+                repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+            } catch (err) {
+              messages.push({ level: "error", text: "Could not fetch " + target + " from the repository: " + summarizeError(err) });
+            }
+          }
+        } else {
+          const fetchUrl = blobMatch ? rawContentUrl(blobMatch.owner, blobMatch.repo, blobMatch.ref, blobMatch.path) : url.href;
+          try {
+            const { buffer } = await fetchArrayBufferWithRetry(fetchUrl);
+            const base = decodeURIComponent(basenameOf(url.pathname)) || "data";
+            const sourceLabel = blobMatch ? blobMatch.owner + "/" + blobMatch.repo + "@" + blobMatch.ref : url.hostname;
+            stageBytes(staged, rename || base, new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+          } catch (err) {
+            messages.push({ level: "error", text: describeFetchFailure(fetchUrl, err) });
+          }
         }
       } else {
         if (!repoInfo) throw new ShareRError('data="' + target + '" is a repository-relative path but no repo= parameter was given.');

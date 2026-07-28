@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareR - Modern Prototype</title>
+<style>
+  :root {
+    --um-dark-blue: #00274C;
+    --um-maize: #FFCB05;
+    --bg-light: #f3f4f6;
+    --border-color: #d1d5db;
+    --text-main: #1f2937;
+    --text-muted: #6b7280;
+  }
+  
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-light);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  /* Header */
+  header {
+    background-color: var(--um-dark-blue);
+    color: white;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+  header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+  .badge { background-color: var(--um-maize); color: var(--um-dark-blue); padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: bold; }
+
+  /* Main App Layout - Split Pane */
+  main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .panel {
+    background: white;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+
+  .panel-header {
+    background: #f9fafb;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* Left Pane: Code & Files */
+  .left-pane { flex: 1; min-width: 300px; }
+  
+  .file-list {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+  
+  .file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    background: var(--bg-light);
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .file-item:hover { border-color: var(--um-dark-blue); background: #eef2f6; cursor: pointer; }
+  .file-name { font-family: monospace; font-size: 0.9rem; font-weight: bold; }
+  .file-action { font-size: 0.8rem; color: var(--um-dark-blue); }
+
+  .code-viewer {
+    flex: 1;
+    padding: 1rem;
+    background: #fafafa;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.85rem;
+    overflow-y: auto;
+    color: #333;
+  }
+
+  /* Right Pane: Outputs & Console */
+  .right-pane { flex: 2; display: flex; flex-direction: column; gap: 1rem; background: transparent; border: none; box-shadow: none;}
+  
+  .output-viewer {
+    flex: 2;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .output-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-style: italic;
+    padding: 1rem;
+  }
+
+  .console-viewer {
+    flex: 1;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+  }
+  .console-header { background: #2d2d2d; color: white; padding: 0.5rem 1rem; font-size: 0.85rem; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+  .console-logs { padding: 1rem; font-family: monospace; font-size: 0.85rem; overflow-y: auto; }
+
+  /* Buttons */
+  .btn {
+    background: var(--um-dark-blue);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+  .btn:hover { background: #001a33; }
+  .btn-success { background: #166534; }
+  .btn-success:hover { background: #14532d; }
+</style>
+</head>
+<body>
+
+  <header>
+    <h1>ShareR</h1>
+    <span class="badge">Local Browser Execution</span>
+  </header>
+
+  <main>
+    <!-- Left Pane: Inputs & Script -->
+    <div class="panel left-pane">
+      <div class="panel-header">
+        <span>Workspace</span>
+      </div>
+      
+      <!-- Simplified Replace UI -->
+      <div class="file-list">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">Input Data (Click to replace)</div>
+        <div class="file-item">
+          <div>
+            <div class="file-name">EMA-Data.csv</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">Using default from repository</div>
+          </div>
+          <div class="file-action">Swap File ↻</div>
+        </div>
+      </div>
+
+      <!-- Code Viewer -->
+      <div class="code-viewer">
+        <span style="color: #008000;"># EMA-CleanR.Rmd</span><br><br>
+        library(dplyr)<br>
+        library(ggplot2)<br><br>
+        data <- read.csv("EMA-Data.csv")<br>
+        summary(data)<br>
+        <span style="color: #6b7280;">... (Script contents preview) ...</span>
+      </div>
+    </div>
+
+    <!-- Right Pane: Outputs -->
+    <div class="right-pane">
+      
+      <!-- Visual Outputs -->
+      <div class="output-viewer">
+        <div class="panel-header">
+          <span>Results & Outputs</span>
+          <button class="btn btn-success">↓ Download All (.zip)</button>
+        </div>
+        <div class="output-content">
+          <!-- Plots and Tables would render here -->
+          [ Data visualizations and generated files will appear here when the script finishes ]
+        </div>
+      </div>
+
+      <!-- Console Log -->
+      <div class="console-viewer">
+        <div class="console-header">Console Log</div>
+        <div class="console-logs">
+          [message] Initializing webR environment...<br>
+          [message] Fetching EMA-Data.csv from repository...<br>
+          <span style="color: #FFCB05;">[status] Running EMA-CleanR.Rmd...</span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+</body>
+</html>
