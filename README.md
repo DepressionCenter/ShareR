@@ -28,7 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 ShareR™ runs R and R Markdown scripts entirely inside a web browser. There is no server, no R installation, and no setup. Point it at a GitHub repository, add your own data files, and press Run.
 
-<!-- ![Preview Image](./images/Repo-preview.png) -->
+![Preview Image](./images/ShareR-Preview.png "ShareR Preview")
 
 ShareR™ lets you run an R analysis right in your web browser, no installation required. Share a link to your R script or R Markdown file on GitHub, and anyone can open it, add their own data, and run it instantly, even on a locked-down work laptop where they can't install software.
 

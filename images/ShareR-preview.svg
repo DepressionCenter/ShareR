@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 912 512" width="912" height="512">
+  <defs>
+    <!-- Background UMich Dark Blue Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#020912"/>
+      <stop offset="50%" stop-color="#00274C"/>
+      <stop offset="100%" stop-color="#011326"/>
+    </linearGradient>
+
+    <!-- Maize & Blue Accent Gradients for Plot -->
+    <linearGradient id="plotGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFCB05"/>
+      <stop offset="60%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
+
+    <!-- Area Fill Gradient -->
+    <linearGradient id="areaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFCB05" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#00274C" stop-opacity="0.0"/>
+    </linearGradient>
+
+    <!-- Ambient Glow Filters -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000000" flood-opacity="0.7"/>
+    </filter>
+
+    <filter id="maizeGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="912" height="512" fill="url(#bgGrad)"/>
+
+  <!-- Ambient Light Effects (UMich Maize & Blue Glows) -->
+  <circle cx="180" cy="110" r="190" fill="#FFCB05" opacity="0.08" filter="blur(65px)"/>
+  <circle cx="760" cy="390" r="210" fill="#00274C" opacity="0.40" filter="blur(70px)"/>
+
+  <!-- Branding Header: ShareR™ in UMich Palette -->
+  <g transform="translate(50, 62)">
+    <text font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="38" letter-spacing="-0.5">
+      <tspan fill="#FFFFFF">Share</tspan><tspan fill="#FFCB05">R</tspan><tspan fill="#94A3B8" font-size="20" font-weight="600" dy="-14">™</tspan>
+    </text>
+  </g>
+
+  <!-- Main Application Window Graphic -->
+  <g filter="url(#dropShadow)">
+    <!-- Browser Frame -->
+    <rect x="50" y="88" width="812" height="382" rx="12" fill="#0A1320" stroke="#1E293B" stroke-width="1.5"/>
+
+    <!-- Browser Header Bar -->
+    <path d="M 50 100 Q 50 88 62 88 L 850 88 Q 862 88 862 100 L 862 126 L 50 126 Z" fill="#152338"/>
+    
+    <!-- Window Controls -->
+    <circle cx="72" cy="107" r="5" fill="#EF4444"/>
+    <circle cx="88" cy="107" r="5" fill="#FFCB05"/>
+    <circle cx="104" cy="107" r="5" fill="#10B981"/>
+
+    <!-- URL Pill with Updated Subdomain -->
+    <rect x="130" y="96" width="650" height="22" rx="11" fill="#0A1320"/>
+    <text x="145" y="111" fill="#94A3B8" font-size="11" font-family="SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace">🔒 code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR</text>
+
+    <!-- Application Body Content (2 Columns) -->
+
+    <!-- LEFT COLUMN: R Code & File Input -->
+    <rect x="68" y="142" width="350" height="310" rx="8" fill="#0F1B2D" stroke="#1E293B" stroke-width="1"/>
+
+    <!-- Code Tab Header -->
+    <rect x="80" y="152" width="80" height="22" rx="4" fill="#0A1320"/>
+    <text x="92" y="167" fill="#FFCB05" font-size="11" font-family="monospace" font-weight="bold">main.R</text>
+
+    <!-- Code Editor Mockup (Updated to dplyr) -->
+    <g font-family="SFMono-Regular, Consolas, Menlo, monospace" font-size="11" transform="translate(82, 192)">
+      <!-- Line 1 -->
+      <text x="0" y="0" fill="#64748B">1</text>
+      <text x="20" y="0" fill="#64748B"># Client-side R execution</text>
+      
+      <!-- Line 2 -->
+      <text x="0" y="18" fill="#64748B">2</text>
+      <text x="20" y="18" fill="#FFCB05">library</text><text x="69" y="18" fill="#E2E8F0">(dplyr)</text>
+
+      <!-- Line 3 -->
+      <text x="0" y="36" fill="#64748B">3</text>
+      <text x="20" y="36" fill="#E2E8F0">df &lt;- </text><text x="60" y="36" fill="#38BDF8">read_csv</text><text x="115" y="36" fill="#34D399">("data.csv")</text>
+
+      <!-- Line 4 -->
+      <text x="0" y="54" fill="#64748B">4</text>
+      <text x="20" y="54" fill="#E2E8F0">df %&gt;% </text><text x="67" y="54" fill="#38BDF8">ggplot</text><text x="108" y="54" fill="#E2E8F0">(aes(x, y)) +</text>
+
+      <!-- Line 5 -->
+      <text x="0" y="72" fill="#64748B">5</text>
+      <text x="35" y="72" fill="#FFCB05">geom_smooth</text><text x="108" y="72" fill="#E2E8F0">(se = FALSE)</text>
+    </g>
+
+    <!-- Drag & Drop CSV Box (Highlighted in UMich Maize Accent) -->
+    <rect x="80" y="282" width="326" height="155" rx="6" fill="#0A1320" stroke="#FFCB05" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <g transform="translate(243, 335)" text-anchor="middle">
+      <!-- File Icon -->
+      <path d="M -12 -25 L 2 -25 L 12 -15 L 12 15 L -12 15 Z" fill="none" stroke="#FFCB05" stroke-width="2"/>
+      <path d="M 2 -25 L 2 -15 L 12 -15" fill="none" stroke="#FFCB05" stroke-width="2"/>
+      <text x="0" y="2" font-family="system-ui, sans-serif" font-size="10" font-weight="bold" fill="#FFCB05">CSV</text>
+      
+      <text x="0" y="26" font-family="system-ui, sans-serif" font-size="12" font-weight="bold" fill="#F8FAFC">Drop Local Data File Here</text>
+      <text x="0" y="42" font-family="system-ui, sans-serif" font-size="10" fill="#94A3B8">Mounts into browser memory</text>
+    </g>
+
+    <!-- CENTER CONNECTOR: WebAssembly Processing Node -->
+    <g transform="translate(433, 290)">
+      <circle cx="0" cy="0" r="18" fill="#152338" stroke="#FFCB05" stroke-width="1.5" filter="url(#maizeGlow)"/>
+      <text x="0" y="4" font-family="system-ui, sans-serif" font-weight="900" font-size="11" fill="#FFCB05" text-anchor="middle">WASM</text>
+      
+      <!-- Right Arrow -->
+      <path d="M -28 0 L -21 0" stroke="#FFCB05" stroke-width="2" stroke-dasharray="2 2"/>
+      <path d="M 21 0 L 28 0" stroke="#FFCB05" stroke-width="2"/>
+      <polygon points="27,-4 33,0 27,4" fill="#FFCB05"/>
+    </g>
+
+    <!-- RIGHT COLUMN: Output Charts & Clean Data Downloads -->
+    <rect x="444" y="142" width="404" height="310" rx="8" fill="#0F1B2D" stroke="#1E293B" stroke-width="1"/>
+
+    <!-- Plot Render Canvas -->
+    <rect x="458" y="156" width="376" height="190" rx="6" fill="#070E17" stroke="#1E293B"/>
+
+    <!-- Grid lines -->
+    <line x1="475" y1="190" x2="815" y2="190" stroke="#1E293B" stroke-dasharray="2 2"/>
+    <line x1="475" y1="230" x2="815" y2="230" stroke="#1E293B" stroke-dasharray="2 2"/>
+    <line x1="475" y1="270" x2="815" y2="270" stroke="#1E293B" stroke-dasharray="2 2"/>
+    <line x1="475" y1="310" x2="815" y2="310" stroke="#334155"/>
+
+    <!-- Area Graph Fill -->
+    <path d="M 480 295 Q 530 220, 580 260 T 680 190 T 780 210 T 810 180 L 810 310 L 480 310 Z" fill="url(#areaGrad)"/>
+
+    <!-- Plot Curve Line (UMich Maize to Sky Blue) -->
+    <path d="M 480 295 Q 530 220, 580 260 T 680 190 T 780 210 T 810 180" fill="none" stroke="url(#plotGrad)" stroke-width="3.5" filter="url(#maizeGlow)"/>
+
+    <!-- Interactive Data Points -->
+    <circle cx="580" cy="260" r="4" fill="#FFCB05" stroke="#FFFFFF" stroke-width="1.5"/>
+    <circle cx="680" cy="190" r="4" fill="#38BDF8" stroke="#FFFFFF" stroke-width="1.5"/>
+    <circle cx="810" cy="180" r="4" fill="#60A5FA" stroke="#FFFFFF" stroke-width="1.5"/>
+
+    <!-- Output File Chips (Bottom Right) -->
+    <!-- File 1: CSV Download -->
+    <rect x="458" y="358" width="180" height="38" rx="6" fill="#070E17" stroke="#10B981" stroke-width="1"/>
+    <text x="472" y="381" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">📊 clean_output.csv</text>
+    <text x="618" y="381" font-family="system-ui, sans-serif" font-size="12" fill="#10B981">📥</text>
+
+    <!-- File 2: PNG Plot Download -->
+    <rect x="650" y="358" width="184" height="38" rx="6" fill="#070E17" stroke="#FFCB05" stroke-width="1"/>
+    <text x="664" y="381" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#E2E8F0">🖼️ ggplot_render.png</text>
+    <text x="814" y="381" font-family="system-ui, sans-serif" font-size="12" fill="#FFCB05">📥</text>
+
+    <!-- Client-Side Security Pill Banner -->
+    <rect x="458" y="408" width="376" height="28" rx="14" fill="#064E3B" fill-opacity="0.3" stroke="#10B981" stroke-opacity="0.4"/>
+    <g transform="translate(646, 426)" text-anchor="middle">
+      <text font-family="system-ui, sans-serif" font-size="10" font-weight="700" fill="#34D399" letter-spacing="0.2">
+        🔒 100% Client-Side • Sensitive Data Never Leaves Your Browser
+      </text>
+    </g>
+  </g>
+</svg>
