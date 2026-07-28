@@ -200,7 +200,8 @@ Ship this CSP as a `<meta http-equiv="Content-Security-Policy">` in `index.html`
 
 ```
 default-src 'none';
-script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;
+script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'
+           https://cdn.jsdelivr.net https://webr.r-wasm.org;
 worker-src 'self' blob: https://webr.r-wasm.org;
 connect-src 'self' https://webr.r-wasm.org https://repo.r-wasm.org
             https://cdn.jsdelivr.net
@@ -210,10 +211,24 @@ img-src 'self' data: blob:;
 font-src 'self';
 form-action 'none';
 base-uri 'none';
-frame-ancestors 'none';
 ```
 
 `connect-src` is an allowlist of five origins that receive only GET requests. Any code path, including a future dependency, that attempts to send data anywhere else fails at the browser level. Say so explicitly in the security documentation, because it is the strongest privacy claim ShareR can honestly make.
+
+**Three corrections to an earlier draft of this policy, all established empirically during the Stage 1 proof of concept by bisecting the policy against a working no-CSP control page.** A CSP that omits any of them does not merely warn; the first two prevent R from starting at all, and the failure is silent and extremely hard to read.
+
+1. **`script-src` must list `https://webr.r-wasm.org`.** The webR worker loads its Emscripten glue (`R.js`) with `importScripts()`, which CSP evaluates against `script-src` (falling back from an unset `script-src-elem`), **not** `worker-src`. Without it the console reports a blocked script load and engine startup hangs forever.
+
+2. **`script-src` must include `'unsafe-eval'`.** This is the non-obvious one. `'wasm-unsafe-eval'` permits WebAssembly compilation but **not** `eval()`, and Emscripten's `EM_JS` support (`addEmJs()` inside `R.js`) constructs JavaScript functions from source strings embedded in the wasm binaries and instantiates them with a literal `eval()`. That code path runs while loading the side modules `libRblas.so` and `libRlapack.so`, so without `'unsafe-eval'` R aborts inside `loadDylibs` and throws a bare `WebAssembly.Exception`, which browsers render as `#<Exception>` with **no message, no file, and no line number**. Budget for this: the symptom is indistinguishable from a network failure and is easy to misdiagnose as one.
+
+   State the tradeoff honestly in the security documentation rather than burying it. `'unsafe-eval'` weakens the cross-site-scripting posture, because script that already executes can call `eval()`. It does **not** weaken the data-locality guarantee in section 2.2, which is enforced by `connect-src` and is unchanged: no code, evaled or otherwise, can transmit bytes to an origin outside the allowlist. Keep the inline application script pinned by SHA-256 hash so injected inline script is still refused, and revisit this if webR ever ships a `DYNAMIC_EXECUTION=0` build.
+
+3. **Do not put `frame-ancestors` in the `<meta>` policy.** Browsers ignore it when delivered that way and log a warning for every document that parses the policy, so it provides zero clickjacking protection while adding console noise that masks real errors. Clickjacking protection must come from a real response header (`Content-Security-Policy: frame-ancestors` or `X-Frame-Options`) set by whatever serves ShareR. GitHub Pages cannot set it, which is the same limitation that forces the `PostMessage` channel in section 3.2. Document the residual risk instead of pretending the directive is active.
+
+**Two console messages are expected and benign.** Record them here so future maintainers do not re-investigate what has already been chased down:
+
+- `Refused to get unsafe header "Content-Encoding"`, emitted by `R.js`. Emscripten's lazy-file loader probes that header to detect gzip, and CORS does not expose it cross-origin. Verified harmless: the lazily loaded files are served uncompressed and their `Content-Length` equals their true byte length, so the size arithmetic the loader actually depends on is correct.
+- ``WebR is using `PostMessage` communication channel, nested R REPLs are not available.`` This is the documented and intended tradeoff from section 3.2.
 
 Pin `script-src` to the single CDN actually used. Do not use a wildcard and do not list several CDNs "just in case"; each additional origin is an additional origin that could serve executable code into the page.
 
@@ -255,6 +270,13 @@ Rules:
 - **Fail loudly.** If a library fails to load, whether from an outage or an integrity mismatch, show a specific error naming the library rather than a generic broken page, and disable Run. Detect this by checking for the expected global (`jsyaml`, `marked`, `DOMPurify`, `fflate`) after load rather than relying on `onerror` alone.
 
 The webR core also loads from its own pinned CDN URL. It is a large multi-file WebAssembly distribution loaded by webR's own loader rather than a single script tag, so SRI does not apply to it; version pinning plus the service worker cache is the integrity and stability story there.
+
+**Which webR artifact to import, verified against the live registry and CDN during Stage 1.** Two easy mistakes here each cost a debugging cycle:
+
+- **The npm package is `webr`, not `@r-wasm/webr`.** The scoped package was renamed and is now deprecated upstream; it is frozen at `0.2.0` and will never carry a current release. Resolve versions against `webr`.
+- **Import `dist/webr.js`, not `dist/webr.mjs`.** The `.mjs` file is the bundler-target ESM build and carries a static top-level `import { createRequire } from 'module'`. A browser cannot resolve the bare Node builtin `module`, so importing it fails immediately with `Failed to resolve module specifier "module"`. `dist/webr.js` is the package's `browser` exports-condition build and has no Node-only bare specifiers. Note that `dist/webr.js` was introduced in `0.6.0`; earlier releases such as `0.5.4` ship only `.mjs`/`.cjs` and therefore cannot be loaded directly in a browser from a CDN. This is an additional reason the pin cannot drift backwards.
+
+At the pinned `WEBR_VERSION` of `0.6.0`, webR reports R **4.6.0**, and its own built-in default `baseUrl` is already `https://webr.r-wasm.org/v0.6.0/`. Set `WEBR_BASE_URL` explicitly anyway, per section 3.5, so a webR upgrade cannot silently move the engine URL. Use the R version to key the package cache bucket described in section 4.2, and read it at runtime rather than hard-coding it.
 
 Licensing note, which is the reason for this approach as much as integrity is: linking to a CDN-hosted library is not redistribution, so ShareR does not take on the notice-preservation and file-level obligations that shipping copies of Apache-2.0, MPL-2.0, and MIT files in a GPLv3 repository would create. Attribution in the README remains appropriate and is done regardless. If a future requirement forces genuinely offline operation and the libraries must be served from the repository, revisit those obligations deliberately at that point. webR itself is GPL-3, which composes cleanly with ShareR's own GPLv3 licensing should self-hosting ever be enabled.
 
@@ -761,6 +783,8 @@ The build is not done until all of the following pass on current versions of Chr
 7. File overwrites by the script are not detected by the output diff (section 10.1); use the file browser.
 8. First run downloads a substantial amount of WebAssembly. Subsequent runs are cached.
 9. The application requires a network connection on first load, and thereafter for any package not already cached. It is not an offline-first application.
+10. The Content Security Policy must allow `'unsafe-eval'`, because webR's Emscripten runtime evaluates JavaScript embedded in its WebAssembly binaries (section 3.4). This is a genuine, disclosed weakening of the cross-site-scripting posture. It does not affect the data-locality guarantee, which is enforced separately by `connect-src`.
+11. Clickjacking protection cannot be enforced from the page itself, because `frame-ancestors` is ignored in a `<meta>` policy (section 3.4). On a deployment target that cannot set response headers, such as GitHub Pages, ShareR can be framed by another site.
 
 
 ## Contact

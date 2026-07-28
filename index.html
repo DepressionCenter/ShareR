@@ -4,10 +4,10 @@ index.html: Main HTML file for the ShareR application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
 Last Modified: 2026-07-27
-Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser. This is the main HTML file for the ShareR application.
+Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
 Notes: See README file for documentation and full license information.
 
-Copyright © 2026 The Regents of the University of Michigan
+Copyright (c) 2026 The Regents of the University of Michigan
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -21,5 +21,299 @@ with this program. If not, see https://www.gnu.org/licenses/.
 -->
 <!DOCTYPE html>
 <html lang="en">
-    <body>Coming soon...</body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShareR - Run R in your browser</title>
+
+<!--
+  Content-Security-Policy: technical enforcement of "your data is never uploaded" (spec section 3.4).
+  connect-src is an allowlist; nothing outside it can ever receive a request, including future
+  dependencies. script-src intentionally has no 'unsafe-inline': the inline module script below is
+  allowed only by exact SHA-256 hash, so any injected or tampered script fails closed.
+
+  frame-ancestors is deliberately NOT listed. Browsers ignore it in a <meta> tag and log a warning
+  for every document that parses the policy, so including it buys no clickjacking protection and
+  only adds console noise that hides real errors. It must be set as a real response header
+  (X-Frame-Options / frame-ancestors) by whatever serves ShareR; GitHub Pages cannot, which is
+  the same constraint that forces the PostMessage channel in spec section 3.2.
+
+  Two further deviations from spec section 3.4's literal CSP text, both required to run webR at
+  all, and both identified by bisecting this policy against a working no-CSP control page rather
+  than by reading the spec. Carry them into Stage 2 instead of copying section 3.4 verbatim.
+
+  1. script-src must list https://webr.r-wasm.org. The webR worker pulls its Emscripten glue
+     (R.js) with importScripts(), which CSP evaluates against script-src, not worker-src.
+
+  2. script-src must include 'unsafe-eval'. 'wasm-unsafe-eval' permits WebAssembly compilation
+     but NOT eval(), and Emscripten's EM_JS support (addEmJs() in R.js) builds JavaScript
+     functions from source strings embedded in the wasm binaries and instantiates them with
+     eval(). This runs while loading the side modules libRblas.so and libRlapack.so, so without
+     it R aborts during loadDylibs with an opaque WebAssembly.Exception and no message.
+
+     Security tradeoff, stated plainly rather than buried: 'unsafe-eval' weakens the cross-site
+     scripting story, since script that already executes could call eval(). It does NOT weaken
+     the data-locality guarantee in spec section 2.2, which is enforced by connect-src and is
+     unchanged here: no code, evaled or otherwise, can send bytes to an origin outside that
+     allowlist. The inline script below is still pinned by SHA-256 hash, so injected inline
+     script is still refused. Revisit if webR ever ships a DYNAMIC_EXECUTION=0 build.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net https://webr.r-wasm.org 'sha256-hBjbWdTNNAr9WAm1Z2Y+5VfmCoEB5ZN1sXUBGdpQkuM=';
+  worker-src 'self' blob: https://webr.r-wasm.org;
+  connect-src 'self' https://webr.r-wasm.org https://cdn.jsdelivr.net;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  font-src 'self';
+  form-action 'none';
+  base-uri 'none';
+">
+
+<link rel="stylesheet" href="styles/um-style.css">
+<style>
+  /* Stage 1 layout only. Reuses styles/um-style.css for color tokens and button classes. */
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header.app-header {
+    background-color: var(--um-dark-blue);
+    color: var(--um-white);
+    padding: 1rem 1.5rem;
+  }
+  header.app-header h1 {
+    color: var(--um-white);
+    margin: 0 0 0.25rem 0;
+    font-size: 1.4rem;
+  }
+  .data-badge {
+    display: inline-block;
+    font-size: 0.85rem;
+    color: var(--um-dark-blue);
+    background-color: var(--um-maize);
+    border-radius: 4px;
+    padding: 0.15rem 0.5rem;
+  }
+  main {
+    max-width: 60rem;
+    margin: 0 auto;
+    padding: 1.5rem;
+  }
+  .field label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 0.4rem;
+  }
+  #r-code {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 0.95rem;
+    padding: 0.6rem;
+    border: 1px solid var(--um-dark-grey);
+    border-radius: 4px;
+    resize: vertical;
+  }
+  .controls {
+    margin: 0.8rem 0;
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  #status-line {
+    font-weight: bold;
+  }
+  .output-log {
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    background-color: var(--um-dark-blue);
+    color: var(--um-white);
+    border-radius: 4px;
+    padding: 0.75rem;
+    min-height: 10rem;
+    max-height: 24rem;
+    overflow-y: auto;
+  }
+  .log-stderr, .log-error { color: #ffb3b3; }
+  .log-warning { color: var(--um-maize); }
+  .log-message { color: #b9d2ff; }
+  footer.app-footer {
+    padding: 1rem 1.5rem;
+    font-size: 0.85rem;
+    color: var(--um-dark-grey);
+  }
+  .poc-notice {
+    background-color: #fff6d9;
+    border: 1px solid var(--um-maize);
+    border-radius: 4px;
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 1rem;
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>ShareR</h1>
+  <p><span class="data-badge">Runs entirely in your browser. Your data is never uploaded.</span></p>
+</header>
+
+<main>
+  <p class="poc-notice">
+    Stage 1 proof of concept. Runs a single, self-contained R script with no external R packages
+    and no data files. GitHub repository sync, R Markdown, package installation, and file outputs
+    are not implemented yet.
+  </p>
+
+  <div class="field">
+    <label for="r-code">R code to run</label>
+    <textarea id="r-code" rows="8" spellcheck="false">print("Hello from ShareR!")
+summary(1:10)</textarea>
+  </div>
+
+  <div class="controls">
+    <button id="run-button" type="button" class="btn btn-primary">Run</button>
+    <button id="stop-button" type="button" class="btn btn-secondary">Stop and reset R</button>
+    <span id="status-line" role="status" aria-live="polite">Idle.</span>
+  </div>
+
+  <div id="output-log" class="output-log" role="log" aria-live="polite" aria-atomic="false"></div>
+</main>
+
+<footer class="app-footer">
+  <p>
+    Files you open in ShareR are processed only in your browser. They are never uploaded, and
+    ShareR has no server that could receive them. ShareR itself has not been reviewed or approved
+    for any specific regulated data type. Confirm with your IRB and with your institution's
+    Cybersecurity or Information Assurance office before using it with participant data.
+  </p>
+</footer>
+
+<script type="module">
+"use strict";
+
+/* ShareR CONFIG. Single source of truth for pinned versions and URLs; no magic values elsewhere.
+   WEBR_CDN_URL cannot be built from WEBR_VERSION at this call site because a dynamic import()
+   argument must still be kept in sync by hand with WEBR_VERSION below; Stage 2 revisits this.
+   Deliberately dist/webr.js, not dist/webr.mjs: the .mjs build is the bundler-target ESM output
+   and has a static top-level `import { createRequire } from 'module'` (a Node builtin), which a
+   real browser cannot resolve. dist/webr.js is the package's "browser" exports-condition target
+   and has no Node-only bare specifiers, confirmed by inspecting both files directly. */
+const CONFIG = Object.freeze({
+  WEBR_VERSION: "0.6.0",
+  WEBR_BASE_URL: "https://webr.r-wasm.org/v0.6.0/",
+  WEBR_CDN_URL: "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
+  CHANNEL_TYPE: "postmessage"
+});
+
+const elCode = document.getElementById("r-code");
+const elRun = document.getElementById("run-button");
+const elStop = document.getElementById("stop-button");
+const elStatus = document.getElementById("status-line");
+const elLog = document.getElementById("output-log");
+
+let webR = null;
+let running = false;
+
+function setStatus(text) {
+  elStatus.textContent = text;
+}
+
+function appendLogLine(kind, text) {
+  const prefixes = { stderr: "[stderr] ", message: "[message] ", warning: "[warning] ", error: "[error] " };
+  const line = document.createElement("div");
+  line.className = "log-" + kind;
+  line.textContent = (prefixes[kind] || "") + text;
+  elLog.appendChild(line);
+  elLog.scrollTop = elLog.scrollHeight;
+}
+
+/* Lazily initialize the R engine on first Run, then keep it warm across runs (spec section 14).
+
+   Two console messages from webR are expected and harmless. Both were investigated and confirmed
+   benign; do not spend time on them again:
+
+   - 'Refused to get unsafe header "Content-Encoding"' from R.js. Emscripten's lazy-file loader
+     probes that header to detect gzip, and CORS does not expose it. Verified irrelevant here: the
+     lazily loaded files are served uncompressed and their Content-Length equals their true byte
+     length, so the size math the loader actually depends on is correct.
+   - 'WebR is using `PostMessage` communication channel, nested R REPLs are not available.'
+     This is the documented and intended tradeoff from spec section 3.2. */
+async function getEngine() {
+  if (webR) {
+    return webR;
+  }
+  setStatus("Loading R engine (first run downloads several megabytes)...");
+  const { WebR, ChannelType } = await import(CONFIG.WEBR_CDN_URL);
+  const instance = new WebR({
+    channelType: ChannelType.PostMessage,
+    baseUrl: CONFIG.WEBR_BASE_URL
+  });
+  await instance.init();
+  webR = instance;
+  return webR;
+}
+
+async function runCode() {
+  if (running) {
+    return;
+  }
+  running = true;
+  elRun.disabled = true;
+  elLog.textContent = "";
+  try {
+    const engine = await getEngine();
+    setStatus("Running...");
+    const shelter = await new engine.Shelter();
+    try {
+      const capture = await shelter.captureR(elCode.value, {
+        withAutoprint: true,
+        captureStreams: true,
+        captureConditions: true
+      });
+      for (const item of capture.output) {
+        const isStream = item.type === "stdout" || item.type === "stderr";
+        const text = isStream ? item.data : (item.data && item.data.message) ? item.data.message : JSON.stringify(item.data);
+        appendLogLine(item.type, text);
+      }
+      setStatus("Done.");
+    } finally {
+      await shelter.purge();
+    }
+  } catch (err) {
+    appendLogLine("error", err && err.message ? err.message : String(err));
+    setStatus("Error. See log below.");
+    console.error(err);
+  } finally {
+    running = false;
+    elRun.disabled = false;
+  }
+}
+
+/* No interrupt is possible on the PostMessage channel (spec section 3.2). Stop terminates the
+   worker and discards engine state; the next Run pays a re-initialization cost, not a re-download,
+   since the engine assets are already cached by the browser's HTTP cache. */
+async function stopEngine() {
+  elRun.disabled = false;
+  running = false;
+  if (webR) {
+    setStatus("Stopping and resetting R...");
+    try {
+      await webR.close();
+    } catch (err) {
+      console.error(err);
+    }
+    webR = null;
+  }
+  setStatus("Idle. R engine will restart on next Run.");
+}
+
+elRun.addEventListener("click", runCode);
+elStop.addEventListener("click", stopEngine);
+</script>
+
+</body>
 </html>
