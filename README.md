@@ -42,10 +42,9 @@ For research teams, that means anyone on the project can run the same analysis t
 
 1. Open ShareR with the repository in the URL:
    `https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR`
-2. Wait for the one-time download of the R engine and packages. Later runs use the cached copy.
-3. Drag your own data file onto the page. If it has the same name as a file in the repository, yours is used instead, and ShareR tells you so.
-4. Press **Run analysis**.
-5. Read the report, then press **Download all outputs** to get a ZIP with the report, the generated files, the console log, and a run manifest.
+2. Wait for the one-time download of the R engine and packages. The script will run automatically using the sample data file(s) included in the repository.
+3. You can also replace the data files with your own in the Workspace panel, then click the yellow Run button. ShareR will use your files instead of the sample data, and regenerate the report tab.
+4. Read the report, then press **Download all outputs** to get a ZIP with the report, the generated files, the console log, and a run manifest.
 
 **Run your own script without a repository**
 
@@ -59,6 +58,12 @@ For research teams, that means anyone on the project can run the same analysis t
 2. Run `.\run-windows.ps1` (Windows), `./run-linux.sh` (Linux), or double-click `run-mac.command` (macOS). These wrap the bundled [ZippyServe](https://github.com/DepressionCenter/ZippyServe) binary, so nothing has to be installed.
 3. Your browser opens to `http://localhost:8010`.
 
+**Share your script with others**
+
+1. Publish your repository on GitHub, then share the link to ShareR with the `?repo=Owner/RepoName` parameter. For example, `https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR` runs the reference workflow in the `DepressionCenter/EMA-CleanR` repository.
+2. If your repository contains multiple scripts, ShareR will list them and let the user choose which one to run. If you want to be explicit about which script is the entry point, add a `&script=` parameter to the URL, followed by the path to the script (relative to the repository root). Example: `https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR&script=EMA-CleanR.rmd`.
+3. If your script references sample data files, and you have those in your repo, it will run with the sample data. You can also specify which data files to use by adding a `&data=` parameter to the URL, followed by a comma-separated list of file names (relative to the repository root). Example: `https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR&script=EMA-CleanR.rmd&data=EMA-Data.csv`.
+4. Share the link with your colleagues, and they can run the analysis in their own browser, with their own data files, without installing anything!
 
 
 ## Documentation
@@ -126,16 +131,7 @@ Everything you add is placed into a private workspace inside your browser, in th
 | `entry` | Path to the script to run | auto-detected |
 | `autorun` | `1` to run automatically once preflight passes | `0` |
 
-**For repository authors:** nothing is required. Optionally add a `sharer.json` file to your repository root to be explicit about the entry point and packages, and a `.sharerignore` file (gitignore syntax) to keep large artifacts out of the browser.
-
-```json
-{
-  "entry": "EMA-CleanR.rmd",
-  "packages": ["dplyr", "ggplot2", "lubridate", "jsonlite"],
-  "repos": ["https://repo.r-wasm.org"],
-  "dataFiles": ["EMA-Data.csv"]
-}
-```
+**For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted on the same GitHub repo will be loaded automatically.
 
 **For maintainers:** all configuration lives in a single frozen `CONFIG` object at the top of `index.html`, including the pinned webR version, the package repository URL, size limits, and the trusted-owner allowlist. There are no secrets, no environment variables, and no build step. Editing `WEBR_VERSION` is the only supported way to upgrade the R engine, and doing so automatically invalidates the old cache.
 
