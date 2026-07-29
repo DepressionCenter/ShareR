@@ -240,6 +240,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
     min-height: 0;
     display: flex;
     flex-direction: column;
+    scrollbar-width: thin;
+    scrollbar-color: #9ca3af rgba(45, 45, 45, 0.35);
+  }
+  .panel-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .panel-scroll::-webkit-scrollbar-track {
+    background: rgba(45, 45, 45, 0.35);
+    border-radius: 999px;
+  }
+  .panel-scroll::-webkit-scrollbar-thumb {
+    background-color: #9ca3af;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    min-height: 24px;
   }
   .workspace-section {
     border-bottom: 1px solid var(--panel-border);
@@ -411,23 +428,46 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-size: 0.8rem;
     line-height: 1.5;
     padding: 0.3rem 0;
+    scrollbar-width: thin;
+    scrollbar-color: #9ca3af rgba(45, 45, 45, 0.35);
+  }
+  .editor-body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .editor-body::-webkit-scrollbar-track {
+    background: rgba(45, 45, 45, 0.35);
+    border-radius: 999px;
+  }
+  .editor-body::-webkit-scrollbar-thumb {
+    background-color: #9ca3af;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    min-height: 24px;
   }
   .code-line { display: flex; }
   .code-line:hover { background: #2a2d2e; }
   .gutter {
     flex: 0 0 auto;
-    width: 44px;
+    width: 54px;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 0.2rem;
-    padding-right: 8px;
+    padding-right: 6px;
     color: var(--source-gutter);
     border-right: 1px solid #404040;
-    margin-right: 10px;
+    margin-right: 8px;
     user-select: none;
   }
-  .marker-slot { display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
+  .marker-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+    margin-left: 0.15rem;
+  }
   .code-text { white-space: pre; padding-right: 0.75rem; }
   .syn-comment { color: #6a9955; font-style: italic; }
   .syn-func { color: #dcdcaa; }
@@ -611,9 +651,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border: none;
     cursor: pointer;
     font-size: 0.85rem;
-    padding: 0 0.2rem;
-    margin-left: 0.3rem;
+    padding: 0;
+    margin-left: 0.15rem;
     line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .output-marker:hover { transform: scale(1.15); }
   @keyframes sharerHighlightFlash {
