@@ -2612,9 +2612,79 @@ function describePackageInstallFailure(err, requestedList) {
     "failed. Raw error: " + raw;
 }
 
+/* Hand-verified, deliberately short: only packages we are certain need a JVM (via rJava), which a
+   WebAssembly sandbox can never provide -- not "no build yet," but "not possible, ever." Value is a
+   suggested pure-R replacement, or null when no drop-in equivalent is known. Extend only with
+   packages/alternatives that are actually verified, never guessed. */
+const KNOWN_IMPOSSIBLE_PACKAGES = {
+  "XLConnect": "openxlsx (or readxl for read-only workbooks)",
+  "xlsx": "openxlsx (or readxl for read-only workbooks)",
+  "xlsxjars": "openxlsx",
+  "rJava": null,
+  "RJDBC": null
+};
+
+/* Ground-truth counterpart to describePackageInstallFailure, for when installPackages() resolved
+   without throwing but verifyPackagesInstalled (below) found packages that still aren't loadable --
+   e.g. a package with no WebAssembly build, which webR only reports as a console warning, not a
+   rejection. Takes the exact missing-package list rather than regex-guessing one name out of an
+   error message, since here the missing set is known precisely. */
+function describeMissingPackage(pkg) {
+  const alt = KNOWN_IMPOSSIBLE_PACKAGES[pkg];
+  if (alt !== undefined) {
+    return 'The R package "' + pkg + '" requires a Java Virtual Machine (via rJava). A browser ' +
+      "sandbox cannot run a JVM, so this package can never work here — it is not a " +
+      "temporarily missing download." + (alt
+        ? ' Consider using "' + alt + '" instead, which is pure R and WebAssembly-compatible.'
+        : " There is no drop-in pure-R replacement; ask the script author for a different approach.");
+  }
+  return 'The R package "' + pkg + '" could not be installed. Packages must be precompiled for ' +
+    "WebAssembly; webR cannot build them from source. This is most often caused by a package with " +
+    "no WebAssembly build available in the configured repositories. Check the execution log above " +
+    "for the specific download that failed.";
+}
+
+function describeMissingAfterInstall(missingList) {
+  return missingList.map(describeMissingPackage).join(" ");
+}
+
+/* After installPackages() resolves without throwing, confirm every requested package is actually
+   loadable -- installPackages() behaves like install.packages(): a package with no wasm build just
+   prints a warning and resolves normally, it does not reject. Uses the same bind ->
+   evalRVoid(jsonlite::fromJSON(...)) -> evalRString(jsonlite::toJSON(...)) -> JSON.parse round trip
+   as materializeParams/readKnitrChunkOptionDefaults, never string-interpolating package names into
+   R source (spec section 0.1). Returns the exact list of packages that are still not loadable.
+   Best-effort like readKnitrChunkOptionDefaults's read-back: if the round trip itself misbehaves
+   unexpectedly (malformed JSON, jsonlite itself unavailable, etc.), that is swallowed and treated as
+   "nothing confirmed missing" rather than crashing the preflight -- but only failures of the
+   checking mechanism are swallowed this way; a genuinely parsed list of missing packages is always
+   returned, never discarded (including if the later cleanup rm() below fails). */
+async function verifyPackagesInstalled(engine, packageList) {
+  if (packageList.length === 0) return [];
+  let missing;
+  try {
+    await engine.objs.globalEnv.bind(".sharer_pkgcheck_json", JSON.stringify(packageList));
+    await engine.evalRVoid(
+      ".sharer_pkgcheck_missing <- Filter(function(p) !requireNamespace(p, quietly = TRUE), " +
+      "jsonlite::fromJSON(.sharer_pkgcheck_json))"
+    );
+    const json = await engine.evalRString(
+      "jsonlite::toJSON(.sharer_pkgcheck_missing, auto_unbox = FALSE)"
+    );
+    missing = JSON.parse(json);
+  } catch (err) {
+    return []; // best-effort only: the checker itself failed unexpectedly; do not block the run over it
+  }
+  try { await engine.evalRVoid("rm(.sharer_pkgcheck_json, .sharer_pkgcheck_missing)"); }
+  catch (err) { /* tidiness only; a leftover dot-prefixed binding is harmless */ }
+  return Array.isArray(missing) ? missing : [];
+}
+
 /* One webR.installPackages() call (spec 9.2: let webR resolve dependencies, do not reimplement
    it). Progress text is routed through the single, already-attached engine.stream() reader via
-   App.installStreamActive -- see the comment on attachLiveProgressIndicator above. */
+   App.installStreamActive -- see the comment on attachLiveProgressIndicator above. installPackages()
+   resolving is not proof of success (it behaves like install.packages(): an unavailable package
+   just warns and resolves), so verifyPackagesInstalled below re-checks before any chunk runs. */
 async function installPackagesWithProgress(engine, packageList, extraRepos) {
   if (packageList.length === 0) return [];
   appendLogLine("message", "Installing R package(s): " + packageList.join(", ") + "...");
@@ -2631,6 +2701,10 @@ async function installPackagesWithProgress(engine, packageList, extraRepos) {
     throw new ShareRError(describePackageInstallFailure(err, packageList));
   } finally {
     App.installStreamActive = false;
+  }
+  const missing = await verifyPackagesInstalled(engine, packageList);
+  if (missing.length > 0) {
+    throw new ShareRError(describeMissingAfterInstall(missing));
   }
   return packageList;
 }
@@ -3402,8 +3476,12 @@ async function executeSelectedEntry(isRetry) {
       return;
     }
   } catch (err) {
-    appendLogLine("error", err && err.message ? err.message : String(err));
+    const message = err && err.message ? err.message : String(err);
+    appendLogLine("error", message);
     setStatus("Error. See log below.");
+    // Short and plain-language on purpose: the full technical explanation is already in the log
+    // above; this alert's only job is to make sure a failure isn't missed.
+    alert("Unable to run this script. See the Execution Log for details.");
     console.error(err);
   } finally {
     App.running = false;
