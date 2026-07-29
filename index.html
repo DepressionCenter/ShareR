@@ -1490,7 +1490,7 @@ function literalStringValue(expr) {
    resolved to a known string, { prefix } when only a leading literal portion resolved (the
    caller fetches that directory rather than guessing a filename), or null when nothing useful
    could be determined -- callers treat null as "dynamic" and widen the fetch. */
-function resolveStaticPathExpression(expr) {
+function resolveStaticPathExpression(expr, variableMap) {
   let trimmed = expr.trim();
   // A named first argument (source(file = "x.R"), read.csv(file = "x.csv")) is still a plain
   // literal once the "name =" prefix is set aside; strip at most one, being careful not to
@@ -1500,6 +1500,12 @@ function resolveStaticPathExpression(expr) {
 
   const literal = literalStringValue(trimmed);
   if (literal !== null) return { exact: literal };
+
+  // A bare variable name: resolved only if buildScriptVariableMap already proved it is set once,
+  // to a path-shaped literal, and never reassigned elsewhere in the script (see that function).
+  if (variableMap && /^[A-Za-z.][A-Za-z0-9_.]*$/.test(trimmed) && variableMap.has(trimmed)) {
+    return variableMap.get(trimmed);
+  }
 
   const callMatch = trimmed.match(/^(file\.path|paste0|paste)\s*\(/i);
   if (!callMatch) return null;
@@ -1536,8 +1542,10 @@ function resolveStaticPathExpression(expr) {
 
 /* Finds every call to one of the given function names (optionally package::-qualified) in text
    and resolves its first argument via resolveStaticPathExpression. Each result is { exact },
-   { prefix }, or null (could not be resolved at all -- treat as dynamic). */
-function findCallArgResolutions(text, funcNamesAlternation) {
+   { prefix }, or null (could not be resolved at all -- treat as dynamic). variableMap (optional,
+   see buildScriptVariableMap) lets a bare variable name resolve to a value proven safe
+   elsewhere in the script. */
+function findCallArgResolutions(text, funcNamesAlternation, variableMap) {
   const re = new RegExp("\\b(?:[A-Za-z_.][A-Za-z0-9_.]*::)?(?:" + funcNamesAlternation + ")\\s*\\(", "gi");
   const results = [];
   let m;
@@ -1546,10 +1554,54 @@ function findCallArgResolutions(text, funcNamesAlternation) {
     const closeIdx = findMatchingParen(text, openIdx);
     if (closeIdx === -1) { re.lastIndex = openIdx + 1; continue; }
     const firstArg = splitTopLevelArgs(text.slice(openIdx + 1, closeIdx))[0];
-    results.push(firstArg === undefined ? null : resolveStaticPathExpression(firstArg));
+    results.push(firstArg === undefined ? null : resolveStaticPathExpression(firstArg, variableMap));
     re.lastIndex = closeIdx + 1;
   }
   return results;
+}
+
+/* Best-effort tracking of simple top-level variable assignments to a path-shaped literal value
+   (e.g. `input_file <- "EMA-Data.csv"`), plus scalar knitr params: front-matter values. A common
+   Rmd convention copies every params$name into a same-named variable via a loop (e.g.
+   `assign(nm, params[[nm]], envir = .GlobalEnv)`), which no static text scan can follow -- but
+   the params values themselves are already known from the YAML front matter ShareR parses
+   anyway, so they are seeded directly here. A variable is only trusted when every assignment
+   found for it agrees on the same literal value; if it is ever assigned something else
+   (including a non-literal expression) anywhere in the script, it is dropped as unsafe to guess,
+   per the user's own rule: set once to a path-shaped value, never changed thereafter. */
+function buildScriptVariableMap(text) {
+  const candidates = new Map(); // name -> { value, conflict }
+  function recordCandidate(name, value) {
+    const existing = candidates.get(name);
+    if (!existing) { candidates.set(name, { value, conflict: false }); return; }
+    if (existing.value !== value) existing.conflict = true;
+  }
+
+  const { frontMatterText } = splitFrontMatter(text);
+  if (frontMatterText) {
+    try {
+      const parsed = jsyaml.load(frontMatterText) || {};
+      const params = buildKnitrParams(parsed.params || {});
+      for (const name of Object.keys(params)) {
+        if (typeof params[name] === "string") recordCandidate(name, params[name]);
+      }
+    } catch { /* malformed front matter is reported elsewhere in the real parse pass; ignore here */ }
+  }
+
+  const assignRe = /^[ \t]*([A-Za-z.][A-Za-z0-9_.]*)\s*(?:<-|<<-|=(?!=))\s*(.+)$/gm;
+  let m;
+  while ((m = assignRe.exec(text))) {
+    const commentStart = findCommentStart(m[2]);
+    const rhs = (commentStart === -1 ? m[2] : m[2].slice(0, commentStart)).trim();
+    const resolved = resolveStaticPathExpression(rhs);
+    recordCandidate(m[1], resolved && resolved.exact !== undefined ? resolved.exact : null);
+  }
+
+  const variableMap = new Map();
+  for (const [name, entry] of candidates) {
+    if (!entry.conflict && entry.value !== null) variableMap.set(name, { exact: entry.value });
+  }
+  return variableMap;
 }
 
 /* ### Selective repository fetching: download only what the script needs ###
@@ -1676,7 +1728,8 @@ async function autoDetectAndStageData(repoInfo, tree, refUsed, ctx, staged, mess
   const prefixDirs = new Set();
 
   for (const text of ctx.scriptTexts.values()) {
-    for (const res of findCallArgResolutions(text, DATA_FUNCS_ALT)) {
+    const variableMap = buildScriptVariableMap(text);
+    for (const res of findCallArgResolutions(text, DATA_FUNCS_ALT, variableMap)) {
       if (!res) { dynamicDetected = true; }
       else if (res.exact) { exactWanted.add(res.exact.replace(/^\.?\//, "")); }
       else if (res.prefix) { prefixDirs.add(res.prefix); }
