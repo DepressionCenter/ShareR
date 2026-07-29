@@ -193,13 +193,20 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 
 #### This work is based in part on the following projects, libraries and/or studies:
-+ [webR](https://github.com/r-wasm/webr), R compiled to WebAssembly, by George Stagg and Lionel Henry. Licensed under GPL-3.
-+ [R](https://www.r-project.org/) and the R packages installed at runtime, each under its own license.
-+ [fflate](https://github.com/101arrowz/fflate), MIT.
-+ [js-yaml](https://github.com/nodeca/js-yaml), MIT.
-+ [marked](https://github.com/markedjs/marked), MIT.
-+ [DOMPurify](https://github.com/cure53/DOMPurify), Apache-2.0 or MPL-2.0.
-+ [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It provides the run-* scripts to allow starting Field Station AI locally without installing a full web server. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
++ [webR](https://github.com/r-wasm/webr) - "The statistical language R compiled to WebAssembly via Emscripten, for use in web browsers and Node," by George Stagg and Lionel Henry. Runs the R and R Markdown scripts entirely inside the browser; it is ShareR's execution engine. License: GPL-3.
++ [fflate](https://github.com/101arrowz/fflate) - "High performance (de)compression in an 8kB package." Builds the downloadable ZIP archive of a run's output files, rendered report, execution log, manifest, and source script. License: MIT.
++ [js-yaml](https://github.com/nodeca/js-yaml) - "JavaScript YAML parser and dumper. Very fast." Parses an `.Rmd` file's YAML front matter (title, `params`, output options). License: MIT.
++ [marked](https://github.com/markedjs/marked) - "A markdown parser and compiler. Built for speed." Renders the Markdown prose in `.Rmd` chunks to HTML for the Report tab. License: MIT.
++ [DOMPurify](https://github.com/cure53/DOMPurify) - "A DOM-only, super-fast, uber-tolerant XSS sanitizer for HTML, MathML and SVG." Sanitizes that rendered HTML before it is ever inserted into the page - the app's one deliberate `innerHTML` assignment. License: Apache-2.0 or MPL-2.0 (dual-licensed).
++ [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It powers ShareR's `run-windows.ps1`/`run-linux.sh`/`run-mac.command` scripts so the app can be served locally without installing a full web server. License: GPL-3.0 or later. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
+
+#### Library and Package Repositories
+The following public repositories are used to download JavaScript, R and WebAssembly libraries and packages:
++ [jsDelivr](https://www.jsdelivr.com/) - "A free CDN for open source projects." Serves webR and most JavaScript libraries listed previously at pinned versions.
++ [webr.r-wasm.org](https://webr.r-wasm.org/) - Hosts the compiled webR WebAssembly runtime binaries that the browser downloads on first run.
++ [repo.r-wasm.org](https://repo.r-wasm.org/) - "A CRAN-like repository hosted via CDN that provides pre-compiled R packages for WebAssembly." The primary repository webR's `install()` uses to fetch R packages a script requests.
++ [tidyverse.r-universe.dev](https://tidyverse.r-universe.dev/) - An [R-universe](https://github.com/r-universe-org) package-distribution repository, consulted as a fallback source for WebAssembly package binaries not found on repo.r-wasm.org.
++ [fstpackage.r-universe.dev](https://fstpackage.r-universe.dev/) - Another R-universe repository, consulted as the same kind of fallback source.
 
 
 
