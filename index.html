@@ -3900,7 +3900,7 @@ function renderStagedFiles() {
     const name = document.createElement("div");
     name.className = "data-filename";
     name.title = f.path;
-    name.textContent = f.path;
+    name.textContent = basenameOf(f.path);
     const status = document.createElement("div");
     status.className = "data-status";
     const dir = dirnameOf(f.path);
