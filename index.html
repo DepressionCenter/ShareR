@@ -1,10 +1,10 @@
 <!--
-This file is part of ShareR(tm)
-index.html: Main HTML file for the ShareR application.
+This file is part of ShareR™
+index.html: Main HTML file for the ShareR™ application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
-Last Modified: 2026-07-28
-Summary: ShareR(tm) runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
+Last Modified: 2026-07-29
+Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
          Stage pre-2B: reskinned UI (workspace / results two-pane layout, Report/Plots/Files tabs,
          source viewer, collapsible console). Stage 2B: .Rmd chunk execution, package preflight and
          installation, and output rendering (plots, files, CSV preview, ZIP download).
@@ -27,7 +27,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ShareR(tm) - Run R in your browser</title>
+<title>ShareR&#8482; : R Code Viewer</title>
 
 <!--
   Content-Security-Policy: ordinary hygiene, NOT a security boundary. See spec section 0.1.
@@ -120,7 +120,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
     gap: 0.75rem;
     min-width: 0;
   }
-  .app-logo { flex: 0 0 auto; }
   .header-titles {
     display: flex;
     flex-direction: column;
@@ -132,14 +131,30 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-size: 1.25rem;
     display: flex;
     align-items: baseline;
-    gap: 0.3rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
   }
+  .brand { display: flex; }
   .maize-r { color: var(--um-maize); }
   .header-source-badge {
     font-weight: 400;
     opacity: 0.85;
     font-size: 0.95rem;
+  }
+  .header-center-label {
+    flex: 1 1 auto;
+    text-align: center;
+    color: var(--um-white);
+    font-size: 1.25rem;
+    font-weight: bold;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 0.5rem;
+  }
+  @media print {
+    header.app-header { display: none; }
   }
   .slogan {
     font-size: 0.75rem;
@@ -185,7 +200,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     flex: 1;
     display: flex;
     gap: 1rem;
-    padding: 1rem;
+    padding: 1rem 1rem 0.35rem;
     min-height: 0;
     align-items: stretch;
   }
@@ -670,8 +685,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .log-message { color: #7dffb3; }
 
   footer.app-footer {
-    padding: 0.5rem 1.25rem;
+    padding: 0.15rem 1.25rem;
     font-size: 0.7rem;
+    line-height: 1.2;
     color: var(--text-muted);
   }
   .footer-credits {
@@ -737,16 +753,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
 <header class="app-header">
   <div class="header-left">
-    <svg class="app-logo" width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect width="24" height="24" rx="6" fill="#FFCB05"/>
-      <text x="12" y="17" font-family="system-ui, sans-serif" font-size="14" font-weight="bold"
-        text-anchor="middle" fill="#00274C">R</text>
-    </svg>
     <div class="header-titles">
-      <h1>Share<span class="maize-r">R</span><span id="header-source-badge" class="header-source-badge"></span></h1>
+      <h1><span class="brand">Share<span class="maize-r">R<small>&#8482;</small></span></span><span id="header-source-badge" class="header-source-badge">&nbsp;|&nbsp;&nbsp;R Code Viewer</span></h1>
       <p class="slogan">Share your science. R in the browser, nothing to install.</p>
     </div>
   </div>
+  <div id="header-center-label" class="header-center-label" aria-hidden="true"></div>
   <div class="header-right">
     <button id="run-button" type="button" class="btn btn-primary" disabled><span aria-hidden="true">&#9654;</span> Run</button>
     <button id="stop-button" type="button" class="btn btn-secondary" disabled>Stop and reset R</button>
@@ -1007,6 +1019,14 @@ function formatBytes(n) {
 function basenameOf(path) {
   const parts = path.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
+}
+
+/* The directory portion of a relative path, or "" for a file at the root (spec: workspace file
+   cards show where a file lives within the project, not the source it was fetched from). */
+function dirnameOf(path) {
+  const parts = path.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
 }
 
 /* Decodes HTML entities (&amp;, &nbsp;, &#8211;, ...) that mail clients such as Outlook sometimes
@@ -1712,8 +1732,6 @@ async function syncScriptDependencies(repoInfo, tree, refUsed, entryPath, staged
   }
 
   if (dynamicDetected) {
-    messages.push({ level: "info", text: "This script loads other scripts in a way ShareR could not " +
-      "fully resolve; downloading every .R/.Rmd file in the repository to be safe." });
     await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, ctx);
   }
 }
@@ -1751,8 +1769,6 @@ async function autoDetectAndStageData(repoInfo, tree, refUsed, ctx, staged, mess
     (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
 
   if (dynamicDetected) {
-    messages.push({ level: "info", text: "This script loads data files in a way ShareR could not " +
-      "fully resolve; downloading every recognized data file in the repository to be safe." });
     const dataExtEntries = tree.entries.filter((e) => isDataFilePath(e.path));
     await runWithConcurrency(dataExtEntries, CONFIG.FETCH_CONCURRENCY,
       (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
@@ -1945,8 +1961,6 @@ async function stageFromParams(params, staged, messages, onProgress) {
       effectiveRepoRaw = blobMatch.owner + "/" + blobMatch.repo;
       if (!effectiveRefRaw) effectiveRefRaw = blobMatch.ref;
       effectiveEntryRaw = blobMatch.path;
-      messages.push({ level: "info", text: "Recognized " + params.entryRaw + " as a GitHub file link " +
-        "and loaded the repository, so its referenced data files can be found automatically." });
       syncUrlBar({ repo: effectiveRepoRaw, ref: effectiveRefRaw, entry: effectiveEntryRaw });
     }
   }
@@ -3398,7 +3412,7 @@ const elStop = document.getElementById("stop-button");
 const elStatus = document.getElementById("status-line");
 const elLog = document.getElementById("output-log");
 
-const elHeaderSourceBadge = document.getElementById("header-source-badge");
+const elHeaderCenterLabel = document.getElementById("header-center-label");
 const elWorkspacePane = document.getElementById("workspace-pane");
 const elWorkspaceEmptyState = document.getElementById("workspace-empty-state");
 const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empty-button");
@@ -3517,7 +3531,8 @@ function renderStagedFiles() {
     name.textContent = f.path;
     const status = document.createElement("div");
     status.className = "data-status";
-    status.textContent = describeSource(f) + " · " + formatBytes(f.size);
+    const dir = dirnameOf(f.path);
+    status.textContent = (dir ? dir + " · " : "") + formatBytes(f.size);
     const actions = document.createElement("div");
     actions.className = "data-card-actions";
     const replaceBtn = document.createElement("button");
@@ -3765,14 +3780,23 @@ function annotateSourceViewerOutputMarkers(runState) {
   }
 }
 
-function updateHeaderSourceBadge() {
-  if (App.repoInfo) {
-    elHeaderSourceBadge.textContent = " | " + App.repoInfo.owner + "/" + App.repoInfo.repo;
-  } else if (App.selectedEntryPath) {
-    elHeaderSourceBadge.textContent = " | " + App.selectedEntryPath;
-  } else {
-    elHeaderSourceBadge.textContent = "";
+/* The repo name (e.g. DepressionCenter/EMA-CleanR) if viewing a GitHub repository, or the file
+   name if viewing a script loaded from a non-GitHub URL; null if neither (e.g. a locally-uploaded
+   script with no URL parameters), matching AGENTS.md section 15's "no placeholder" spirit -- there
+   is nothing truthful to show. */
+function currentViewingLabel() {
+  if (App.repoInfo) return App.repoInfo.owner + "/" + App.repoInfo.repo;
+  if (App.selectedEntryPath) {
+    const staged = App.stagedStore.get(App.selectedEntryPath);
+    if (staged && staged.source === "url") return staged.name;
   }
+  return null;
+}
+
+function updateHeaderSourceBadge() {
+  const label = currentViewingLabel();
+  elHeaderCenterLabel.textContent = label || "";
+  document.title = "ShareR™ : R Code Viewer" + (label ? " - " + label : "");
 }
 
 function updateSelectedEntry() {
