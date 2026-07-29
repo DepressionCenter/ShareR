@@ -5,9 +5,8 @@ Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
 Last Modified: 2026-07-29
 Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
-         Stage pre-2B: reskinned UI (workspace / results two-pane layout, Report/Plots/Files tabs,
-         source viewer, collapsible console). Stage 2B: .Rmd chunk execution, package preflight and
-         installation, and output rendering (plots, files, CSV preview, ZIP download).
+         Provides a workspace / results two-pane layout, Report/Plots/Files tabs, a source viewer,
+         package installation, and output rendering (plots, files, CSV preview, ZIP download).
 Notes: See README file for documentation and full license information.
 
 Copyright (c) 2026 The Regents of the University of Michigan
@@ -240,10 +239,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
     outline: 2px solid var(--um-maize);
   }
 
-  /* Visually-hidden but still announced: run-source-line/status-line carry live run-progress
-     text that screen reader users need (AGENTS.md section 9), even though there is no visible
-     status bar. Uses the standard clip-based technique, not display:none, so the aria-live
-     region stays in the accessibility tree and keeps announcing. */
+  /* Clip-based hiding (not display:none) keeps this aria-live region in the accessibility tree
+     so screen readers still get run-progress announcements with no visible status bar. */
   .sr-only {
     position: absolute;
     width: 1px;
@@ -291,10 +288,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
     min-width: 260px;
     transition: max-width 0.2s ease;
   }
-  /* A flex column, not just an overflow wrapper: this lets .editor-container claim the
-     remaining vertical space with flex:1 (see below) so its own .editor-body is normally the
-     only scrolling region in the pane. overflow-y:auto here is a safety net for the rare case
-     where content above the editor alone is taller than the pane -- not the common path. */
+  /* A flex column (not just an overflow wrapper) so .editor-container can claim the remaining
+     space with flex:1; overflow-y:auto here is only a safety net for unusually tall content. */
   .panel-scroll {
     overflow-y: auto;
     flex: 1;
@@ -1194,13 +1189,10 @@ const CONFIG = Object.freeze({
   WEBR_BASE_URL:           "https://webr.r-wasm.org/v0.6.0/",
   WEBR_CDN_URL:            "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
   WEBR_REPO_URL:           "https://repo.r-wasm.org",
-  // Only consulted as a fallback (installPackagesWithProgress), never merged into the primary
-  // install call. webR's install() builds one vectorized `contriburl` across every repo in the
-  // list and reads them as a single available.packages() call; these r-universe.dev repos serve
-  // an empty (but 200 OK) PACKAGES index for most R version dirs, and merging them in up front was
-  // observed to make package lookups fail for packages that installed fine from repo.r-wasm.org
-  // alone. Retrying only the still-missing packages, only after the primary repo alone has already
-  // failed them, gets the wider search (e.g. fst via fstpackage.r-universe.dev) without that risk.
+  // Fallback only (installPackagesWithProgress), never merged into the primary install call:
+  // webR's install() reads all repos as one vectorized available.packages() call, and these
+  // r-universe.dev repos serve an empty-but-200 PACKAGES index for most R versions, which broke
+  // lookups for packages that installed fine from repo.r-wasm.org alone when merged up front.
   WEBR_FALLBACK_REPO_URLS: Object.freeze([
     "https://tidyverse.r-universe.dev",
     "https://fstpackage.r-universe.dev" 
@@ -1844,8 +1836,8 @@ function findCallArgResolutions(text, funcNamesAlternation, variableMap) {
    the params values themselves are already known from the YAML front matter ShareR parses
    anyway, so they are seeded directly here. A variable is only trusted when every assignment
    found for it agrees on the same literal value; if it is ever assigned something else
-   (including a non-literal expression) anywhere in the script, it is dropped as unsafe to guess,
-   per the user's own rule: set once to a path-shaped value, never changed thereafter. */
+   (including a non-literal expression) anywhere in the script, it is dropped as unsafe to guess --
+   trusted only when set once to a path-shaped value and never changed thereafter. */
 function buildScriptVariableMap(text) {
   const candidates = new Map(); // name -> { value, conflict }
   function recordCandidate(name, value) {
@@ -2443,10 +2435,8 @@ function decodeUtf8(bytes) {
 }
 
 /* Lazily initialize the R engine on first Run, then keep it warm across runs (spec section 14).
-
-   Two console messages from webR are expected and harmless, confirmed during Stage 1:
-   - 'Refused to get unsafe header "Content-Encoding"' from R.js (Emscripten's gzip probe).
-   - 'WebR is using `PostMessage` communication channel, nested R REPLs are not available.' */
+   Two console messages from webR are expected and harmless: the gzip-probe "Content-Encoding"
+   warning from R.js, and the PostMessage-channel nested-REPL notice. */
 async function getEngine() {
   if (App.engine) return App.engine;
   setStatus("Loading R engine (first run downloads several megabytes)...");
@@ -2458,17 +2448,11 @@ async function getEngine() {
   return instance;
 }
 
-/* Spec section 8.1 asks for a webR.stream() reader appending output live, run in parallel with
-   captureR. Stage 1 already proved captureR({captureStreams:true})'s returned transcript is
-   correct and complete; webR.stream()'s exact event shape on the PostMessage channel is not
-   independently verified in this environment. Rather than risk duplicated or dropped log lines
-   on an unverified API, the stream reader here only updates the status line with a running count
-   during a normal run, while captureR's result remains the single source of truth for the log.
-   The one place this reader's raw text IS used is package installation (spec section 9.2), which
-   has no captureR-based alternative: installPackages() returns no transcript of its own, so the
-   App.installStreamActive flag routes its stdout/stderr lines into the log live. This is the only
-   consumer of engine.stream() for the life of the engine -- a second concurrent `for await` reader
-   would split messages between two competing consumers of one shared queue, so do not add one. */
+/* webR.stream()'s event shape on the PostMessage channel is unverified, so it only drives a running
+   status-line count during a normal run; captureR's transcript stays the single source of truth.
+   Package installation (spec section 9.2) has no captureR alternative, so App.installStreamActive
+   routes this reader's stdout/stderr into the log live -- keep this the only stream() consumer,
+   since a second concurrent reader would split messages between two queues. */
 function attachLiveProgressIndicator(engine) {
   if (typeof engine.stream !== "function") return;
   (async () => {
@@ -2791,18 +2775,12 @@ function detectPackagesInText(text, set) {
 }
 
 /* Disables library()/require() calls for packages already confirmed uninstallable
-   (runState.missingPackages), in a private copy of the chunk source used only for execution --
-   node.source (the source viewer, and the code echoed in the report) is never touched. Without
-   this, library(fst) itself throws webR's raw "package or namespace load failed for 'fst' ...
-   there is no package called 'fstcore'" error, which (unlike an ordinary stop()) does not always
-   surface as a capturable R condition -- it can reject shelter.captureR's promise outright. Skipping
-   the call avoids that class of failure entirely; any code further down that actually calls a
-   function from the package still fails, but with a plain, always-capturable "could not find
-   function" error, which runChunksFrom treats as a normal (non-halting) package-related failure.
-   Paren-matching is a simple byte-by-byte depth count, no R-string/comment awareness -- correct for
-   the vast majority of real library()/require() calls; one this scanner can't fully match is just
-   left alone, and its own natural failure still gets the same friendly, non-halting treatment once
-   it occurs, so this is never a correctness requirement, only a niceness-of-error one. */
+   (runState.missingPackages), in a private execution-only copy of the chunk source -- node.source
+   (viewer and report) is never touched. library(fst) itself can reject shelter.captureR's promise
+   outright instead of surfacing as a capturable condition; skipping the call means any later use
+   of the package fails instead with a plain, always-capturable "could not find function" error.
+   Paren-matching is a simple depth count with no string/comment awareness -- a call it can't fully
+   match is just left alone, since its own natural failure gets the same friendly treatment anyway. */
 function disableMissingPackageLoadCalls(source, missingPackages) {
   if (!missingPackages || missingPackages.length === 0) return source;
   const missingSet = new Set(missingPackages);
@@ -2984,21 +2962,12 @@ async function runInstallPackagesCall(engine, packageList, repos) {
   }
 }
 
-/* installPackages() resolving is not proof of success (it behaves like install.packages(): an
-   unavailable package just warns and resolves), so verifyPackagesInstalled re-checks before any
-   chunk runs. A second install attempt, widened to CONFIG.WEBR_FALLBACK_REPO_URLS, only runs for
-   packages still missing after the primary repo -- see the comment on WEBR_FALLBACK_REPO_URLS for
-   why those repos are never merged into the first attempt.
-
-   A package that never becomes loadable is logged, not thrown: only the chunk(s) that actually use
-   it are affected, and letting the run proceed means every chunk before that point still executes
-   and renders normally -- the missing package then surfaces as a completely normal R error (e.g.
-   "there is no package called 'fst'") at the exact chunk that needs it, handled by runChunksFrom's
-   existing per-chunk error UI exactly like any other runtime error, instead of losing the whole
-   report over a dependency one specific chunk near the end happens to need. Returns only the
-   subset of packageList that is actually confirmed loadable; runState.missingPackages (set by the
-   caller) carries the rest so the per-chunk error handler can name the real cause instead of
-   guessing. */
+/* installPackages() resolving is not proof of success (an unavailable package just warns and
+   resolves, like install.packages()), so this re-checks loadability before any chunk runs; a
+   second attempt widened to CONFIG.WEBR_FALLBACK_REPO_URLS covers only packages still missing.
+   A package that never loads is logged, not thrown, so earlier chunks still run normally and the
+   failure surfaces as a plain R error at the exact chunk that needs it. Returns only the confirmed-
+   loadable subset; runState.missingPackages carries the rest for the per-chunk error handler. */
 async function installPackagesWithProgress(engine, packageList, extraRepos) {
   if (packageList.length === 0) return { installed: [], missing: [] };
   appendLogLine("message", "Installing R package(s): " + packageList.join(", ") + "...");
@@ -3299,15 +3268,9 @@ function renderNotRunChunk(node, label, container) {
 }
 
 /* Renders one executed chunk's result into the Report tab and mirrors each captured plot into the
-   Plots tab gallery (the same ImageBitmap can be drawn into two canvases; drawing does not
-   consume it). Returns the wrapping element so callers can append a "Continue anyway" button.
-
-   codeFolding (output.html_document.code_folding, spec: EFDC-Repo-Template default "show") only
-   folds the *source*, never the results -- real rmarkdown always shows chunk output regardless of
-   this setting -- so the source lives in its own nested <details class="chunk-code-fold">, while
-   everything else in the outer .chunk-block stays outside it and always visible. "hide" starts
-   that nested <details> closed; "none" skips the fold entirely and always shows the source, with
-   no toggle at all, matching rmarkdown's own three-way meaning for this option. */
+   Plots tab gallery (one ImageBitmap can be drawn into two canvases without being consumed).
+   codeFolding only folds the *source* (in its own nested <details>), never the results, matching
+   rmarkdown's three-way meaning: "show"/"hide" toggle the source, "none" always shows it unfolded. */
 function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure, codeFolding) {
   if (effectiveOptions.include === false && !isFailure) return null;
   const wrap = document.createElement("div");
@@ -4319,16 +4282,10 @@ function findCandidateLines(sourceLines, re) {
   return idxs;
 }
 
-/* Adds a clickable marker to the source line that most likely produced each plot/file a chunk's
-   run generated, jumping to and flashing the corresponding Plots/Files tab item
-   (ShareR-UI-Specification.md section 3). webR's captureR only reports outputs per chunk, not
-   per statement, so exact attribution isn't available; PLOT_CALL_RE/FILE_WRITE_CALL_RE find
-   candidate lines within the chunk's own source and outputs are matched to them in the order
-   both appear (the Nth plot/file to the Nth candidate line). When a chunk produced more
-   plots/files than candidate lines were found, the extras stack onto the last candidate line
-   rather than being silently dropped; when no candidate line matches at all, everything falls
-   back to the chunk's first line so a marker is still always reachable. Called once per run,
-   after the source viewer already has its .code-line rows. */
+/* Adds a clickable marker to the source line that most likely produced each plot/file a chunk
+   generated (ShareR-UI-Specification.md section 3). captureR reports outputs per chunk, not per
+   statement, so PLOT_CALL_RE/FILE_WRITE_CALL_RE candidate lines are matched to outputs in order,
+   extras stacking on the last candidate and falling back to the chunk's first line if none match. */
 function annotateSourceViewerOutputMarkers(runState) {
   const rows = elSourceCodeLines.querySelectorAll(".code-line");
   const placeMarker = (baseLine, relativeLine, glyph, label, onClick) => {
@@ -4458,9 +4415,8 @@ function closeErrorModal() {
 }
 
 /* ### UI: results tabs -- real ARIA tabs with roving tabindex (spec section 11.2) ###
-   The shell ships tabindex="-1" on two of the three tab buttons by default, so Tab alone can
-   never reach them; ArrowLeft/ArrowRight/Home/End must move focus and activate, or this would be
-   a keyboard trap that plain Stage 2A never had. */
+   Two of the three tab buttons ship tabindex="-1", so Tab alone can never reach them --
+   ArrowLeft/ArrowRight/Home/End must move focus and activate to avoid a keyboard trap. */
 
 const TAB_BUTTONS = [elTabReportBtn, elTabPlotsBtn, elTabFilesBtn];
 const TAB_PANELS = [elTabReportPanel, elTabPlotsPanel, elTabFilesPanel];
@@ -4497,25 +4453,13 @@ function initResultsTabs() {
 }
 
 /* ### UI: Report/Plots zoom control ###
-   Wide screens stretch plots to fill the pane's width, which -- since aspect ratio is preserved
-   -- makes them proportionally taller too, often taller than the viewport; zooming out gives an
-   at-a-glance view without scrolling.
-
-   Built on transform:scale(), not the CSS `zoom` property: zoom turned out not to reliably shrink
-   plots at all in real-world testing (a <canvas> confirmed not to respect it in an isolated test,
-   and moving to <img> wasn't sufficient either -- reported still not working in real Chrome).
-   transform is a pure paint-time operation applied uniformly to the whole subtree regardless of
-   what's inside it (an ordinary block, an <img>, previously a <canvas> -- it doesn't matter), so
-   it can't have that kind of element-specific inconsistency, and it's standard/universally
-   supported rather than Chromium/Safari-only. Each zoomable tab has an *outer* frame (the actual
-   tabpanel, kept at the pane's full natural width -- "the larger frame") containing an *inner*
-   wrapper that is the one actually transformed; transform-origin:top center means content smaller
-   than the frame reads as centered inside it, matching how a graphics-library zoom (e.g. an SVG
-   viewBox transform) typically presents a scaled-down view. Since transform doesn't shrink the
-   *outer* box's own contribution to the page's layout/scroll height, a ResizeObserver on each
-   inner wrapper keeps the outer's explicit height in sync with (natural height * zoom) --
-   otherwise zooming out would make the content look smaller without actually reclaiming any
-   scrollable space, which was the entire point. */
+   Wide screens stretch plots proportionally taller than the viewport, so zooming out gives an
+   at-a-glance view without scrolling. Uses transform:scale(), not the CSS `zoom` property, which
+   does not reliably shrink a <canvas> or <img> in real-world testing; transform is a uniform
+   paint-time operation with no such element-specific inconsistency. Each tab has an outer frame
+   (full natural width) containing an inner wrapper that is the one actually transformed; a
+   ResizeObserver keeps the outer's explicit height in sync with natural-height * zoom, since
+   transform alone doesn't shrink the outer box's contribution to page scroll height. */
 function computeDefaultZoom() {
   return window.innerWidth >= CONFIG.WIDE_SCREEN_BREAKPOINT_PX ? CONFIG.ZOOM_DEFAULT_WIDE : CONFIG.ZOOM_DEFAULT_NARROW;
 }
