@@ -154,7 +154,49 @@ with this program. If not, see https://www.gnu.org/licenses/.
     padding: 0 0.5rem;
   }
   @media print {
-    header.app-header { display: none; }
+    header.app-header,
+    .workspace-pane,
+    .results-tabs-row,
+    .zoom-control,
+    .console-wrapper,
+    .footer-credits,
+    .skip-link {
+      display: none !important;
+    }
+    main#main-content {
+      display: block;
+      padding: 0;
+      gap: 0;
+      min-height: auto;
+    }
+    .panel,
+    .results-pane {
+      border: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      overflow: visible !important;
+    }
+    .tab-panels-wrapper,
+    .tab-panels,
+    .tab-panel {
+      display: block !important;
+      overflow: visible !important;
+      min-height: auto !important;
+      padding: 0 !important;
+    }
+    .tab-panel[hidden] {
+      display: none !important;
+    }
+    .zoom-inner {
+      transform: none !important;
+      padding: 0 !important;
+    }
+    .app-footer {
+      display: block !important;
+      padding: 0.5rem 0 0 !important;
+      border-top: 1px solid #c7ccd1;
+      margin-top: 1rem;
+    }
   }
   .slogan {
     font-size: 0.75rem;
@@ -488,6 +530,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-bottom: 1px solid var(--panel-border);
     padding: 0 0.6rem 0 0.5rem;
     gap: 0.5rem;
+  }
+  .results-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
   }
   .results-tabs {
     display: flex;
@@ -886,9 +934,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" role="tab" id="tab-plots-btn" aria-selected="false" aria-controls="tab-plots-panel" tabindex="-1">Plots</button>
         <button type="button" role="tab" id="tab-files-btn" aria-selected="false" aria-controls="tab-files-panel" tabindex="-1">Files</button>
       </div>
-      <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled>
-        <span class="btn-icon" aria-hidden="true">⤓</span><span class="btn-text">Download all (.zip)</span>
-      </button>
+      <div class="results-actions">
+        <button type="button" id="print-results-button" class="btn btn-secondary btn-sm">
+          <span class="btn-icon" aria-hidden="true">🖨️</span><span class="btn-text">Print</span>
+        </button>
+        <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled>
+          <span class="btn-icon" aria-hidden="true">⤓</span><span class="btn-text">Download all (.zip)</span>
+        </button>
+      </div>
     </div>
     <div class="tab-panels-wrapper">
       <div class="tab-panels">
@@ -3607,6 +3660,7 @@ const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
 const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
 const elAddMoreFilesButton = document.getElementById("add-more-files-button");
 
+const elPrintResultsButton = document.getElementById("print-results-button");
 const elDownloadZipButton = document.getElementById("download-zip-button");
 const elConsoleToggleButton = document.getElementById("console-toggle-button");
 
@@ -4039,6 +4093,7 @@ function activateTab(index) {
   // Zoom only makes sense for Report/Plots (index 0/1) -- Files is a list of download rows, not
   // wide charts, so the floating control has nothing useful to do there.
   elZoomControl.hidden = index === 2;
+  elPrintResultsButton.hidden = index === 2;
 }
 
 function initResultsTabs() {
@@ -4309,6 +4364,9 @@ elEntrySelect.addEventListener("change", () => {
 
 elRun.addEventListener("click", runEntry);
 elStop.addEventListener("click", stopEngine);
+elPrintResultsButton.addEventListener("click", () => {
+  window.print();
+});
 elDownloadZipButton.addEventListener("click", downloadResultsZip);
 
 /* ### Bootstrap ### */
