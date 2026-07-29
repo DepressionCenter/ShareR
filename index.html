@@ -1,13 +1,13 @@
 <!--
-This file is part of ShareR™.
+This file is part of ShareR(tm)
 index.html: Main HTML file for the ShareR application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
-Last Modified: 2026-07-27
-Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
-         Stage 2A: loads and runs a real .R file from a URL, a GitHub repository, or the visitor's
-         own computer, with input data staged the same three ways. R Markdown chunk execution and
-         package installation land in Stage 2B.
+Last Modified: 2026-07-28
+Summary: ShareR(tm) runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
+         Stage pre-2B: reskinned UI (workspace / results two-pane layout, Report/Plots/Files tabs,
+         source viewer, collapsible console). Stage 2B: .Rmd chunk execution, package preflight and
+         installation, and output rendering (plots, files, CSV preview, ZIP download).
 Notes: See README file for documentation and full license information.
 
 Copyright (c) 2026 The Regents of the University of Michigan
@@ -27,7 +27,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ShareR™ - Run R in your browser</title>
+<title>ShareR(tm) - Run R in your browser</title>
 
 <!--
   Content-Security-Policy: ordinary hygiene, NOT a security boundary. See spec section 0.1.
@@ -36,10 +36,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
   data; that is verifiable by reading the source and searching for fetch, XMLHttpRequest, and
   sendBeacon. It is not the browser's job to enforce it here. An earlier, restrictive version of
   this policy broke webR twice and cost far more than it protected, so this one is deliberately
-  permissive and is expected to stay that way. Do not tighten it for Stage 2A: 'unsafe-eval' is
-  mandatory (see the comment retained from Stage 1 below) and 'connect-src https:' is what lets
-  this stage fetch a script or data file from an arbitrary host (spec sections 5.1 and 5.5) and
-  call the GitHub API (spec section 6).
+  permissive and is expected to stay that way. 'unsafe-eval' is mandatory (webR's Emscripten
+  runtime needs it to load libRblas.so/libRlapack.so) and 'connect-src https:' is what lets this
+  stage fetch a script or data file from an arbitrary host (spec sections 5.1 and 5.5), call the
+  GitHub API (spec section 6), and load js-yaml/marked/DOMPurify/fflate from jsDelivr (section 3.6).
 -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
@@ -52,10 +52,42 @@ with this program. If not, see https://www.gnu.org/licenses/.
 ">
 
 <link rel="stylesheet" href="styles/um-style.css">
+
+<!--
+  Pinned JS dependencies (spec section 3.6). Exact versions only, no integrity attribute (see
+  spec section 0.1: SRI defends a threat this static research tool does not face and adds
+  regeneration friction on every version bump). Plain, non-module scripts so their globals
+  (jsyaml, marked, DOMPurify, fflate) are attached to window before the module script below runs;
+  browsers execute plain <script src> tags in document order, ahead of a deferred type="module"
+  script, regardless of where the module script itself appears in the document.
+-->
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
+
 <style>
+  :root {
+    --panel-bg: var(--um-white);
+    --panel-border: #c7ccd1;
+    --panel-header-bg: #f3f4f6;
+    --text-muted: #4b4f52;
+    --console-bg: #0d1b2a;
+    --console-fg: #d7e3f4;
+    --source-bg: #1e1e1e;
+    --source-fg: #d4d4d4;
+    --source-gutter: #858585;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+  }
   body {
     margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
   }
   .skip-link {
     position: absolute;
@@ -70,100 +102,182 @@ with this program. If not, see https://www.gnu.org/licenses/.
     left: 0.5rem;
     top: 0.5rem;
   }
+
+  /* ---------- Header ---------- */
   header.app-header {
     background-color: var(--um-dark-blue);
     color: var(--um-white);
-    padding: 1rem 1.5rem;
+    padding: 0.6rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+  .app-logo { flex: 0 0 auto; }
+  .header-titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
   header.app-header h1 {
     color: var(--um-white);
-    margin: 0 0 0.25rem 0;
-    font-size: 1.4rem;
+    margin: 0;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    flex-wrap: wrap;
   }
-  .data-badge {
-    display: inline-block;
-    font-size: 0.85rem;
-    color: var(--um-dark-blue);
-    background-color: var(--um-maize);
-    border-radius: 4px;
-    padding: 0.15rem 0.5rem;
+  .maize-r { color: var(--um-maize); }
+  .header-source-badge {
+    font-weight: 400;
+    opacity: 0.85;
+    font-size: 0.95rem;
   }
-  main {
-    max-width: 60rem;
-    margin: 0 auto;
-    padding: 1.5rem;
+  .slogan {
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    margin: 0.1rem 0 0;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .github-link {
+    color: var(--um-white);
+    opacity: 0.85;
+    display: flex;
+    align-items: center;
+  }
+  .github-link:hover, .github-link:focus {
+    opacity: 1;
+    background-color: transparent;
+    outline: 2px solid var(--um-maize);
+  }
+
+  /* Visually-hidden but still announced: run-source-line/status-line carry live run-progress
+     text that screen reader users need (AGENTS.md section 9), even though there is no visible
+     status bar. Uses the standard clip-based technique, not display:none, so the aria-live
+     region stays in the accessibility tree and keeps announcing. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ---------- Main two-pane layout ---------- */
+  main#main-content {
+    flex: 1;
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    min-height: 0;
+    align-items: stretch;
   }
   .panel {
-    border: 1px solid var(--um-dark-grey);
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
     border-radius: 6px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
-  .panel h2 {
-    margin-top: 0;
+  .panel-header {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-header-bg);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
   }
-  .field {
-    margin-bottom: 0.8rem;
+  .panel-header h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+
+  .workspace-pane {
+    flex: 1 1 280px;
+    max-width: 320px;
+    min-width: 260px;
+    transition: max-width 0.2s ease;
   }
+  /* A flex column, not just an overflow wrapper: this lets .editor-container claim the
+     remaining vertical space with flex:1 (see below) so its own .editor-body is normally the
+     only scrolling region in the pane. overflow-y:auto here is a safety net for the rare case
+     where content above the editor alone is taller than the pane -- not the common path. */
+  .panel-scroll {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .workspace-section {
+    border-bottom: 1px solid var(--panel-border);
+    padding: 0.75rem 1rem;
+  }
+  .workspace-section > summary {
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--um-dark-blue);
+    padding: 0.15rem 0;
+  }
+  .workspace-section > summary:focus-visible {
+    outline: 3px solid var(--um-medium-blue);
+    outline-offset: 2px;
+  }
+  .workspace-section > *:not(summary) { margin-top: 0.6rem; }
+
+  .field { margin-bottom: 0.7rem; }
   .field label, .local-files-label {
     display: block;
     font-weight: bold;
     margin-bottom: 0.3rem;
+    font-size: 0.9rem;
   }
-  .field-row {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-  .field-row .field {
-    flex: 1 1 12rem;
-  }
+  .field-row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .field-row .field { flex: 1 1 9rem; }
   input[type="text"], select {
     width: 100%;
     box-sizing: border-box;
     font: inherit;
-    padding: 0.4rem 0.5rem;
+    padding: 0.35rem 0.5rem;
     border: 1px solid var(--um-dark-grey);
     border-radius: 4px;
   }
   .controls {
-    margin: 0.8rem 0;
+    margin: 0.6rem 0 0;
     display: flex;
-    gap: 0.6rem;
+    gap: 0.5rem;
     align-items: center;
     flex-wrap: wrap;
   }
-  .btn-sm {
-    padding: 4px 10px;
-    font-size: 0.85rem;
+  .btn-sm { padding: 4px 10px; font-size: 0.85rem; }
+  .help-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0.2rem 0 0.5rem 0;
   }
-  #status-line, #staging-status {
-    font-weight: bold;
-  }
-  .output-log {
-    font-family: ui-monospace, Consolas, "Courier New", monospace;
-    font-size: 0.9rem;
-    white-space: pre-wrap;
-    background-color: var(--um-dark-blue);
-    color: var(--um-white);
+  fieldset {
+    border: 1px solid var(--um-dark-grey);
     border-radius: 4px;
-    padding: 0.75rem;
-    min-height: 10rem;
-    max-height: 24rem;
-    overflow-y: auto;
+    margin: 0;
   }
-  .log-stderr, .log-error { color: #ffb3b3; }
-  .log-warning { color: var(--um-maize); }
-  .log-message { color: #b9d2ff; }
-  .run-source-line {
-    font-style: italic;
-  }
-  .local-add-controls {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.4rem;
-  }
+  .local-add-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
   .dropzone {
     border: 2px dashed var(--um-dark-grey);
     background-color: var(--um-maize);
@@ -173,51 +287,358 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-color: var(--um-dark-blue);
     background-color: var(--um-white);
   }
-  .help-text {
-    font-size: 0.85rem;
-    color: var(--um-dark-grey);
-    margin: 0.2rem 0 0.8rem 0;
-  }
-  fieldset {
-    border: 1px solid var(--um-dark-grey);
-    border-radius: 4px;
-    margin: 0 0 0.8rem 0;
-  }
-  .staging-messages {
-    margin: 0.6rem 0;
-  }
-  .staging-msg {
-    padding: 0.3rem 0.5rem;
-    border-radius: 4px;
-    margin-bottom: 0.3rem;
-    font-size: 0.9rem;
-  }
+
+  .staging-messages { margin: 0.5rem 0 0; }
+  .staging-msg { padding: 0.3rem 0.5rem; border-radius: 4px; margin-bottom: 0.3rem; font-size: 0.85rem; }
   .staging-msg-error { background-color: #fdecea; color: #7a1a12; border: 1px solid #e5a19a; }
   .staging-msg-warning { background-color: #fff6d9; color: #5c4600; border: 1px solid var(--um-maize); }
   .staging-msg-info { background-color: #eaf1fb; color: var(--um-dark-blue); border: 1px solid var(--um-medium-blue); }
-  .staged-files-table {
-    width: 100%;
-    border-collapse: collapse;
+
+  /* ---------- Workspace: Input Data carousel (ShareR-UI-Specification.md section 3) ---------- */
+  .section { padding: 0.75rem 1rem; border-bottom: 1px solid var(--panel-border); }
+  .section-label-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.4rem; }
+  .section-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .link-button {
+    background: none;
+    border: none;
+    color: var(--um-medium-blue);
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0;
+  }
+  .link-button:hover, .link-button:focus-visible { text-decoration: underline; }
+
+  .file-carousel {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding: 0 0 0.35rem;
+    margin: 0;
+    list-style: none;
+  }
+  .empty-carousel-note { font-size: 0.8rem; color: var(--text-muted); font-style: italic; padding: 0.25rem 0; }
+  .data-card {
+    flex: 0 0 auto;
+    width: 116px;
+    border: 1px dashed var(--um-dark-grey);
+    border-radius: 4px;
+    padding: 0.5rem;
+    text-align: center;
+    background: #f8fafc;
+  }
+  .data-card:hover, .data-card:focus-within { border-color: var(--um-medium-blue); background: #eff6ff; }
+  .data-icon { font-size: 1.25rem; line-height: 1; }
+  .data-filename {
+    font-weight: 600;
+    font-size: 0.75rem;
+    margin: 0.25rem 0 0.1rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .data-status { font-size: 0.65rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+  .data-card-actions { display: flex; gap: 0.25rem; justify-content: center; }
+  .data-card-actions button { font-size: 0.65rem; padding: 2px 5px; }
+
+  /* ---------- Source code editor: dark theme, gutter markers, safe token-based highlighting ----------
+     Every line is built from createElement()/textContent/createTextNode calls only (see
+     appendTokenizedLine()); author-controlled script text is never assigned via innerHTML
+     (spec 0.1 / AGENTS.md section 7). */
+  .code-toggle-wrapper { padding: 0 1rem 0.5rem; }
+  .toggle-btn {
+    background: none;
+    border: none;
+    color: var(--um-medium-blue);
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0.2rem 0;
+  }
+  .toggle-btn:hover, .toggle-btn:focus-visible { text-decoration: underline; }
+
+  /* flex:1 (not a fixed max-height) lets this claim exactly the vertical space .panel-scroll has
+     left, so .editor-body's own overflow is normally the only scrollbar in the whole pane -- see
+     .panel-scroll above. The [hidden] rule exists because the attribute selector's UA-stylesheet
+     display:none would otherwise lose to this class's own display:flex on specificity alone,
+     which is what previously left a collapsed-but-still-visible empty box on screen. */
+  .editor-container {
+    display: flex;
+    flex-direction: column;
+    background: var(--source-bg);
+    color: var(--source-fg);
+    margin: 0 1rem 0.75rem;
+    border-radius: 4px;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+  }
+  #source-editor[hidden] { display: none; }
+  .editor-header {
+    background: #2d2d2d;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+    color: #9cdcfe;
+    border-bottom: 1px solid #444;
+    font-family: ui-monospace, Consolas, monospace;
+    word-break: break-all;
+  }
+  .editor-body {
+    flex: 1;
+    overflow: auto;
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 0.3rem 0;
+  }
+  .code-line { display: flex; }
+  .code-line:hover { background: #2a2d2e; }
+  .gutter {
+    flex: 0 0 auto;
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.2rem;
+    padding-right: 8px;
+    color: var(--source-gutter);
+    border-right: 1px solid #404040;
+    margin-right: 10px;
+    user-select: none;
+  }
+  .marker-slot { display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
+  .code-text { white-space: pre; padding-right: 0.75rem; }
+  .syn-comment { color: #6a9955; font-style: italic; }
+  .syn-func { color: #dcdcaa; }
+  .syn-string { color: #ce9178; }
+
+  /* ---------- Results pane ---------- */
+  .results-pane { flex: 2 1 480px; min-width: 0; }
+  /* No separate "Results" title bar (redundant with the app's own purpose); the tabs row itself
+     doubles as the panel header, with the download button right-aligned in the same row. */
+  .results-tabs-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--panel-header-bg);
+    border-bottom: 1px solid var(--panel-border);
+    padding: 0 0.6rem 0 0.5rem;
+    gap: 0.5rem;
+  }
+  .results-tabs {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .results-tabs [role="tab"] {
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    padding: 0.55rem 0.9rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .results-tabs [role="tab"][aria-selected="true"] {
+    color: var(--um-dark-blue);
+    border-bottom-color: var(--um-dark-blue);
+  }
+  .results-tabs [role="tab"]:focus-visible {
+    outline: 3px solid var(--um-medium-blue);
+    outline-offset: -3px;
+  }
+  .tab-panels { flex: 1; min-height: 0; overflow-y: auto; }
+  .tab-panel { padding: 1rem; }
+  .tab-panel:focus-visible { outline: 2px solid var(--um-medium-blue); }
+
+  .prose-block :first-child { margin-top: 0; }
+  .prose-block pre { overflow-x: auto; }
+
+  .chunk-block {
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    margin: 0 0 1rem 0;
+  }
+  .chunk-block > summary { font-weight: bold; cursor: pointer; }
+  .chunk-block-error { border-color: #c0392b; background-color: #fdecea; }
+  .chunk-block-skipped { background-color: var(--panel-header-bg); }
+  .chunk-source {
+    background: var(--source-bg);
+    color: var(--source-fg);
+    padding: 0.5rem 0.7rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    margin: 0.5rem 0;
+  }
+  .chunk-output { margin: 0.4rem 0; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+  .chunk-output-line { white-space: pre-wrap; padding: 0.1rem 0; }
+  .chunk-output-stderr, .chunk-output-error { color: #a4271f; }
+  .chunk-output-warning { color: #6b5300; }
+  .chunk-output-message { color: var(--um-medium-blue); }
+  .chunk-plot, .plot-gallery-item canvas, .plot-gallery-item img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0.5rem 0;
+    border: 1px solid var(--panel-border);
+  }
+  .plot-gallery-item {
+    background: #f3f4f6;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.75rem;
     margin-bottom: 1rem;
   }
-  .staged-files-table th, .staged-files-table td {
-    text-align: left;
-    padding: 0.35rem 0.5rem;
-    border-bottom: 1px solid var(--um-dark-grey);
-    font-size: 0.9rem;
-  }
-  .empty-row td {
-    font-style: italic;
-    color: var(--um-dark-grey);
-  }
-  footer.app-footer {
-    padding: 1rem 1.5rem;
+  .plot-gallery-heading { font-size: 0.95rem; margin: 0 0 0.3rem; }
+
+  /* Output gutter markers (source viewer) and the highlight-flash they trigger on the Plots/
+     Files tab item they jump to (spec: ShareR-UI-Specification.md section 3). */
+  .output-marker {
+    background: none;
+    border: none;
+    cursor: pointer;
     font-size: 0.85rem;
-    color: var(--um-dark-grey);
+    padding: 0 0.2rem;
+    margin-left: 0.3rem;
+    line-height: 1;
   }
+  .output-marker:hover { transform: scale(1.15); }
+  @keyframes sharerHighlightFlash {
+    0% { background-color: #fef08a; box-shadow: 0 0 0 3px #eab308; }
+    100% { background-color: inherit; box-shadow: none; }
+  }
+  .highlight-flash { animation: sharerHighlightFlash 1.5s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    .highlight-flash { animation: none; background-color: #fef08a; }
+  }
+
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    background: var(--panel-bg);
+  }
+  .file-row-chunk { font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
+  .file-row-name { font-weight: 600; font-size: 0.9rem; word-break: break-all; }
+  .file-row-size { font-size: 0.8rem; color: var(--text-muted); }
+  .file-row-image-preview { max-width: 6rem; max-height: 4rem; border: 1px solid var(--panel-border); }
+  .csv-preview-table { border-collapse: collapse; margin-top: 0.5rem; font-size: 0.8rem; width: 100%; }
+  .csv-preview-table th, .csv-preview-table td {
+    border: 1px solid var(--panel-border);
+    padding: 0.2rem 0.4rem;
+    text-align: left;
+  }
+
+  /* ---------- Console (execution log) ---------- */
+  .console-wrapper {
+    border-top: 1px solid var(--panel-border);
+    background: var(--panel-header-bg);
+  }
+  .console-toggle {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    font-weight: bold;
+    font-size: 0.75rem;
+    color: var(--um-dark-blue);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+  .output-log {
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    background-color: #000000;
+    color: #00ff00;
+    padding: 0.75rem 1rem;
+    max-height: 16rem;
+    overflow-y: auto;
+    transition: max-height 0.15s ease;
+  }
+  /* Collapsing to max-height:0 (not display:none/hidden) keeps this role="log" aria-live region
+     in the accessibility tree so announcements keep firing while visually collapsed, while still
+     leaving zero visible footprint -- box-sizing:border-box (global reset, above) means the 0
+     cap clips the padding too, not just content, so no sliver of the black background peeks out
+     under the toggle button. */
+  .output-log.log-collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; }
+  .log-stderr, .log-error { color: #ff6b6b; }
+  .log-warning { color: #ffd400; }
+  .log-message { color: #7dffb3; }
+
+  footer.app-footer {
+    padding: 0.5rem 1.25rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+  .footer-credits {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .footer-credits a { display: inline-flex; align-items: center; gap: 0.3rem; }
+  .footer-divider { color: var(--panel-border); }
+
   button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
     outline: 3px solid var(--um-medium-blue);
     outline-offset: 2px;
+  }
+
+  /* ---------- "Load a script" modal (ShareR-UI-Specification.md section 3 + user direction:
+     URL parameters drive loading; this dialog only appears when the URL didn't already resolve
+     a script, or when the researcher explicitly asks to change one). ---------- */
+  dialog#load-script-modal {
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    width: min(560px, 92vw);
+    max-height: 88vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  }
+  dialog#load-script-modal::backdrop { background: rgba(0, 39, 76, 0.55); }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.9rem 1.25rem;
+    background: var(--um-dark-blue);
+    color: var(--um-white);
+  }
+  .modal-header h2 { margin: 0; font-size: 1.1rem; }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--um-white);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.25rem;
+  }
+  .modal-close:hover, .modal-close:focus-visible { color: var(--um-maize); }
+  .modal-body { padding: 1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
+
+  .workspace-empty-state .btn { margin-top: 0.3rem; }
+
+  @media (max-width: 900px) {
+    main#main-content { flex-direction: column; }
+    .workspace-pane { max-width: none; resize: vertical; }
   }
 </style>
 </head>
@@ -226,21 +647,127 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <a class="skip-link" href="#main-content">Skip to main content</a>
 
 <header class="app-header">
-  <h1>ShareR</h1>
-  <p><span class="data-badge">Runs entirely in your browser. Your data is never uploaded.</span></p>
+  <div class="header-left">
+    <svg class="app-logo" width="34" height="34" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect width="24" height="24" rx="6" fill="#FFCB05"/>
+      <text x="12" y="17" font-family="system-ui, sans-serif" font-size="14" font-weight="bold"
+        text-anchor="middle" fill="#00274C">R</text>
+    </svg>
+    <div class="header-titles">
+      <h1>Share<span class="maize-r">R</span><span id="header-source-badge" class="header-source-badge"></span></h1>
+      <p class="slogan">Share your science. R in the browser, nothing to install.</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <button id="run-button" type="button" class="btn btn-primary" disabled><span aria-hidden="true">&#9654;</span> Run</button>
+    <button id="stop-button" type="button" class="btn btn-secondary" disabled>Stop and reset R</button>
+    <a class="github-link" href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener"
+      aria-label="View ShareR source code on GitHub">
+      <svg height="26" viewBox="0 0 16 16" width="26" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+      </svg>
+    </a>
+  </div>
 </header>
+
+<div class="sr-only">
+  <span id="run-source-line" role="status" aria-live="polite">No script loaded yet.</span>
+  <span id="status-line" role="status" aria-live="polite">Idle.</span>
+</div>
 
 <main id="main-content">
 
-  <section class="panel" aria-labelledby="setup-heading">
-    <h2 id="setup-heading">1. Choose what to run</h2>
-    <p class="help-text">
-      Paste a link to a script and, optionally, its data, or load a GitHub repository. You can also
-      skip this entirely and just add files from your computer below. Every field here corresponds
-      to a URL parameter (<code>entry</code>, <code>data</code>, <code>repo</code>, <code>ref</code>),
-      so a filled-in form is always a shareable link.
-    </p>
+  <section id="workspace-pane" class="panel workspace-pane" aria-labelledby="workspace-heading">
+    <div class="panel-header">
+      <h2 id="workspace-heading">Workspace</h2>
+      <button type="button" id="open-load-modal-button" class="btn btn-secondary btn-sm">Change script&hellip;</button>
+    </div>
+    <div class="panel-scroll">
 
+      <div id="workspace-empty-state" class="workspace-section" hidden>
+        <p class="help-text">No script loaded yet.</p>
+        <button type="button" id="open-load-modal-empty-button" class="btn btn-action btn-sm">Load a script</button>
+      </div>
+
+      <div id="entry-candidates" hidden>
+        <fieldset>
+          <legend>Multiple script files were found in this repository. Choose one to run:</legend>
+          <div id="entry-candidates-list"></div>
+        </fieldset>
+        <button type="button" id="choose-entry-button" class="btn btn-secondary btn-sm">Use selected file</button>
+      </div>
+
+      <div id="staging-messages" class="staging-messages" role="status" aria-live="polite"></div>
+
+      <div class="section">
+        <div class="section-label-row">
+          <span class="section-label" id="input-data-label">Input Data</span>
+          <button type="button" id="add-more-files-button" class="link-button">+ Add files</button>
+        </div>
+        <ul id="data-file-carousel" class="file-carousel" aria-labelledby="input-data-label"></ul>
+      </div>
+
+      <div class="field" id="entry-select-field" hidden>
+        <label for="entry-select">Script to run</label>
+        <select id="entry-select"></select>
+      </div>
+
+      <div class="code-toggle-wrapper">
+        <button type="button" id="source-toggle-button" class="toggle-btn" aria-expanded="false"
+          aria-controls="source-editor" hidden>
+          <span id="source-toggle-icon" aria-hidden="true">&#9656;</span><span id="source-toggle-label"> Show Source Code</span>
+        </button>
+      </div>
+      <div id="source-editor" class="editor-container" hidden>
+        <div id="source-viewer-filename" class="editor-header"></div>
+        <div id="source-code-lines" class="editor-body"></div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="panel results-pane" aria-label="Results">
+    <div class="results-tabs-row">
+      <div class="results-tabs" role="tablist" aria-label="Results views">
+        <button type="button" role="tab" id="tab-report-btn" aria-selected="true" aria-controls="tab-report-panel" tabindex="0">Report</button>
+        <button type="button" role="tab" id="tab-plots-btn" aria-selected="false" aria-controls="tab-plots-panel" tabindex="-1">Plots</button>
+        <button type="button" role="tab" id="tab-files-btn" aria-selected="false" aria-controls="tab-files-panel" tabindex="-1">Files</button>
+      </div>
+      <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled>Download all (.zip)</button>
+    </div>
+    <div class="tab-panels">
+      <div id="tab-report-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-report-btn" tabindex="0">
+        <p class="help-text">Run a script to see its report here.</p>
+      </div>
+      <div id="tab-plots-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-plots-btn" tabindex="0" hidden>
+        <p class="help-text">No plots yet.</p>
+      </div>
+      <div id="tab-files-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-files-btn" tabindex="0" hidden>
+        <p class="help-text">No output files yet.</p>
+      </div>
+    </div>
+
+    <div class="console-wrapper">
+      <button type="button" id="console-toggle-button" class="console-toggle" aria-expanded="false" aria-controls="output-log">
+        <span id="console-toggle-icon" aria-hidden="true">&#9656;</span> Execution Log
+      </button>
+      <div id="output-log" class="output-log log-collapsed" role="log" aria-live="polite" aria-atomic="false"></div>
+    </div>
+  </section>
+
+</main>
+
+<dialog id="load-script-modal" class="load-modal" aria-labelledby="load-modal-title">
+  <div class="modal-header">
+    <h2 id="load-modal-title">Load a script</h2>
+    <button type="button" id="close-load-modal-button" class="modal-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="modal-body">
+    <p class="help-text">
+      Paste a link to a script and, optionally, its data, or load a GitHub repository. Every
+      field here corresponds to a URL parameter (<code>entry</code>, <code>data</code>,
+      <code>repo</code>, <code>ref</code>), so a filled-in form is always a shareable link.
+    </p>
     <form id="source-form">
       <div class="field">
         <label for="entry-input">Script URL or repository-relative path (entry)</label>
@@ -263,12 +790,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
         </div>
       </div>
       <div class="controls">
-        <button type="submit" class="btn btn-secondary">Load</button>
+        <button type="submit" class="btn btn-primary">Load</button>
         <span id="staging-status" role="status" aria-live="polite"></span>
       </div>
     </form>
 
-    <div class="field">
+    <div class="field" style="margin-top: 1rem;">
       <span id="local-files-label" class="local-files-label">Add files from your computer</span>
       <div class="local-add-controls">
         <button type="button" id="add-files-button" class="btn btn-action dropzone"
@@ -283,67 +810,27 @@ with this program. If not, see https://www.gnu.org/licenses/.
       <input type="file" id="file-input" multiple hidden>
       <input type="file" id="folder-input" multiple webkitdirectory hidden>
     </div>
-
-    <div id="entry-candidates" hidden>
-      <fieldset>
-        <legend>Multiple script files were found in this repository. Choose one to run:</legend>
-        <div id="entry-candidates-list"></div>
-      </fieldset>
-      <button type="button" id="choose-entry-button" class="btn btn-secondary">Use selected file</button>
-    </div>
-
-    <div id="staging-messages" class="staging-messages" role="status" aria-live="polite"></div>
-
-    <h3>Staged files</h3>
-    <table id="staged-files-table" class="staged-files-table">
-      <caption class="help-text" style="text-align:left">
-        Everything ShareR currently has access to for this run. Local files override files from a
-        URL or repository with the same name.
-      </caption>
-      <thead>
-        <tr><th scope="col">File</th><th scope="col">Size</th><th scope="col">Source</th><th scope="col">Actions</th></tr>
-      </thead>
-      <tbody id="staged-files-body">
-        <tr class="empty-row"><td colspan="4">No files staged yet.</td></tr>
-      </tbody>
-    </table>
-  </section>
-
-  <section class="panel" aria-labelledby="run-heading">
-    <h2 id="run-heading">2. Run</h2>
-    <div class="field" id="entry-select-field" hidden>
-      <label for="entry-select">Script to run</label>
-      <select id="entry-select"></select>
-    </div>
-    <p id="run-source-line" class="run-source-line">Add or load a script above to get started.</p>
-    <div class="controls">
-      <button id="run-button" type="button" class="btn btn-primary" disabled>Run</button>
-      <button id="stop-button" type="button" class="btn btn-secondary" disabled>Stop and reset R</button>
-      <span id="status-line" role="status" aria-live="polite">Idle.</span>
-    </div>
-    <div id="output-log" class="output-log" role="log" aria-live="polite" aria-atomic="false"></div>
-  </section>
-
-</main>
+  </div>
+</dialog>
 
 <footer class="app-footer">
-  <p>
-    Files you open in ShareR are processed only in your browser. They are never uploaded, and
-    ShareR has no server that could receive them. ShareR itself has not been reviewed or approved
-    for any specific regulated data type. Confirm with your IRB and with your institution's
-    Cybersecurity or Information Assurance office before using it with participant data.
-  </p>
-  <p>
-    Stage 2A: runs a plain <code>.R</code> file from a URL, a GitHub repository, or your computer.
-    R Markdown chunk execution and package installation are not implemented yet.
-  </p>
+  <div class="footer-credits">
+    <span>&copy; 2026 The Regents of the University of Michigan</span>
+    <span class="footer-divider" aria-hidden="true">|</span>
+    <a href="https://depressioncenter.org" target="_blank" rel="noopener">Eisenberg Family Depression Center</a>
+    <span class="footer-divider" aria-hidden="true">|</span>
+    <a href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener">
+      <svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+      </svg>
+      View Code on GitHub
+    </a>
+  </div>
 </footer>
 
 <script type="module">
 "use strict";
-/* ShareR CONFIG. Single source of truth for pinned versions, limits, and paths (spec section 13).
-   Some fields (LIB_VERSIONS, INSTALL_TIMEOUT_MS) are not used until Stage 2B; kept here now so
-   CONFIG stays the single frozen object the whole app reads from, per spec section 1. */
+/* ShareR CONFIG. Single source of truth for pinned versions, limits, and paths (spec section 13). */
 const CONFIG = Object.freeze({
   WEBR_VERSION:            "0.6.0",
   WEBR_BASE_URL:           "https://webr.r-wasm.org/v0.6.0/",
@@ -372,8 +859,14 @@ const CONFIG = Object.freeze({
 
   FIG_WIDTH_PX:            1008,
   FIG_HEIGHT_PX:           720,
+  // 1008/7in = 144; 720/5in = 144 (knitr's default fig.width/fig.height). Converts a chunk's
+  // fig.width/fig.height options (inches) to pixels for captureGraphics (spec section 8.3).
+  FIG_DPI:                 144,
   INSTALL_TIMEOUT_MS:      600000,
-  STALL_WARNING_MS:        120000
+  STALL_WARNING_MS:        120000,
+
+  APP_VERSION:             "2026.07.28-stage2b",
+  CSV_PREVIEW_MAX_ROWS:    20
 });
 
 /* ### Errors ### */
@@ -424,15 +917,15 @@ function sanitizePastedValue(value) {
   if (!value) return value;
   let v = decodeHtmlEntities(value);
   // Hyphen/dash variants (non-breaking hyphen, figure/en/em dash, minus sign) -> "-".
-  v = v.replace(/[\u2010-\u2015\u2212]/g, "-");
+  v = v.replace(/[‐-―−]/g, "-");
   // Curly/low single quotes -> "'".
-  v = v.replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+  v = v.replace(/[‘’‚‛]/g, "'");
   // Curly/low double quotes -> '"'.
-  v = v.replace(/[\u201C\u201D\u201E\u201F]/g, '"');
+  v = v.replace(/[“”„‟]/g, '"');
   // Non-breaking and other Unicode space variants -> ordinary space.
-  v = v.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+  v = v.replace(/[  -   　]/g, " ");
   // Zero-width space/joiners and a stray byte-order mark -> removed entirely.
-  v = v.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  v = v.replace(/[​-‍﻿]/g, "");
   return v.trim();
 }
 
@@ -574,7 +1067,10 @@ function parseAppParams(search) {
   const refRaw = sanitizePastedValue(qp.get("ref") || qp.get("branch") || "");
   const packagesRaw = sanitizePastedValue(qp.get("packages") || "");
   const reposRaw = sanitizePastedValue(qp.get("repos") || "");
-  const autorun = qp.get("autorun") === "1";
+  // Running immediately once a script resolves is the default -- researchers open a link to see
+  // results, not to find a Run button. autorun=0 is a documented opt-out for a link meant to be
+  // reviewed before running (e.g. teaching), not an opt-in.
+  const autorun = qp.get("autorun") !== "0";
   return { entryRaw, dataValues, repoRaw, refRaw, packagesRaw, reposRaw, autorun };
 }
 
@@ -729,7 +1225,7 @@ async function fetchRepoTree(owner, repo, ref) {
   const json = await res.json();
   const entries = (json.tree || []).filter((e) => e.type === "blob" &&
     !e.path.startsWith(".git/") && !e.path.startsWith(".github/"));
-  return { truncated: !!json.truncated, entries };
+  return { truncated: !!json.truncated, entries, sha: json.sha || null };
 }
 
 /* GitHub renamed the default default-branch name from "master" to "main" in 2020, so the
@@ -1496,7 +1992,14 @@ const App = {
   candidates: null,
   selectedEntryPath: null,
   repoSyncCtx: null,       // budget + decoded-script-text cache shared across the whole repo sync
-  dataValuesExplicit: false // true when data= was given; suppresses the data auto-detection heuristic
+  dataValuesExplicit: false, // true when data= was given; suppresses the data auto-detection heuristic
+  packagesExplicitList: [],
+  reposExplicitList: [],
+  objectUrls: [],
+  lastRunInfo: null,
+  librariesOk: true,
+  installStreamActive: false,
+  executionLogLines: []
 };
 
 function decodeUtf8(bytes) {
@@ -1523,15 +2026,24 @@ async function getEngine() {
    captureR. Stage 1 already proved captureR({captureStreams:true})'s returned transcript is
    correct and complete; webR.stream()'s exact event shape on the PostMessage channel is not
    independently verified in this environment. Rather than risk duplicated or dropped log lines
-   on an unverified API, the stream reader here only updates the status line with a running count,
-   so a long script does not look frozen, while captureR's result remains the single source of
-   truth for the log. Revisit if webR.stream() is confirmed reliable by hand. */
+   on an unverified API, the stream reader here only updates the status line with a running count
+   during a normal run, while captureR's result remains the single source of truth for the log.
+   The one place this reader's raw text IS used is package installation (spec section 9.2), which
+   has no captureR-based alternative: installPackages() returns no transcript of its own, so the
+   App.installStreamActive flag routes its stdout/stderr lines into the log live. This is the only
+   consumer of engine.stream() for the life of the engine -- a second concurrent `for await` reader
+   would split messages between two competing consumers of one shared queue, so do not add one. */
 function attachLiveProgressIndicator(engine) {
   if (typeof engine.stream !== "function") return;
   (async () => {
     try {
       let count = 0;
-      for await (const _msg of engine.stream()) {
+      for await (const msg of engine.stream()) {
+        if (App.installStreamActive && msg && (msg.type === "stdout" || msg.type === "stderr") &&
+            typeof msg.data === "string") {
+          appendLogLine(msg.type, msg.data);
+          continue;
+        }
         if (!App.running) continue;
         count++;
         if (count % 5 === 0) setStatus("Running... (" + count + " output line(s) so far)");
@@ -1554,7 +2066,7 @@ const RE_MISSING_FILE_ERROR = /cannot open (?:the )?(?:file|connection)|no such 
 
 /* R quotes the package name with curly quotes ('ggplot2') in an interactive session and straight
    quotes ('ggplot2') when run non-interactively; matching both keeps this working either way. */
-const RE_MISSING_PACKAGE_ERROR = /there is no package called\s*[\u2018']([^\u2019']+)[\u2019']/i;
+const RE_MISSING_PACKAGE_ERROR = /there is no package called\s*[‘']([^’']+)[’']/i;
 
 function detectMissingFileError(outputItems) {
   for (const item of outputItems) {
@@ -1564,50 +2076,918 @@ function detectMissingFileError(outputItems) {
   }
   return null;
 }
+/* ### R Markdown front matter and knitr params (spec section 8.3, steps 1-2) ### */
+
+/* Splits front matter from the body via a first-match, non-greedy scan for the closing "---"
+   fence -- NOT a whole-document split on every dash-rule line. A real .Rmd body commonly contains
+   several "---"/"----" Markdown thematic-break lines after the real closing fence; a naive
+   text.split(/^-{3,}$/m) would wrongly cut the document at the first one and silently discard
+   everything after it. This regex instead finds only the first bare "---" line after the opening
+   one and treats every remaining line as one opaque body string handed once to the chunk parser,
+   never split on dashes again. */
+function splitFrontMatter(text) {
+  const m = text.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
+  if (!m) return { frontMatterText: null, body: text, bodyStartLine: 0 };
+  // Number of lines consumed by the matched front-matter block, so the chunk parser's own
+  // per-chunk line numbers (relative to "body") can be mapped back to a line index in the full
+  // original file -- used only to place output gutter markers in the source viewer.
+  const bodyStartLine = m[0].split(/\r\n|\r|\n/).length - 1;
+  return { frontMatterText: m[1], body: text.slice(m[0].length), bodyStartLine };
+}
+
+/* Follows the knitr convention (spec 8.3 step 2): a params: entry whose value is a mapping
+   containing a "value" key uses only that inner value; everything else (label, input, ...) is
+   authoring metadata and is dropped. Applied only at the top level of params:, per spec. */
+function buildKnitrParams(rawParams) {
+  const result = {};
+  for (const key of Object.keys(rawParams || {})) {
+    const v = rawParams[key];
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, "value")) {
+      result[key] = v.value;
+    } else {
+      result[key] = v;
+    }
+  }
+  return result;
+}
+
+/* Binds params into R via webR.objs.globalEnv.bind + jsonlite::fromJSON, never string-
+   interpolated into R source text (spec 8.3 step 2, non-negotiable per spec section 0.1). */
+async function materializeParams(engine, paramsObj) {
+  const json = JSON.stringify(paramsObj === null || paramsObj === undefined ? {} : paramsObj);
+  try {
+    await engine.objs.globalEnv.bind(".sharer_params_json", json);
+    await engine.evalRVoid(
+      "params <- jsonlite::fromJSON(.sharer_params_json, simplifyVector = TRUE); rm(.sharer_params_json)"
+    );
+  } catch (err) {
+    throw new ShareRError("Could not set up this document's params: " + (err && err.message ? err.message : err));
+  }
+}
+
+/* ### R Markdown chunk parsing (spec section 8.3 step 3) ### */
+
+const RE_CHUNK_OPEN = /^([ \t]*)(`{3,}|~{3,})\s*\{([A-Za-z0-9_]+)[,\s]?(.*)\}\s*$/;
+const RE_FENCE_CLOSE_ONLY = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
+
+/* Parses a chunk's option text (everything between the engine name and the closing "}") into a
+   { label, rawOptions } pair. The first token with no "=" is the chunk label; every other token
+   must be name=value. Reuses splitTopLevelArgs (already defined above for R call-argument
+   splitting) so a comma inside a quoted option value or nested parens does not split incorrectly. */
+function parseChunkOptionsText(optionsText) {
+  const trimmed = (optionsText || "").trim();
+  if (!trimmed) return { label: null, rawOptions: {} };
+  const parts = splitTopLevelArgs(trimmed);
+  let label = null;
+  const rawOptions = {};
+  parts.forEach((part, idx) => {
+    const m = part.match(/^([A-Za-z_.][A-Za-z0-9_.]*)\s*=(?!=)\s*([\s\S]*)$/);
+    if (!m) {
+      if (idx === 0) label = part.trim();
+      return;
+    }
+    rawOptions[m[1].trim()] = m[2].trim();
+  });
+  return { label, rawOptions };
+}
+
+/* Recognizes TRUE/FALSE/T/F, a bare number, or a quoted string literal. Anything else is an R
+   expression that spec 8.3 says not to evaluate -- the caller keeps the current default and logs
+   a note, per spec ("Options that are R expressions... treat them as their default"). */
+function parseChunkOptionLiteral(raw) {
+  if (/^(TRUE|T)$/.test(raw)) return { literal: true, value: true };
+  if (/^(FALSE|F)$/.test(raw)) return { literal: true, value: false };
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return { literal: true, value: parseFloat(raw) };
+  const str = literalStringValue(raw);
+  if (str !== null) return { literal: true, value: str };
+  return { literal: false, value: undefined };
+}
+
+const CHUNK_OPTION_NAMES = ["eval", "echo", "include", "warning", "message", "error", "results", "fig.width", "fig.height"];
+
+const DEFAULT_CHUNK_OPTIONS = Object.freeze({
+  eval: true, echo: true, include: true, warning: true, message: true,
+  error: false, results: "markup", "fig.width": 7, "fig.height": 5
+});
+
+/* Merges a chunk's own literal options over the running defaults (which may already reflect an
+   earlier knitr::opts_chunk$set() call, per readKnitrChunkOptionDefaults below). Non-literal
+   (R-expression) option values are logged and left at the default, never evaluated. */
+function resolveEffectiveChunkOptions(defaults, rawOptions, chunkLabel) {
+  const effective = Object.assign({}, defaults);
+  for (const name of Object.keys(rawOptions)) {
+    const parsed = parseChunkOptionLiteral(rawOptions[name]);
+    if (parsed.literal) {
+      effective[name] = parsed.value;
+    } else {
+      appendLogLine("message", "Chunk `" + chunkLabel + "`: option " + name + "=" + rawOptions[name] +
+        " is not a literal value; using the default (" + JSON.stringify(defaults[name]) + ").");
+    }
+  }
+  return effective;
+}
+
+/* Line-by-line, fence-state chunk parser (spec 8.3 step 3) -- not a whole-document regex. Chunk
+   headers match spec's own pattern; the closing fence must use the same fence character and be at
+   least as long as the opening one, with nothing else on the line. Text outside any chunk is
+   prose, collected verbatim (including any raw HTML the author wrote) for marked+DOMPurify later. */
+function parseRmdChunks(bodyText) {
+  const lines = bodyText.split(/\r\n|\r|\n/);
+  const nodes = [];
+  let proseLines = [];
+  const flushProse = () => {
+    if (proseLines.length) { nodes.push({ type: "prose", text: proseLines.join("\n") }); proseLines = []; }
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const openMatch = lines[i].match(RE_CHUNK_OPEN);
+    if (!openMatch) { proseLines.push(lines[i]); i++; continue; }
+    flushProse();
+    const startLine = i;
+    const fenceChar = openMatch[2][0];
+    const fenceLen = openMatch[2].length;
+    const engineName = openMatch[3];
+    const { label, rawOptions } = parseChunkOptionsText(openMatch[4]);
+    const bodyLines = [];
+    i++;
+    while (i < lines.length) {
+      const closeMatch = lines[i].match(RE_FENCE_CLOSE_ONLY);
+      if (closeMatch && closeMatch[1][0] === fenceChar && closeMatch[1].length >= fenceLen) { i++; break; }
+      bodyLines.push(lines[i]);
+      i++;
+    }
+    nodes.push({ type: "chunk", engine: engineName, label, rawOptions, source: bodyLines.join("\n"), startLine });
+  }
+  flushProse();
+  return nodes;
+}
+
+/* Models a plain .R file as a single unlabeled r chunk with no options, in the same node shape
+   parseRmdChunks produces, so one executor/renderer/outputs-pipeline serves both file types --
+   spec section 8.1's captureGraphics and section 10's outputs are not .Rmd-scoped. */
+function wrapPlainRAsSingleChunk(sourceCode, filename) {
+  return [{ type: "chunk", engine: "r", label: basenameOf(filename), rawOptions: {}, source: sourceCode, startLine: 0 }];
+}
+
+function slugifyForElementId(s) {
+  return String(s).replace(/[^A-Za-z0-9_-]+/g, "-");
+}
+
+/* Reads knitr::opts_chunk's current defaults back out of R after a chunk runs, in case it called
+   knitr::opts_chunk$set(...) -- more robust than pattern-matching the call (spec 8.3). Always
+   passes the explicit key vector rather than a bare $get(), since the full default list carries
+   many more, not-trivially-JSON-serializable keys. Best-effort: a failure here (e.g. a plain .R
+   run where knitr was never installed) is silently non-fatal. */
+async function readKnitrChunkOptionDefaults(engine, defaults) {
+  try {
+    const keysR = "c(" + CHUNK_OPTION_NAMES.map((k) => '"' + k + '"').join(", ") + ")";
+    const json = await engine.evalRString(
+      'jsonlite::toJSON(knitr::opts_chunk$get(' + keysR + '), auto_unbox = TRUE, null = "null")'
+    );
+    const merged = JSON.parse(json);
+    for (const k of Object.keys(merged)) {
+      if (merged[k] !== null && merged[k] !== undefined) defaults[k] = merged[k];
+    }
+  } catch (err) {
+    // Best-effort read-back only; must never abort the run.
+  }
+}
+
+function figDimsForChunk(effectiveOptions) {
+  const widthIn = typeof effectiveOptions["fig.width"] === "number" ? effectiveOptions["fig.width"] : 7;
+  const heightIn = typeof effectiveOptions["fig.height"] === "number" ? effectiveOptions["fig.height"] : 5;
+  return { width: Math.max(1, Math.round(widthIn * CONFIG.FIG_DPI)), height: Math.max(1, Math.round(heightIn * CONFIG.FIG_DPI)) };
+}
+
+/* ### Package preflight (spec section 9) ### */
+
+const BASE_RECOMMENDED_PACKAGES = new Set([
+  "base", "stats", "utils", "methods", "graphics", "grDevices", "datasets", "grid",
+  "tools", "parallel", "compiler", "splines", "stats4", "tcltk",
+  "MASS", "Matrix", "boot", "class", "cluster", "codetools", "foreign", "KernSmooth",
+  "lattice", "mgcv", "nlme", "nnet", "rpart", "spatial", "survival"
+]);
+
+const RE_LIBRARY_CALL = /\b(?:library|require)\s*\(\s*["']?([A-Za-z][A-Za-z0-9._]*)["']?\s*[,)]/g;
+const RE_REQUIRE_NAMESPACE = /\brequireNamespace\s*\(\s*["']([A-Za-z][A-Za-z0-9._]*)["']/g;
+const RE_PKG_COLON = /\b([A-Za-z][A-Za-z0-9._]*)::/g;
+
+function detectPackagesInText(text, set) {
+  let m;
+  RE_LIBRARY_CALL.lastIndex = 0;
+  while ((m = RE_LIBRARY_CALL.exec(text))) set.add(m[1]);
+  RE_REQUIRE_NAMESPACE.lastIndex = 0;
+  while ((m = RE_REQUIRE_NAMESPACE.exec(text))) set.add(m[1]);
+  RE_PKG_COLON.lastIndex = 0;
+  while ((m = RE_PKG_COLON.exec(text))) set.add(m[1]);
+}
+
+/* Scans only r-engine chunk/script source (never prose, never a non-r chunk) for library()/
+   require()/requireNamespace()/pkg:: references, unions with the packages= URL param (already
+   parsed but previously unused) and any other staged .R/.Rmd files, always adds jsonlite, and
+   adds knitr too for a .Rmd entry (both needed by ShareR itself, not necessarily by the script). */
+function detectPackages(nodes, isRmdEntry) {
+  const set = new Set();
+  for (const node of nodes) {
+    if (node.type === "chunk" && node.engine.toLowerCase() === "r") detectPackagesInText(node.source, set);
+  }
+  for (const f of App.stagedStore.list()) {
+    if (f.path === App.selectedEntryPath) continue;
+    if (/\.(r|rmd)$/i.test(f.path)) detectPackagesInText(decodeUtf8(f.bytes), set);
+  }
+  for (const p of App.packagesExplicitList) if (p) set.add(p);
+  set.add("jsonlite");
+  if (isRmdEntry) set.add("knitr");
+  for (const base of BASE_RECOMMENDED_PACKAGES) set.delete(base);
+  return Array.from(set).sort();
+}
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ShareRError(
+      label + " timed out after " + Math.round(ms / 1000) + "s. It may still finish in the " +
+      "background, but ShareR stopped waiting. Try again, or use fewer packages."
+    )), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+/* webR cannot compile from source (spec 9); only precompiled wasm binaries can install, and a
+   package with none should fail fast rather than hang. Best-effort extraction of a quoted package
+   name from the raw error text; falls back to naming the whole requested list plainly rather than
+   guessing wrong. */
+function describePackageInstallFailure(err, requestedList) {
+  const raw = err && err.message ? err.message : String(err);
+  const m = raw.match(/['"]([A-Za-z][A-Za-z0-9._]*)['"]/);
+  const named = m ? m[1] : null;
+  const base = named
+    ? 'The R package "' + named + '" could not be installed.'
+    : "Installing R package(s) (" + requestedList.join(", ") + ") failed.";
+  return base + " Packages must be precompiled for WebAssembly; webR cannot build them from " +
+    "source. This is most often caused by a package with no WebAssembly build available in the " +
+    "configured repositories. Check the execution log above for the specific download that " +
+    "failed. Raw error: " + raw;
+}
+
+/* One webR.installPackages() call (spec 9.2: let webR resolve dependencies, do not reimplement
+   it). Progress text is routed through the single, already-attached engine.stream() reader via
+   App.installStreamActive -- see the comment on attachLiveProgressIndicator above. */
+async function installPackagesWithProgress(engine, packageList, extraRepos) {
+  if (packageList.length === 0) return [];
+  appendLogLine("message", "Installing R package(s): " + packageList.join(", ") + "...");
+  setStatus("Installing R packages...");
+  const repos = extraRepos && extraRepos.length ? [CONFIG.WEBR_REPO_URL].concat(extraRepos) : undefined;
+  App.installStreamActive = true;
+  try {
+    await withTimeout(
+      engine.installPackages(packageList, repos ? { repos, quiet: false } : { quiet: false }),
+      CONFIG.INSTALL_TIMEOUT_MS,
+      "Package installation"
+    );
+  } catch (err) {
+    throw new ShareRError(describePackageInstallFailure(err, packageList));
+  } finally {
+    App.installStreamActive = false;
+  }
+  return packageList;
+}
+
+/* ### Outputs: recursive VFS diff (spec section 10.1) ### */
+
+async function walkVfs(engine, root, out, depth) {
+  out = out || new Map();
+  depth = depth || 0;
+  if (depth > CONFIG.MAX_VFS_DEPTH) return out;
+  let node;
+  try { node = await engine.FS.lookupPath(root); }
+  catch { return out; }
+  if (!node.isFolder) { out.set(root, node.id); return out; }
+  for (const name of Object.keys(node.contents || {})) {
+    if (name === "." || name === "..") continue;
+    await walkVfs(engine, root + "/" + name, out, depth + 1);
+  }
+  return out;
+}
+
+/* Snapshot-before/snapshot-after diff, plus forced inclusion of the resolved output_dir param's
+   contents regardless of the diff (spec 10.1's disclosed mitigation for the "overwrite is
+   undetectable" limitation: webR's FSNode carries no size or mtime). */
+async function collectOutputPaths(engine, beforeSnapshot, afterSnapshot, knitrParams) {
+  const paths = new Set();
+  for (const p of afterSnapshot.keys()) if (!beforeSnapshot.has(p)) paths.add(p);
+  if (knitrParams && typeof knitrParams.output_dir === "string" && knitrParams.output_dir) {
+    try {
+      const dirPath = vfsPathFor(knitrParams.output_dir.replace(/^\.?\//, ""));
+      const dirFiles = await walkVfs(engine, dirPath);
+      for (const p of dirFiles.keys()) paths.add(p);
+    } catch (err) { /* an invalid/unsafe output_dir value is simply not force-included */ }
+  }
+  return Array.from(paths).sort();
+}
+
+async function collectOutputFiles(engine, beforeSnapshot, afterSnapshot, knitrParams) {
+  const relPaths = await collectOutputPaths(engine, beforeSnapshot, afterSnapshot, knitrParams);
+  const files = [];
+  for (const absPath of relPaths) {
+    let bytes;
+    try { bytes = await engine.FS.readFile(absPath); }
+    catch (err) { continue; }
+    files.push({ path: absPath.slice(CONFIG.VFS_PROJECT_DIR.length + 1), bytes, size: bytes.byteLength });
+  }
+  return files;
+}
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp"]);
+const MIME_TYPES = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  svg: "image/svg+xml", webp: "image/webp", bmp: "image/bmp", csv: "text/csv",
+  json: "application/json", txt: "text/plain", html: "text/html", pdf: "application/pdf"
+};
+function extensionOf(path) { return path.split(".").pop().toLowerCase(); }
+function mimeTypeFor(ext) { return MIME_TYPES[ext] || "application/octet-stream"; }
+
+/* Simple, quote-aware CSV line splitter -- good enough for a first-20-rows preview, not a full
+   RFC 4180 parser (spec 10.2). */
+function splitCsvLine(line) {
+  const cells = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+      else cur += c;
+    } else if (c === '"') { inQuotes = true; }
+    else if (c === ",") { cells.push(cur); cur = ""; }
+    else { cur += c; }
+  }
+  cells.push(cur);
+  return cells;
+}
+
+function buildCsvPreviewTable(text, maxDataRows) {
+  const lines = text.split(/\r\n|\r|\n/).filter((l, idx, arr) => l !== "" || idx < arr.length - 1);
+  const rows = lines.slice(0, maxDataRows + 1).map(splitCsvLine);
+  const table = document.createElement("table");
+  table.className = "csv-preview-table";
+  if (rows.length > 0) {
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    for (const cell of rows[0]) { const th = document.createElement("th"); th.textContent = cell; headRow.appendChild(th); }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+  }
+  const tbody = document.createElement("tbody");
+  for (const row of rows.slice(1)) {
+    const tr = document.createElement("tr");
+    for (const cell of row) { const td = document.createElement("td"); td.textContent = cell; tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+function appendPlotToGallery(bitmap, label, plotIdx) {
+  const id = "plot-item-" + slugifyForElementId(label) + "-" + plotIdx;
+  const wrap = document.createElement("div");
+  wrap.className = "plot-gallery-item";
+  wrap.id = id;
+  wrap.tabIndex = -1;
+  const heading = document.createElement("h3");
+  heading.className = "plot-gallery-heading";
+  heading.textContent = "Chunk " + label + " - plot " + plotIdx;
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width; canvas.height = bitmap.height;
+  canvas.className = "chunk-plot";
+  canvas.setAttribute("role", "img");
+  canvas.setAttribute("aria-label", "Plot " + plotIdx + " from chunk " + label);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  wrap.append(heading, canvas);
+  elTabPlotsPanel.appendChild(wrap);
+  return id;
+}
+
+function renderFilesTab(outputFiles, chunkByFilePath) {
+  chunkByFilePath = chunkByFilePath || new Map();
+  elTabFilesPanel.innerHTML = "";
+  if (outputFiles.length === 0) {
+    const p = document.createElement("p");
+    p.className = "help-text";
+    p.textContent = "No output files were detected for this run.";
+    elTabFilesPanel.appendChild(p);
+    return;
+  }
+  for (const f of outputFiles) {
+    const ext = extensionOf(f.path);
+    const row = document.createElement("div");
+    row.className = "file-row";
+    row.id = "file-item-" + slugifyForElementId(f.path);
+    row.tabIndex = -1;
+    const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = f.path;
+    const sizeEl = document.createElement("div"); sizeEl.className = "file-row-size"; sizeEl.textContent = formatBytes(f.size);
+    const blob = new Blob([f.bytes], { type: mimeTypeFor(ext) });
+    const url = URL.createObjectURL(blob);
+    App.objectUrls.push(url);
+    const downloadLink = document.createElement("a");
+    downloadLink.href = url; downloadLink.download = basenameOf(f.path);
+    downloadLink.className = "btn btn-secondary btn-sm";
+    downloadLink.textContent = "Download";
+    row.append(nameEl, sizeEl, downloadLink);
+    const chunkLabel = chunkByFilePath.get(f.path);
+    if (chunkLabel) {
+      const chunkEl = document.createElement("div");
+      chunkEl.className = "file-row-chunk";
+      chunkEl.textContent = "Generated by chunk `" + chunkLabel + "`";
+      row.appendChild(chunkEl);
+    }
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      const img = document.createElement("img");
+      img.src = url; img.alt = "Generated image: " + f.path; img.className = "file-row-image-preview";
+      row.appendChild(img);
+    }
+    if (ext === "csv") {
+      const previewBtn = document.createElement("button");
+      previewBtn.type = "button"; previewBtn.className = "btn btn-secondary btn-sm";
+      previewBtn.textContent = "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows";
+      let previewTable = null;
+      previewBtn.addEventListener("click", () => {
+        if (previewTable) {
+          previewTable.remove(); previewTable = null;
+          previewBtn.textContent = "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows";
+          return;
+        }
+        previewTable = buildCsvPreviewTable(decodeUtf8(f.bytes), CONFIG.CSV_PREVIEW_MAX_ROWS);
+        row.appendChild(previewTable);
+        previewBtn.textContent = "Hide preview";
+      });
+      row.appendChild(previewBtn);
+    }
+    elTabFilesPanel.appendChild(row);
+  }
+}
+
+function finalizeResultsPlaceholders() {
+  if (elTabPlotsPanel.childElementCount === 0) {
+    const p = document.createElement("p");
+    p.className = "help-text";
+    p.textContent = "No plots were generated by this run.";
+    elTabPlotsPanel.appendChild(p);
+  }
+}
+
+/* ### Report rendering: prose, chunk blocks, execution (spec 8.3 steps 4-5, unified for .R/.Rmd) ### */
+
+function renderProseNode(node, container) {
+  if (!node.text || !node.text.trim()) return;
+  const raw = marked.parse(node.text);
+  const safe = DOMPurify.sanitize(raw);
+  const div = document.createElement("div");
+  div.className = "prose-block";
+  // The one deliberate innerHTML assignment in this app: author-supplied .Rmd prose routinely
+  // contains raw HTML, and it is sanitized immediately above via DOMPurify (spec 0.1 and 8.3;
+  // AGENTS.md section 7). Never assign anything else in this file to innerHTML.
+  div.innerHTML = safe;
+  container.appendChild(div);
+}
+
+function renderSkippedEngineChunk(node, label, container) {
+  const details = document.createElement("details");
+  details.className = "chunk-block chunk-block-skipped";
+  const summary = document.createElement("summary");
+  summary.textContent = "Chunk " + label + " uses the `" + node.engine + "` engine, which ShareR does not execute. Skipped.";
+  details.appendChild(summary);
+  const pre = document.createElement("pre"); pre.className = "chunk-source";
+  const code = document.createElement("code"); code.textContent = node.source;
+  pre.appendChild(code); details.appendChild(pre);
+  container.appendChild(details);
+}
+
+function renderNotRunChunk(node, label, container) {
+  const details = document.createElement("details");
+  details.className = "chunk-block chunk-block-skipped";
+  const summary = document.createElement("summary");
+  summary.textContent = "Chunk: " + label + " (eval=FALSE, not run)";
+  details.appendChild(summary);
+  const pre = document.createElement("pre"); pre.className = "chunk-source";
+  const code = document.createElement("code"); code.textContent = node.source;
+  pre.appendChild(code); details.appendChild(pre);
+  container.appendChild(details);
+}
+
+/* Renders one executed chunk's result into the Report tab and mirrors each captured plot into the
+   Plots tab gallery (the same ImageBitmap can be drawn into two canvases; drawing does not
+   consume it). Returns the <details> element so callers can append a "Continue anyway" button. */
+function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure) {
+  if (effectiveOptions.include === false && !isFailure) return null;
+  const details = document.createElement("details");
+  details.className = "chunk-block" + (isFailure ? " chunk-block-error" : "");
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = (isFailure ? "FAILED: " : "") + "Chunk: " + label + " (" + elapsedMs + " ms)";
+  details.appendChild(summary);
+
+  if (effectiveOptions.echo !== false) {
+    const pre = document.createElement("pre"); pre.className = "chunk-source";
+    const code = document.createElement("code"); code.textContent = node.source;
+    pre.appendChild(code); details.appendChild(pre);
+  }
+
+  const outWrap = document.createElement("div");
+  outWrap.className = "chunk-output";
+  let hasVisibleOutput = false;
+  for (const o of capture.output) {
+    if (o.type === "warning" && effectiveOptions.warning === false) continue;
+    if (o.type === "message" && effectiveOptions.message === false) continue;
+    if (o.type === "stdout" && effectiveOptions.results === "hide") continue;
+    const line = document.createElement("div");
+    line.className = "chunk-output-line chunk-output-" + o.type;
+    line.textContent = describeCondition(o);
+    outWrap.appendChild(line);
+    hasVisibleOutput = true;
+  }
+  if (hasVisibleOutput) details.appendChild(outWrap);
+
+  let plotIdx = 0;
+  for (const bitmap of capture.images || []) {
+    plotIdx++;
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    canvas.className = "chunk-plot";
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", "Plot " + plotIdx + " from chunk " + label);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    details.appendChild(canvas);
+    const plotItemId = appendPlotToGallery(bitmap, label, plotIdx);
+    node.plotItemIds = node.plotItemIds || [];
+    node.plotItemIds.push(plotItemId);
+  }
+
+  container.appendChild(details);
+  return details;
+}
+
+/* Executes chunk nodes sequentially from startIndex in a shared runState, in R's persistent
+   global environment (each chunk gets its own Shelter for deterministic object cleanup, but the
+   R global environment itself is not reset between chunks, per spec 8.3 step 4). A plain async
+   function, not a generator: on a failing chunk it renders a "Continue anyway" prompt and simply
+   returns, since resuming later is just calling this same function again with a later index --
+   nothing needs to be paused in memory beyond runState itself. finalizeRun is called at every
+   exit point (natural completion, halt-on-error, missing-file), never gated behind "zero errors",
+   so a mid-document failure still produces a downloadable ZIP of whatever outputs exist so far. */
+async function runChunksFrom(runState, startIndex) {
+  const engine = runState.engine;
+  for (let idx = startIndex; idx < runState.nodes.length; idx++) {
+    const node = runState.nodes[idx];
+
+    if (node.type === "prose") { renderProseNode(node, elTabReportPanel); continue; }
+
+    runState.chunkCounter++;
+    const label = node.label || ("unnamed-chunk-" + runState.chunkCounter);
+    setStatus("Running chunk " + runState.chunkCounter + " of " + runState.totalChunks + ": " + label + "...");
+
+    if (node.engine.toLowerCase() !== "r") {
+      renderSkippedEngineChunk(node, label, elTabReportPanel);
+      runState.manifestChunks.push({ label, engine: node.engine, status: "skipped-non-r" });
+      continue;
+    }
+
+    const effectiveOptions = resolveEffectiveChunkOptions(runState.defaults, node.rawOptions, label);
+
+    if (effectiveOptions.eval === false) {
+      renderNotRunChunk(node, label, elTabReportPanel);
+      runState.manifestChunks.push({ label, engine: "r", status: "not-run" });
+      continue;
+    }
+
+    const t0 = performance.now();
+    const shelter = await new engine.Shelter();
+    let capture;
+    try {
+      capture = await shelter.captureR(node.source, {
+        withAutoprint: true,
+        captureStreams: true,
+        captureConditions: true,
+        captureGraphics: figDimsForChunk(effectiveOptions)
+      });
+    } finally {
+      await shelter.purge();
+    }
+    const elapsedMs = Math.round(performance.now() - t0);
+
+    await readKnitrChunkOptionDefaults(engine, runState.defaults);
+
+    // Per-chunk VFS diff, chained off the previous snapshot, so each output file can be
+    // attributed to the specific chunk that wrote it (used for the Files tab's "Generated by
+    // chunk" note and for the source viewer's output gutter markers). Independent of, and in
+    // addition to, the whole-run before/after diff finalizeRun uses for the outputs list itself.
+    try {
+      const afterChunkSnapshot = await walkVfs(engine, CONFIG.VFS_PROJECT_DIR);
+      const newPaths = Array.from(afterChunkSnapshot.keys()).filter((p) => !runState.lastSnapshot.has(p));
+      node.producedFilePaths = newPaths.map((p) => p.slice(CONFIG.VFS_PROJECT_DIR.length + 1));
+      runState.lastSnapshot = afterChunkSnapshot;
+    } catch (err) { /* attribution is a nice-to-have; never let it break the run */ }
+
+    const missingFileMessage = detectMissingFileError(capture.output);
+    if (missingFileMessage) {
+      renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, true);
+      runState.manifestChunks.push({ label, engine: "r", status: "error", elapsedMs });
+      runState.missingFileMessage = missingFileMessage;
+      runState.failed = true;
+      await finalizeRun(runState);
+      return;
+    }
+
+    const hasError = capture.output.some((o) => o.type === "error");
+    for (const o of capture.output) {
+      const text = describeCondition(o);
+      appendLogLine(o.type, "[" + label + "] " + text);
+      if (o.type === "error" && typeof text === "string") {
+        const pkgMatch = text.match(RE_MISSING_PACKAGE_ERROR);
+        if (pkgMatch) appendLogLine("message", 'This chunk needs the R package "' + pkgMatch[1] +
+          '", which was not detected automatically for the package preflight step.');
+      }
+    }
+
+    if (hasError && effectiveOptions.error !== true) {
+      const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, true);
+      const continueBtn = document.createElement("button");
+      continueBtn.type = "button";
+      continueBtn.className = "btn btn-secondary btn-sm";
+      continueBtn.textContent = "Continue running the remaining chunks";
+      continueBtn.addEventListener("click", () => {
+        continueBtn.disabled = true;
+        runChunksFrom(runState, idx + 1);
+      }, { once: true });
+      if (details) details.appendChild(continueBtn);
+      appendLogLine("error", "Chunk `" + label + "` failed; stopping. See the Report tab.");
+      runState.manifestChunks.push({ label, engine: "r", status: "error", elapsedMs });
+      runState.failed = true;
+      await finalizeRun(runState);
+      return;
+    }
+
+    renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, false);
+    runState.manifestChunks.push({ label, engine: "r", status: hasError ? "error-continued" : "ok", elapsedMs });
+  }
+  runState.failed = false;
+  await finalizeRun(runState);
+}
+
+/* ### Finalization: outputs, run manifest (spec sections 3.5, 10.1) ### */
+
+function buildChunkAttributionMap(nodes) {
+  const map = new Map();
+  for (const node of nodes) {
+    if (node.type !== "chunk" || !node.producedFilePaths) continue;
+    for (const p of node.producedFilePaths) map.set(p, node.label || "unnamed chunk");
+  }
+  return map;
+}
+
+async function finalizeRun(runState) {
+  if (runState.finalized) return;
+  runState.finalized = true;
+  const engine = runState.engine;
+  let afterSnapshot = new Map();
+  try { afterSnapshot = await walkVfs(engine, CONFIG.VFS_PROJECT_DIR); } catch (err) { console.error(err); }
+  const outputFiles = await collectOutputFiles(engine, runState.beforeSnapshot, afterSnapshot, runState.knitrParams);
+  const chunkByFilePath = buildChunkAttributionMap(runState.nodes);
+  renderFilesTab(outputFiles, chunkByFilePath);
+  finalizeResultsPlaceholders();
+  annotateSourceViewerOutputMarkers(runState);
+
+  const durationMs = Date.now() - runState.startTime;
+  let rVersion = "unknown";
+  try { rVersion = await engine.evalRString("R.version.string"); } catch (err) { /* non-fatal */ }
+
+  const manifest = buildRunManifest({
+    webrVersion: engine.version, rVersion,
+    repoInfo: App.repoInfo, refUsed: App.refUsed, treeSha: App.tree && App.tree.sha,
+    entryPath: runState.entryPath, entrySourceLabel: runState.sourceLabel,
+    stagedFiles: App.stagedStore.list(), installedPackages: runState.installedPackages,
+    durationMs, manifestChunks: runState.manifestChunks
+  });
+
+  App.lastRunInfo = { outputFiles, entryPath: runState.entryPath, entryBytes: runState.entryBytes, manifest };
+  elDownloadZipButton.disabled = false;
+
+  if (!runState.missingFileMessage) {
+    setStatus(runState.failed ? "Finished with an error. See the Report tab and log below." : "Done.");
+  }
+}
+
+function buildRunManifest(info) {
+  return {
+    sharer_version: CONFIG.APP_VERSION,
+    webr_version: info.webrVersion,
+    r_version: info.rVersion,
+    channel: CONFIG.CHANNEL_TYPE,
+    repository: info.repoInfo ? {
+      owner: info.repoInfo.owner, repo: info.repoInfo.repo,
+      ref_resolved: info.refUsed, tree_sha: info.treeSha || null
+    } : null,
+    entry_file: info.entryPath,
+    entry_source: info.entrySourceLabel,
+    staged_files: info.stagedFiles.map((f) => ({ path: f.path, size: f.size, source: describeSource(f) })),
+    installed_packages: info.installedPackages || [],
+    duration_ms: info.durationMs,
+    chunks: info.manifestChunks || null,
+    generated_at_utc: new Date().toISOString()
+  };
+}
+
+/* ### ZIP export (spec section 10.4) ### */
+
+let cachedUmStyleCss = null;
+async function fetchUmStyleCssForExport() {
+  if (cachedUmStyleCss !== null) return cachedUmStyleCss;
+  try {
+    const res = await fetch("styles/um-style.css");
+    cachedUmStyleCss = res.ok ? await res.text() : "";
+  } catch (err) {
+    cachedUmStyleCss = "";
+  }
+  return cachedUmStyleCss;
+}
+
+/* A serialized <canvas> carries no pixel data, so every plot canvas in the exported report must
+   be converted to a static <img> -- read from the *original*, live canvas, since a cloned canvas
+   has no pixel buffer either -- before the DOM is serialized to a string, or report.html would
+   show only blank plot boxes. */
+async function renderReportAsSelfContainedHtml() {
+  const clone = elTabReportPanel.cloneNode(true);
+  const originalCanvases = elTabReportPanel.querySelectorAll("canvas");
+  const cloneCanvases = clone.querySelectorAll("canvas");
+  for (let i = 0; i < cloneCanvases.length; i++) {
+    const img = document.createElement("img");
+    img.src = originalCanvases[i].toDataURL("image/png");
+    img.alt = originalCanvases[i].getAttribute("aria-label") || "Plot";
+    img.style.maxWidth = "100%";
+    cloneCanvases[i].replaceWith(img);
+  }
+  const umCss = await fetchUmStyleCssForExport();
+  const extraCss = "body{font-family:system-ui,sans-serif;margin:1.5rem;} " +
+    "pre{overflow-x:auto;background:#1e1e1e;color:#d4d4d4;padding:0.5rem;border-radius:4px;} " +
+    "details{border:1px solid #c7ccd1;border-radius:6px;padding:0.6rem 0.8rem;margin:0 0 1rem;} " +
+    "img{max-width:100%;height:auto;border:1px solid #c7ccd1;}";
+  return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">" +
+    "<title>ShareR report: " + basenameOf(App.selectedEntryPath || "report") + "</title>" +
+    "<style>" + umCss + "\n" + extraCss + "</style></head><body><main>" + clone.innerHTML +
+    "</main></body></html>";
+}
+
+/* fflate's streaming Zip/ZipPassThrough classes (spec 10.4: "use fflate's streaming API so a
+   large output set does not have to be held in memory twice"), confirmed present in the pinned
+   fflate@0.8.2 UMD build. */
+function zipEntriesToBlob(entries) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalLen = 0;
+    const zip = new fflate.Zip((err, chunk, final) => {
+      if (err) { reject(err); return; }
+      if (chunk) { chunks.push(chunk); totalLen += chunk.length; }
+      if (final) {
+        const out = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const c of chunks) { out.set(c, offset); offset += c.length; }
+        resolve(new Blob([out], { type: "application/zip" }));
+      }
+    });
+    for (const entry of entries) {
+      const stream = new fflate.ZipPassThrough(entry.name);
+      zip.add(stream);
+      stream.push(entry.bytes, true);
+    }
+    zip.end();
+  });
+}
+
+async function downloadResultsZip() {
+  if (!App.lastRunInfo) return;
+  elDownloadZipButton.disabled = true;
+  const previousLabel = elDownloadZipButton.textContent;
+  elDownloadZipButton.textContent = "Building ZIP...";
+  try {
+    const info = App.lastRunInfo;
+    const entries = [];
+    for (const f of info.outputFiles) entries.push({ name: "outputs/" + f.path, bytes: f.bytes });
+    const reportHtml = await renderReportAsSelfContainedHtml();
+    entries.push({ name: "report.html", bytes: fflate.strToU8(reportHtml) });
+    entries.push({ name: "execution-log.txt", bytes: fflate.strToU8(App.executionLogLines.join("\n")) });
+    entries.push({ name: "run-manifest.json", bytes: fflate.strToU8(JSON.stringify(info.manifest, null, 2)) });
+    entries.push({ name: "source/" + info.entryPath, bytes: info.entryBytes });
+    const blob = await zipEntriesToBlob(entries);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sharer-results.zip";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  } catch (err) {
+    appendLogLine("error", "Could not build the results ZIP: " + (err && err.message ? err.message : err));
+  } finally {
+    elDownloadZipButton.disabled = false;
+    elDownloadZipButton.textContent = previousLabel;
+  }
+}
+
+function clearResultsForNewRun() {
+  for (const url of App.objectUrls) { try { URL.revokeObjectURL(url); } catch (err) { /* already revoked */ } }
+  App.objectUrls = [];
+  elTabReportPanel.innerHTML = "";
+  elTabPlotsPanel.innerHTML = "";
+  elTabFilesPanel.innerHTML = "";
+  elDownloadZipButton.disabled = true;
+  App.lastRunInfo = null;
+  App.executionLogLines = [];
+  elLog.textContent = "";
+}
+/* ### JS dependency check (spec section 3.6) ### */
+
+const REQUIRED_JS_LIBS = [
+  { global: "jsyaml", label: "js-yaml" },
+  { global: "marked", label: "marked" },
+  { global: "DOMPurify", label: "DOMPurify" },
+  { global: "fflate", label: "fflate" }
+];
+
+function checkJsDependenciesLoaded() {
+  return REQUIRED_JS_LIBS.filter((lib) => typeof window[lib.global] === "undefined");
+}
+
+/* ### Run orchestration: unified for plain .R (wrapped as one synthetic chunk) and .Rmd ### */
 
 async function runEntry() {
   if (App.running || !App.selectedEntryPath) return;
+  if (!App.librariesOk) { setStatus("Required JavaScript libraries failed to load; Run is disabled."); return; }
   const staged = App.stagedStore.get(App.selectedEntryPath);
   if (!staged) { setStatus("The selected script is no longer staged."); return; }
 
-  if (/\.rmd$/i.test(App.selectedEntryPath)) {
-    appendLogLine("message", "This is an R Markdown file. R Markdown execution lands in Stage " +
-      "2B; Stage 2A can run plain .R scripts only.");
-    return;
-  }
-
   App.running = true;
   updateRunControls();
-  elLog.textContent = "";
+  clearResultsForNewRun();
   await executeSelectedEntry(false);
 }
 
-/* isRetry guarantees at most one automatic recovery attempt per Run click: static analysis
-   (spec: resolve what is confidently knowable, widen otherwise) is a heuristic and will
-   occasionally miss a reference, so a run that fails on a missing file gets exactly one chance
-   to fetch more from the repository and try again, never a retry loop. */
+/* isRetry guarantees at most one automatic recovery attempt per Run click: static analysis is a
+   heuristic and will occasionally miss a reference, so a run that fails on a missing file gets
+   exactly one chance to fetch more from the repository and try again, never a retry loop. Package
+   preflight, captureGraphics, and the VFS-diff outputs pipeline apply to both plain .R and .Rmd
+   alike (spec sections 9 and 10 are not .Rmd-scoped), unified via wrapPlainRAsSingleChunk. */
 async function executeSelectedEntry(isRetry) {
   try {
     const engine = await getEngine();
     setStatus("Preparing working directory...");
     await writeStagedFilesToVfs(engine, App.stagedStore.list());
     await confirmWorkingDirectory(engine);
-    setStatus("Running " + App.selectedEntryPath + "...");
+
     const staged = App.stagedStore.get(App.selectedEntryPath);
     const code = decodeUtf8(staged.bytes);
-    const shelter = await new engine.Shelter();
-    let capture;
-    try {
-      capture = await shelter.captureR(code, {
-        withAutoprint: true,
-        captureStreams: true,
-        captureConditions: true
-      });
-    } finally {
-      await shelter.purge();
+    const isRmd = /\.rmd$/i.test(App.selectedEntryPath);
+
+    let knitrParams = null;
+    let nodes;
+    let lineOffset = 0;
+    if (isRmd) {
+      const { frontMatterText, body, bodyStartLine } = splitFrontMatter(code);
+      let rawParams = {};
+      if (frontMatterText) {
+        try { rawParams = (jsyaml.load(frontMatterText) || {}).params || {}; }
+        catch (err) {
+          throw new ShareRError("Could not parse the .Rmd YAML front matter: " + (err && err.message ? err.message : err));
+        }
+      }
+      knitrParams = buildKnitrParams(rawParams);
+      nodes = parseRmdChunks(body);
+      lineOffset = bodyStartLine || 0;
+    } else {
+      nodes = wrapPlainRAsSingleChunk(code, App.selectedEntryPath);
     }
 
-    const missing = !isRetry && App.repoInfo && App.tree && detectMissingFileError(capture.output);
+    const packageList = detectPackages(nodes, isRmd);
+    const installedList = await installPackagesWithProgress(engine, packageList, App.reposExplicitList);
+
+    if (isRmd) {
+      setStatus("Setting up parameters...");
+      await materializeParams(engine, knitrParams);
+    }
+
+    const beforeSnapshot = await walkVfs(engine, CONFIG.VFS_PROJECT_DIR);
+    const rChunkCount = nodes.filter((n) => n.type === "chunk" && n.engine.toLowerCase() === "r").length;
+
+    const runState = {
+      engine, nodes, defaults: Object.assign({}, DEFAULT_CHUNK_OPTIONS),
+      chunkCounter: 0, totalChunks: rChunkCount, manifestChunks: [],
+      entryPath: App.selectedEntryPath, entryBytes: staged.bytes, sourceLabel: describeSource(staged),
+      beforeSnapshot, lastSnapshot: beforeSnapshot, lineOffset,
+      installedPackages: installedList, knitrParams,
+      startTime: Date.now(), finalized: false, failed: false, missingFileMessage: null
+    };
+
+    await runChunksFrom(runState, 0);
+
+    const missing = !isRetry && App.repoInfo && App.tree && runState.missingFileMessage;
     if (missing) {
       appendLogLine("message", "A required file seems to be missing (" + missing + "). " +
         "Downloading more of the repository and retrying once...");
@@ -1618,23 +2998,10 @@ async function executeSelectedEntry(isRetry) {
       await fetchSkippedLargeFiles(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
       await fallbackFetchEntireRepo(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
       renderStagingMessages(fallbackMessages, true);
+      clearResultsForNewRun();
       await executeSelectedEntry(true);
       return;
     }
-
-    for (const item of capture.output) {
-      const text = describeCondition(item);
-      appendLogLine(item.type, text);
-      if (item.type === "error" && typeof text === "string") {
-        const pkgMatch = text.match(RE_MISSING_PACKAGE_ERROR);
-        if (pkgMatch) {
-          appendLogLine("message", 'This script needs the R package "' + pkgMatch[1] + '", which ' +
-            "Stage 2A does not install automatically yet. Package installation lands in Stage 2B; " +
-            "only scripts that use base R can run end to end for now.");
-        }
-      }
-    }
-    setStatus("Done.");
   } catch (err) {
     appendLogLine("error", err && err.message ? err.message : String(err));
     setStatus("Error. See log below.");
@@ -1669,7 +3036,7 @@ const elRepoInput = document.getElementById("repo-input");
 const elRefInput = document.getElementById("ref-input");
 const elStagingStatus = document.getElementById("staging-status");
 const elStagingMessages = document.getElementById("staging-messages");
-const elStagedBody = document.getElementById("staged-files-body");
+const elDataFileCarousel = document.getElementById("data-file-carousel");
 
 const elAddFilesButton = document.getElementById("add-files-button");
 const elAddFolderButton = document.getElementById("add-folder-button");
@@ -1689,6 +3056,32 @@ const elStop = document.getElementById("stop-button");
 const elStatus = document.getElementById("status-line");
 const elLog = document.getElementById("output-log");
 
+const elHeaderSourceBadge = document.getElementById("header-source-badge");
+const elWorkspacePane = document.getElementById("workspace-pane");
+const elWorkspaceEmptyState = document.getElementById("workspace-empty-state");
+const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empty-button");
+const elSourceToggleButton = document.getElementById("source-toggle-button");
+const elSourceToggleIcon = document.getElementById("source-toggle-icon");
+const elSourceToggleLabel = document.getElementById("source-toggle-label");
+const elSourceEditor = document.getElementById("source-editor");
+const elSourceViewerFilename = document.getElementById("source-viewer-filename");
+const elSourceCodeLines = document.getElementById("source-code-lines");
+
+const elLoadModal = document.getElementById("load-script-modal");
+const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
+const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
+const elAddMoreFilesButton = document.getElementById("add-more-files-button");
+
+const elDownloadZipButton = document.getElementById("download-zip-button");
+const elConsoleToggleButton = document.getElementById("console-toggle-button");
+
+const elTabReportBtn = document.getElementById("tab-report-btn");
+const elTabPlotsBtn = document.getElementById("tab-plots-btn");
+const elTabFilesBtn = document.getElementById("tab-files-btn");
+const elTabReportPanel = document.getElementById("tab-report-panel");
+const elTabPlotsPanel = document.getElementById("tab-plots-panel");
+const elTabFilesPanel = document.getElementById("tab-files-panel");
+
 /* ### UI: rendering ### */
 
 function setStatus(text) { elStatus.textContent = text; }
@@ -1698,9 +3091,11 @@ function appendLogLine(kind, text) {
   const prefixes = { stderr: "[stderr] ", message: "[message] ", warning: "[warning] ", error: "[error] " };
   const line = document.createElement("div");
   line.className = "log-" + kind;
-  line.textContent = (prefixes[kind] || "") + text;
+  const fullText = (prefixes[kind] || "") + text;
+  line.textContent = fullText;
   elLog.appendChild(line);
   elLog.scrollTop = elLog.scrollHeight;
+  App.executionLogLines.push(fullText);
 }
 
 function renderStagingMessages(messages, append) {
@@ -1734,35 +3129,47 @@ function replaceStagedFile(path) {
       messages.push({ level: "error", text: "Could not read " + file.name + ": " + (err && err.message ? err.message : err) });
     }
     renderStagingMessages(messages, true);
+    const errs = messages.filter((m) => m.level === "error");
+    if (errs.length) setStatus(errs.map((m) => m.text).join(" "));
     updateSelectedEntry();
   });
   document.body.appendChild(input);
   input.click();
 }
 
+/* Renders the "Input Data" carousel (ShareR-UI-Specification.md section 3): one card per staged
+   non-script file. The entry script itself is represented by the source code editor below, not
+   by a card here, so scripts (.R/.Rmd) are filtered out. */
 function renderStagedFiles() {
-  const list = App.stagedStore.list();
-  elStagedBody.innerHTML = "";
-  if (list.length === 0) {
-    const tr = document.createElement("tr");
-    tr.className = "empty-row";
-    const td = document.createElement("td");
-    td.colSpan = 4;
-    td.textContent = "No files staged yet.";
-    tr.appendChild(td);
-    elStagedBody.appendChild(tr);
+  const dataFiles = App.stagedStore.list().filter((f) => !/\.(r|rmd)$/i.test(f.path));
+  elDataFileCarousel.innerHTML = "";
+  if (dataFiles.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty-carousel-note";
+    li.textContent = "No data files staged yet.";
+    elDataFileCarousel.appendChild(li);
     return;
   }
-  for (const f of list) {
-    const tr = document.createElement("tr");
-    const tdName = document.createElement("td"); tdName.textContent = f.path;
-    const tdSize = document.createElement("td"); tdSize.textContent = formatBytes(f.size);
-    const tdSource = document.createElement("td"); tdSource.textContent = describeSource(f);
-    const tdActions = document.createElement("td");
+  for (const f of dataFiles) {
+    const li = document.createElement("li");
+    li.className = "data-card";
+    const icon = document.createElement("div");
+    icon.className = "data-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "\u{1F4C4}";
+    const name = document.createElement("div");
+    name.className = "data-filename";
+    name.title = f.path;
+    name.textContent = f.path;
+    const status = document.createElement("div");
+    status.className = "data-status";
+    status.textContent = describeSource(f) + " · " + formatBytes(f.size);
+    const actions = document.createElement("div");
+    actions.className = "data-card-actions";
     const replaceBtn = document.createElement("button");
     replaceBtn.type = "button";
     replaceBtn.className = "btn btn-secondary btn-sm";
-    replaceBtn.textContent = "Replace...";
+    replaceBtn.textContent = "Replace";
     replaceBtn.setAttribute("aria-label", "Replace " + f.path + " with a file from your computer");
     replaceBtn.addEventListener("click", () => replaceStagedFile(f.path));
     const removeBtn = document.createElement("button");
@@ -1771,9 +3178,9 @@ function renderStagedFiles() {
     removeBtn.textContent = "Remove";
     removeBtn.setAttribute("aria-label", "Remove " + f.path);
     removeBtn.addEventListener("click", () => { App.stagedStore.remove(f.path); updateSelectedEntry(); });
-    tdActions.append(replaceBtn, removeBtn);
-    tr.append(tdName, tdSize, tdSource, tdActions);
-    elStagedBody.appendChild(tr);
+    actions.append(replaceBtn, removeBtn);
+    li.append(icon, name, status, actions);
+    elDataFileCarousel.appendChild(li);
   }
 }
 
@@ -1817,18 +3224,201 @@ function renderEntrySelect(scripts, chosen) {
 
 function renderRunSourceLine() {
   if (!App.selectedEntryPath) {
-    elRunSourceLine.textContent = "Add or load a script above to get started.";
+    elRunSourceLine.textContent = "No script loaded yet.";
     return;
   }
   const staged = App.stagedStore.get(App.selectedEntryPath);
   elRunSourceLine.textContent = staged
     ? "Running " + staged.path + " from " + describeSource(staged) + "."
-    : "Add or load a script above to get started.";
+    : "No script loaded yet.";
+}
+
+/* Shows the "no script loaded" prompt in the workspace pane whenever there is nothing to run and
+   nothing pending a choice (spec: URL parameters drive loading; researchers only see a way to add
+   a script here, never an always-on form). */
+function updateWorkspaceEmptyState() {
+  elWorkspaceEmptyState.hidden = !!(App.selectedEntryPath || App.candidates);
 }
 
 function updateRunControls() {
-  elRun.disabled = App.running || !App.selectedEntryPath;
+  elRun.disabled = App.running || !App.selectedEntryPath || !App.librariesOk;
   elStop.disabled = !App.running && !App.engine;
+}
+
+/* Finds where a "#" starts a real comment on one line of R source (not a "#" that happens to sit
+   inside a quoted string), tracking quote state char-by-char. Returns -1 when the line has no
+   comment. Shared by the syntax-highlighter and the output-marker line detector below, so both
+   agree on what counts as "code" vs. "commentary" on a given line. */
+function findCommentStart(line) {
+  let inString = null;
+  for (let j = 0; j < line.length; j++) {
+    const c = line[j];
+    if (inString) {
+      if (c === "\\") { j++; continue; }
+      if (c === inString) inString = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inString = c; continue; }
+    if (c === "#") return j;
+  }
+  return -1;
+}
+
+/* Splits one line of R source into comment / string / bare-text segments and appends each as its
+   own DOM node -- createElement()/textContent/createTextNode only, never innerHTML, so this stays
+   safe regardless of what the script's own author wrote (spec 0.1 / AGENTS.md section 7). This is
+   a coarse, visual-only classifier (a "#" inside a string that itself contains an unmatched quote
+   can still misclassify a line), not an R parser, and is never used for anything but CSS color. */
+function appendTokenizedLine(container, line) {
+  const commentStart = findCommentStart(line);
+  const codePart = commentStart >= 0 ? line.slice(0, commentStart) : line;
+  const commentPart = commentStart >= 0 ? line.slice(commentStart) : "";
+
+  const tokenRe = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b[A-Za-z_.][A-Za-z0-9_.]*(?=\s*\()/g;
+  let last = 0, m;
+  while ((m = tokenRe.exec(codePart))) {
+    if (m.index > last) container.appendChild(document.createTextNode(codePart.slice(last, m.index)));
+    const tok = m[0];
+    const span = document.createElement("span");
+    span.className = (tok[0] === '"' || tok[0] === "'") ? "syn-string" : "syn-func";
+    span.textContent = tok;
+    container.appendChild(span);
+    last = m.index + tok.length;
+  }
+  if (last < codePart.length) container.appendChild(document.createTextNode(codePart.slice(last)));
+  if (commentPart) {
+    const span = document.createElement("span");
+    span.className = "syn-comment";
+    span.textContent = commentPart;
+    container.appendChild(span);
+  }
+}
+
+/* Fills the source-code editor from the selected entry's decoded bytes: one .code-line row per
+   line, each with a gutter (marker slot + line number) and a tokenized .code-text cell, matching
+   ShareR-UI-Specification.md section 3. Toggle open/closed state is left alone here so switching
+   which script is selected doesn't collapse an editor the researcher already opened. */
+function renderSourceViewer() {
+  elSourceCodeLines.innerHTML = "";
+  elSourceViewerFilename.textContent = "";
+  const staged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+  if (!staged) {
+    elSourceToggleButton.hidden = true;
+    elSourceEditor.hidden = true;
+    return;
+  }
+  elSourceToggleButton.hidden = false;
+  elSourceViewerFilename.textContent = staged.path;
+  const text = decodeUtf8(staged.bytes);
+  const frag = document.createDocumentFragment();
+  text.split(/\r\n|\r|\n/).forEach((line, idx) => {
+    const row = document.createElement("div");
+    row.className = "code-line";
+    const gutter = document.createElement("div");
+    gutter.className = "gutter";
+    const markerSlot = document.createElement("span");
+    markerSlot.className = "marker-slot";
+    const num = document.createElement("span");
+    num.className = "line-number";
+    num.textContent = String(idx + 1);
+    gutter.append(markerSlot, num);
+    const codeText = document.createElement("div");
+    codeText.className = "code-text";
+    appendTokenizedLine(codeText, line);
+    row.append(gutter, codeText);
+    frag.appendChild(row);
+  });
+  elSourceCodeLines.appendChild(frag);
+}
+
+/* Activates a Results tab and scroll-and-flashes one of its items -- used both by the output
+   gutter markers below and available generally. Honors prefers-reduced-motion via the
+   .highlight-flash CSS rule itself (spec section 11.2). */
+function jumpToOutput(tabIndex, elementId) {
+  activateTab(tabIndex);
+  TAB_BUTTONS[tabIndex].focus();
+  const target = document.getElementById(elementId);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.focus({ preventScroll: true });
+  target.classList.remove("highlight-flash");
+  void target.offsetWidth; // force reflow so re-adding the class restarts the animation
+  target.classList.add("highlight-flash");
+}
+
+// Best-effort static recognizers for "this line probably produces a plot / writes a file",
+// used only to decide where to place a clickable marker in the source gutter -- never for
+// execution. webR's captureR reports outputs per-chunk, not per-statement, so there is no ground
+// truth to check these against; this is a heuristic over the chunk's own source text, matched
+// against comment-stripped code (findCommentStart) so a mention inside a comment doesn't count.
+const PLOT_CALL_RE = /\b(?:plot|hist|boxplot|barplot|pairs|curve|image|contour|persp|dotchart|stripchart|mosaicplot|pie|matplot|qqnorm|qqplot|ggplot|corrplot|heatmap)\s*\(/;
+const FILE_WRITE_CALL_RE = /\b(?:write\.csv2?|write\.table|saveRDS|save|ggsave|write_csv2?|write_tsv|fwrite|writeLines|write\.xlsx|write_xlsx|saveWorkbook)\s*\(/;
+
+function findCandidateLines(sourceLines, re) {
+  const idxs = [];
+  sourceLines.forEach((line, i) => {
+    const commentStart = findCommentStart(line);
+    const codePart = commentStart >= 0 ? line.slice(0, commentStart) : line;
+    if (re.test(codePart)) idxs.push(i);
+  });
+  return idxs;
+}
+
+/* Adds a clickable marker to the source line that most likely produced each plot/file a chunk's
+   run generated, jumping to and flashing the corresponding Plots/Files tab item
+   (ShareR-UI-Specification.md section 3). webR's captureR only reports outputs per chunk, not
+   per statement, so exact attribution isn't available; PLOT_CALL_RE/FILE_WRITE_CALL_RE find
+   candidate lines within the chunk's own source and outputs are matched to them in the order
+   both appear (the Nth plot/file to the Nth candidate line). When a chunk produced more
+   plots/files than candidate lines were found, the extras stack onto the last candidate line
+   rather than being silently dropped; when no candidate line matches at all, everything falls
+   back to the chunk's first line so a marker is still always reachable. Called once per run,
+   after the source viewer already has its .code-line rows. */
+function annotateSourceViewerOutputMarkers(runState) {
+  const rows = elSourceCodeLines.querySelectorAll(".code-line");
+  const placeMarker = (baseLine, relativeLine, glyph, label, onClick) => {
+    const row = rows[baseLine + relativeLine];
+    const slot = row ? row.querySelector(".marker-slot") : null;
+    if (!slot) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "output-marker";
+    btn.textContent = glyph;
+    btn.setAttribute("aria-label", label);
+    btn.addEventListener("click", onClick);
+    slot.appendChild(btn);
+  };
+  for (const node of runState.nodes) {
+    if (node.type !== "chunk") continue;
+    const plotIds = node.plotItemIds || [];
+    const filePaths = node.producedFilePaths || [];
+    if (plotIds.length === 0 && filePaths.length === 0) continue;
+    const baseLine = runState.lineOffset + (node.startLine || 0);
+    const sourceLines = node.source.split(/\r\n|\r|\n/);
+    const plotCandidates = findCandidateLines(sourceLines, PLOT_CALL_RE);
+    const fileCandidates = findCandidateLines(sourceLines, FILE_WRITE_CALL_RE);
+    plotIds.forEach((plotItemId, i) => {
+      const relLine = plotCandidates.length ? plotCandidates[Math.min(i, plotCandidates.length - 1)] : 0;
+      placeMarker(baseLine, relLine, "\u{1F4CA}",
+        "Jump to the plot produced by chunk " + (node.label || ""), () => jumpToOutput(1, plotItemId));
+    });
+    filePaths.forEach((filePath, i) => {
+      const relLine = fileCandidates.length ? fileCandidates[Math.min(i, fileCandidates.length - 1)] : 0;
+      const fileId = "file-item-" + slugifyForElementId(filePath);
+      placeMarker(baseLine, relLine, "\u{1F4C4}",
+        "Jump to " + filePath + ", produced by chunk " + (node.label || ""), () => jumpToOutput(2, fileId));
+    });
+  }
+}
+
+function updateHeaderSourceBadge() {
+  if (App.repoInfo) {
+    elHeaderSourceBadge.textContent = " | " + App.repoInfo.owner + "/" + App.repoInfo.repo;
+  } else if (App.selectedEntryPath) {
+    elHeaderSourceBadge.textContent = " | " + App.selectedEntryPath;
+  } else {
+    elHeaderSourceBadge.textContent = "";
+  }
 }
 
 function updateSelectedEntry() {
@@ -1844,7 +3434,100 @@ function updateSelectedEntry() {
   App.selectedEntryPath = chosen;
   renderEntrySelect(scripts, chosen);
   renderRunSourceLine();
+  renderSourceViewer();
+  updateHeaderSourceBadge();
   updateRunControls();
+  updateWorkspaceEmptyState();
+  maybeCloseLoadModalAfterStaging();
+}
+
+/* ### UI: "Load a script" modal ###
+   URL parameters (entry=/data=/repo=/ref=) are the primary way to load a script; this dialog
+   exists only for the case they don't already resolve one, or when a researcher explicitly wants
+   to change scripts (spec: ShareR-UI-Specification.md section 3; user direction 2026-07-28). */
+function openLoadModal(focusTarget) {
+  if (elLoadModal.open) return;
+  elLoadModal.showModal();
+  (focusTarget || elEntryInput).focus();
+}
+
+function closeLoadModal() {
+  if (elLoadModal.open) elLoadModal.close();
+}
+
+/* Auto-closes the modal once loading resolved to something actionable: a runnable entry script,
+   or an ambiguous-entry candidate list the researcher can now choose from in the workspace pane.
+   Left open on a genuine failure (nothing staged, nothing to choose from) so the error message in
+   the modal's own staging-status line stays visible instead of hiding behind a closed dialog. */
+function maybeCloseLoadModalAfterStaging() {
+  if (!elLoadModal.open) return;
+  if (App.selectedEntryPath || App.candidates) closeLoadModal();
+}
+
+/* ### UI: results tabs -- real ARIA tabs with roving tabindex (spec section 11.2) ###
+   The shell ships tabindex="-1" on two of the three tab buttons by default, so Tab alone can
+   never reach them; ArrowLeft/ArrowRight/Home/End must move focus and activate, or this would be
+   a keyboard trap that plain Stage 2A never had. */
+
+const TAB_BUTTONS = [elTabReportBtn, elTabPlotsBtn, elTabFilesBtn];
+const TAB_PANELS = [elTabReportPanel, elTabPlotsPanel, elTabFilesPanel];
+
+function activateTab(index) {
+  TAB_BUTTONS.forEach((btn, i) => {
+    const selected = i === index;
+    btn.setAttribute("aria-selected", selected ? "true" : "false");
+    btn.tabIndex = selected ? 0 : -1;
+    TAB_PANELS[i].hidden = !selected;
+  });
+}
+
+function initResultsTabs() {
+  TAB_BUTTONS.forEach((btn, i) => {
+    btn.addEventListener("click", () => { activateTab(i); btn.focus(); });
+    btn.addEventListener("keydown", (e) => {
+      let next = null;
+      if (e.key === "ArrowRight") next = (i + 1) % TAB_BUTTONS.length;
+      else if (e.key === "ArrowLeft") next = (i - 1 + TAB_BUTTONS.length) % TAB_BUTTONS.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = TAB_BUTTONS.length - 1;
+      if (next !== null) {
+        e.preventDefault();
+        activateTab(next);
+        TAB_BUTTONS[next].focus();
+      }
+    });
+  });
+}
+
+/* ### UI: collapsible execution log (spec section 10.3) ###
+   Collapses via a max-height CSS class, never the hidden attribute or display:none, so this
+   role="log" aria-live="polite" region stays in the accessibility tree and keeps announcing
+   while visually collapsed. */
+function initConsoleToggle() {
+  const icon = document.getElementById("console-toggle-icon");
+  elConsoleToggleButton.addEventListener("click", () => {
+    const collapsed = elLog.classList.toggle("log-collapsed");
+    elConsoleToggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    if (icon) icon.textContent = String.fromCharCode(collapsed ? 0x25B8 : 0x25BE);
+  });
+}
+
+/* Show/Hide Source Code toggle button (ShareR-UI-Specification.md section 3): a plain button
+   with aria-expanded, not a <details> element, so its label text can read "Show"/"Hide" exactly
+   like the mockup. Also widens the workspace pane toward 40% while the editor is open --
+   deliberately set as an inline style, not toggled via a CSS class: Chromium freezes a
+   `resize`-enabled flex item's max-width the first time it is laid out, so a later class-driven
+   stylesheet change to max-width is silently ignored on the resize axis. Direct inline style
+   assignment is what the mockup itself does, and is what actually takes effect here too. */
+function initSourceToggle() {
+  elSourceToggleButton.addEventListener("click", () => {
+    const opening = elSourceEditor.hidden;
+    elSourceEditor.hidden = !opening;
+    elSourceToggleButton.setAttribute("aria-expanded", opening ? "true" : "false");
+    elSourceToggleIcon.textContent = String.fromCharCode(opening ? 0x25BE : 0x25B8);
+    elSourceToggleLabel.textContent = opening ? " Hide Source Code" : " Show Source Code";
+    elWorkspacePane.style.maxWidth = opening ? "40%" : "";
+  });
 }
 
 /* ### Staging pipeline: ties URL-parameter parsing to the persistent staged file store ### */
@@ -1861,6 +3544,8 @@ async function runStagingPipeline(params) {
     App.candidates = result.candidates;
     App.repoSyncCtx = result.repoSyncCtx;
     App.dataValuesExplicit = params.dataValues.length > 0;
+    App.packagesExplicitList = params.packagesRaw ? params.packagesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+    App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     if (result.explicitEntryPath) App.explicitEntryPath = result.explicitEntryPath;
     renderStagingMessages(messages, false);
     renderEntryCandidates();
@@ -1895,10 +3580,21 @@ async function handleLocalFiles(items) {
     }
   }
   renderStagingMessages(messages, true);
+  const errs = messages.filter((m) => m.level === "error");
+  if (errs.length) setStagingStatus(errs.map((m) => m.text).join(" "));
   updateSelectedEntry();
 }
 
 /* ### Event wiring ### */
+
+elOpenLoadModalButton.addEventListener("click", () => openLoadModal());
+elOpenLoadModalEmptyButton.addEventListener("click", () => openLoadModal());
+elAddMoreFilesButton.addEventListener("click", () => openLoadModal(elAddFilesButton));
+elCloseLoadModalButton.addEventListener("click", () => closeLoadModal());
+// Clicking the ::backdrop dispatches a click whose target is the <dialog> itself (nothing inside
+// it), which is how native <dialog> lets a click "outside" the visible box be told apart from a
+// click on its content.
+elLoadModal.addEventListener("click", (e) => { if (e.target === elLoadModal) closeLoadModal(); });
 
 elSourceForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1991,10 +3687,25 @@ elEntrySelect.addEventListener("change", () => {
 
 elRun.addEventListener("click", runEntry);
 elStop.addEventListener("click", stopEngine);
+elDownloadZipButton.addEventListener("click", downloadResultsZip);
 
 /* ### Bootstrap ### */
 
 function bootstrap() {
+  initResultsTabs();
+  initConsoleToggle();
+  initSourceToggle();
+
+  const missingLibs = checkJsDependenciesLoaded();
+  if (missingLibs.length) {
+    App.librariesOk = false;
+    const names = missingLibs.map((l) => l.label).join(", ");
+    appendLogLine("error", "Could not load required librar" + (missingLibs.length === 1 ? "y" : "ies") +
+      ": " + names + ". Check your network connection or ad blocker and reload the page. Run is disabled.");
+    setStatus("Required JavaScript librar" + (missingLibs.length === 1 ? "y" : "ies") +
+      " failed to load: " + names + ".");
+  }
+
   App.stagedStore = new StagedFileStore();
   App.stagedStore.onChange = renderStagedFiles;
   renderStagedFiles();
@@ -2004,11 +3715,19 @@ function bootstrap() {
   elDataInput.value = params.dataValues.join(", ");
   elRepoInput.value = params.repoRaw;
   elRefInput.value = params.refRaw;
+  App.packagesExplicitList = params.packagesRaw ? params.packagesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
   if (params.entryRaw || params.dataValues.length || params.repoRaw) {
-    runStagingPipeline(params);
+    // The modal only appears once staging has actually had a chance to resolve an entry from
+    // the URL; runStagingPipeline() itself calls updateSelectedEntry(), which is what closes the
+    // modal on success, so this .then() only needs to handle the "still nothing to run" case.
+    runStagingPipeline(params).then(() => {
+      if (!App.selectedEntryPath && !App.candidates) openLoadModal();
+    });
   } else {
     updateSelectedEntry();
+    openLoadModal();
   }
 }
 
