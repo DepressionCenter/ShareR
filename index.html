@@ -454,12 +454,84 @@ with this program. If not, see https://www.gnu.org/licenses/.
     outline: 3px solid var(--um-medium-blue);
     outline-offset: -3px;
   }
+  /* The wrapper is the flex child (fills remaining results-pane height); .zoom-control is an
+     absolutely-positioned sibling of the scrollable .tab-panels, not a descendant of it, so it
+     stays pinned to the corner of the visible viewport instead of scrolling away with the
+     report. */
+  .tab-panels-wrapper { position: relative; flex: 1; min-height: 0; display: flex; }
   .tab-panels { flex: 1; min-height: 0; overflow-y: auto; }
   .tab-panel { padding: 1rem; }
+  /* Zoom frame (Report/Plots only): .zoom-outer is the actual tabpanel and keeps the pane's full
+     natural width -- the "larger frame" -- with padding:0 and overflow:hidden so it can be given
+     an explicit, JS-computed height that matches the *scaled* content exactly, with no dead space
+     around it. .zoom-inner holds the real content at its natural, unscaled, full-width layout
+     (so nothing inside ever has to reason about being "zoomed") and is visually shrunk/enlarged
+     as one unit via transform:scale(), anchored top-center so it reads as centered inside the
+     outer frame when smaller than it. transform is used instead of the CSS `zoom` property
+     because zoom does not reliably scale a <canvas> (or, per user report, in some environments a
+     child element at all) the same way it scales ordinary content -- transform is a pure paint
+     operation applied uniformly to the whole subtree regardless of what's inside it, so it can't
+     have that kind of element-specific inconsistency. */
+  .tab-panel.zoom-outer { padding: 0; overflow: hidden; }
+  /* No transition on transform here, deliberately: a transitioned transform changed synchronously
+     alongside the outer frame's height (applyZoom does both in the same call) reproduced a real,
+     non-deterministic race in testing -- the very first change (before the browser had painted
+     anything to transition *from*) sometimes silently failed to apply, and it was inconsistent
+     run to run. Since the zoom control already only steps in 10% increments, an instant snap is
+     barely perceptible and isn't worth reintroducing that risk for. */
+  .zoom-inner {
+    padding: 1rem;
+    transform-origin: top center;
+  }
+  .zoom-control {
+    position: absolute;
+    bottom: 0.85rem;
+    right: 0.85rem;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--panel-border);
+    border-radius: 999px;
+    padding: 0.25rem 0.4rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    font-size: 0.8rem;
+  }
+  .zoom-control button {
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    line-height: 1;
+    font-size: 1rem;
+    border-radius: 50%;
+    background: var(--panel-header-bg);
+    color: var(--um-dark-blue);
+  }
+  .zoom-control button:hover, .zoom-control button:focus-visible { background: var(--um-maize); }
+  #zoom-level-readout { min-width: 2.6rem; text-align: center; color: var(--text-muted); }
   .tab-panel:focus-visible { outline: 2px solid var(--um-medium-blue); }
 
   .prose-block :first-child { margin-top: 0; }
   .prose-block pre { overflow-x: auto; }
+
+  /* Table of contents (output.html_document.toc/number_sections, resolveOutputOptions). Not a
+     floating/sticky sidebar (toc_float's "floating" behavior isn't reproduced) -- a static block
+     at the top of the Report tab, collapsible per toc_float.collapsed. */
+  .report-toc {
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    margin: 0 0 1rem 0;
+    background: var(--panel-header-bg);
+  }
+  .report-toc > details > summary { font-weight: bold; cursor: pointer; color: var(--um-dark-blue); }
+  .report-toc ul { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+  .report-toc li { padding: 0.15rem 0; font-size: 0.9rem; }
+  .report-toc-level-1 { padding-left: 0; font-weight: 600; }
+  .report-toc-level-2 { padding-left: 1.1rem; }
+  .report-toc-level-3 { padding-left: 2.2rem; font-size: 0.85rem; }
+  .section-number { color: var(--text-muted); font-weight: normal; }
 
   .chunk-block {
     border: 1px solid var(--panel-border);
@@ -468,11 +540,28 @@ with this program. If not, see https://www.gnu.org/licenses/.
     margin: 0 0 1rem 0;
   }
   .chunk-block > summary { font-weight: bold; cursor: pointer; }
+  .chunk-block-header { font-weight: bold; margin-bottom: 0.2rem; }
   .chunk-block-error { border-color: #c0392b; background-color: #fdecea; }
   .chunk-block-skipped { background-color: var(--panel-header-bg); }
+  /* Code folding (output.html_document.code_folding) only folds the source, never the results --
+     real rmarkdown always shows chunk output regardless of the code_folding setting, so the
+     source lives in its own nested <details> and everything else in .chunk-block stays outside
+     it, always visible. */
+  .chunk-code-fold { margin: 0.4rem 0; }
+  .chunk-code-fold > summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--um-medium-blue);
+  }
+  /* Light gray background / black text, matching how a real knitted .Rmd (e.g. EMA-CleanR.html)
+     renders its code blocks -- distinct from the workspace pane's dark source-code EDITOR
+     (.editor-container et al.), which is a separate, intentionally dark-themed element modeled on
+     the UI mockup and is not affected by this. */
   .chunk-source {
-    background: var(--source-bg);
-    color: var(--source-fg);
+    background: #f5f5f5;
+    color: #1a1a1a;
+    border: 1px solid #ddd;
     padding: 0.5rem 0.7rem;
     border-radius: 4px;
     overflow-x: auto;
@@ -484,7 +573,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .chunk-output-stderr, .chunk-output-error { color: #a4271f; }
   .chunk-output-warning { color: #6b5300; }
   .chunk-output-message { color: var(--um-medium-blue); }
-  .chunk-plot, .plot-gallery-item canvas, .plot-gallery-item img {
+  .chunk-plot {
     max-width: 100%;
     height: auto;
     display: block;
@@ -735,15 +824,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </div>
       <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled>Download all (.zip)</button>
     </div>
-    <div class="tab-panels">
-      <div id="tab-report-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-report-btn" tabindex="0">
-        <p class="help-text">Run a script to see its report here.</p>
+    <div class="tab-panels-wrapper">
+      <div class="tab-panels">
+        <div id="tab-report-panel" class="tab-panel zoom-outer" role="tabpanel" aria-labelledby="tab-report-btn" tabindex="0">
+          <div id="tab-report-zoom-inner" class="zoom-inner">
+            <p class="help-text">Run a script to see its report here.</p>
+          </div>
+        </div>
+        <div id="tab-plots-panel" class="tab-panel zoom-outer" role="tabpanel" aria-labelledby="tab-plots-btn" tabindex="0" hidden>
+          <div id="tab-plots-zoom-inner" class="zoom-inner">
+            <p class="help-text">No plots yet.</p>
+          </div>
+        </div>
+        <div id="tab-files-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-files-btn" tabindex="0" hidden>
+          <p class="help-text">No output files yet.</p>
+        </div>
       </div>
-      <div id="tab-plots-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-plots-btn" tabindex="0" hidden>
-        <p class="help-text">No plots yet.</p>
-      </div>
-      <div id="tab-files-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-files-btn" tabindex="0" hidden>
-        <p class="help-text">No output files yet.</p>
+      <div class="zoom-control" id="zoom-control" role="group" aria-label="Zoom report and plots">
+        <button type="button" id="zoom-out-button" aria-label="Zoom out">&minus;</button>
+        <span id="zoom-level-readout" aria-live="polite">100%</span>
+        <button type="button" id="zoom-in-button" aria-label="Zoom in">+</button>
       </div>
     </div>
 
@@ -866,7 +966,17 @@ const CONFIG = Object.freeze({
   STALL_WARNING_MS:        120000,
 
   APP_VERSION:             "2026.07.28-stage2b",
-  CSV_PREVIEW_MAX_ROWS:    20
+  CSV_PREVIEW_MAX_ROWS:    20,
+
+  // Report/Plots default zoom: wide screens render plots wide but leave too little vertical
+  // room to see the whole chart at once, so start zoomed out there; narrower windows already
+  // give the content less horizontal room to spread into, so 100% is the better default.
+  WIDE_SCREEN_BREAKPOINT_PX: 1200,
+  ZOOM_DEFAULT_WIDE:       0.8,
+  ZOOM_DEFAULT_NARROW:     1.0,
+  ZOOM_STEP:               0.1,
+  ZOOM_MIN:                0.5,
+  ZOOM_MAX:                1.5
 });
 
 /* ### Errors ### */
@@ -1999,7 +2109,9 @@ const App = {
   lastRunInfo: null,
   librariesOk: true,
   installStreamActive: false,
-  executionLogLines: []
+  executionLogLines: [],
+  reportZoom: 1,
+  reportZoomManuallySet: false
 };
 
 function decodeUtf8(bytes) {
@@ -2109,6 +2221,64 @@ function buildKnitrParams(rawParams) {
     }
   }
   return result;
+}
+
+/* ### Output document options (output: html_document: ...) ###
+   theme, highlight, df_print, and self_contained are recognized in both option sets below for
+   completeness (so an author's YAML round-trips without a "did you mean" surprise) but are NOT
+   implemented -- ShareR always uses its own UM styling, always prints chunk output as plain text
+   (no paged-table widgets), and the ZIP export is always self-contained regardless of this
+   setting, per spec section 0.1's stance that reimplementing all of rmarkdown::render() is out of
+   scope. code_folding, toc, toc_float, number_sections, and css are honored --
+   see resolveOutputOptions. */
+
+/* rmarkdown::html_document()'s own real defaults -- used whenever the loaded document HAS its own
+   front matter, so a document that already made its own rendering choices only ever has THOSE
+   choices applied, filled in with rmarkdown's real defaults for whatever it left unset, never
+   ShareR's own opinions on top of it. */
+const REAL_DEFAULT_HTML_DOCUMENT_OPTIONS = Object.freeze({
+  code_folding: "none",
+  theme: "default",
+  highlight: "default",
+  toc: false,
+  toc_float: Object.freeze({ collapsed: false, smooth_scroll: true }),
+  number_sections: false,
+  df_print: "default",
+  css: "styles/um-style.css",
+  self_contained: true
+});
+
+/* ShareR's own house-style defaults, mirroring the sample .Rmd shipped in the
+   EFDC-Repo-Template -- used only when the loaded document has NO front matter at all (so there
+   is nothing of the document's own to defer to; a plain .R file always falls in this bucket). */
+const EFDC_TEMPLATE_DEFAULT_HTML_DOCUMENT_OPTIONS = Object.freeze({
+  code_folding: "show",
+  theme: "default",
+  highlight: "textmate",
+  toc: true,
+  toc_float: Object.freeze({ collapsed: false, smooth_scroll: true }),
+  number_sections: true,
+  df_print: "paged",
+  css: "styles/um-style.css",
+  self_contained: true
+});
+
+/* Reads output.html_document out of a parsed front matter object (a jsyaml.load() result),
+   accepting both the nested-map form (output: html_document: {...}) and the bare-string form
+   (output: html_document, with no sub-options -- rawOutput.html_document is then the string
+   "html_document" itself, not an object, so docOptions falls back to {}). hasFrontMatter picks
+   which baseline this merges over: the document's own YAML always wins per-key either way, but
+   which defaults fill in the keys it left unset depends on whether it had a YAML block at all
+   (see the two constants above). Merges one level deep, including toc_float's own two sub-keys,
+   so an author only has to name the specific settings they want to change. */
+function resolveOutputOptions(parsedFrontMatter, hasFrontMatter) {
+  const baseDefaults = hasFrontMatter ? REAL_DEFAULT_HTML_DOCUMENT_OPTIONS : EFDC_TEMPLATE_DEFAULT_HTML_DOCUMENT_OPTIONS;
+  const rawOutput = parsedFrontMatter && parsedFrontMatter.output;
+  const docOptions = (rawOutput && typeof rawOutput === "object" && rawOutput.html_document &&
+    typeof rawOutput.html_document === "object") ? rawOutput.html_document : {};
+  const merged = Object.assign({}, baseDefaults, docOptions);
+  merged.toc_float = Object.assign({}, baseDefaults.toc_float, docOptions.toc_float || {});
+  return merged;
 }
 
 /* Binds params into R via webR.objs.globalEnv.bind + jsonlite::fromJSON, never string-
@@ -2449,6 +2619,27 @@ function buildCsvPreviewTable(text, maxDataRows) {
   return table;
 }
 
+/* Converts a captured plot ImageBitmap into a static <img>, drawn via an *offscreen* canvas that
+   is never appended to the DOM -- only used to read pixels back out as a PNG data URL. Two
+   reasons this beats displaying a live <canvas> directly: (1) Chromium does not correctly resolve
+   a percentage width/max-width on a <canvas> against a zoomed ancestor (confirmed with a
+   standalone test: an <img> with the same percentage sizing shrinks correctly under CSS `zoom`, a
+   <canvas> does not), so a live canvas would visually ignore the Report/Plots zoom control
+   entirely; (2) native <img alt="..."> semantics are more accessible than a <canvas role="img">
+   workaround, and it's also exactly what the ZIP export already needed to do to make a plot
+   serialize into a static report.html, so this is now the same code path both places use. */
+function bitmapToPlotImage(bitmap, altText, className) {
+  const offscreen = document.createElement("canvas");
+  offscreen.width = bitmap.width;
+  offscreen.height = bitmap.height;
+  offscreen.getContext("2d").drawImage(bitmap, 0, 0);
+  const img = document.createElement("img");
+  img.src = offscreen.toDataURL("image/png");
+  img.className = className;
+  img.alt = altText;
+  return img;
+}
+
 function appendPlotToGallery(bitmap, label, plotIdx) {
   const id = "plot-item-" + slugifyForElementId(label) + "-" + plotIdx;
   const wrap = document.createElement("div");
@@ -2458,14 +2649,9 @@ function appendPlotToGallery(bitmap, label, plotIdx) {
   const heading = document.createElement("h3");
   heading.className = "plot-gallery-heading";
   heading.textContent = "Chunk " + label + " - plot " + plotIdx;
-  const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width; canvas.height = bitmap.height;
-  canvas.className = "chunk-plot";
-  canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Plot " + plotIdx + " from chunk " + label);
-  canvas.getContext("2d").drawImage(bitmap, 0, 0);
-  wrap.append(heading, canvas);
-  elTabPlotsPanel.appendChild(wrap);
+  const img = bitmapToPlotImage(bitmap, "Plot " + plotIdx + " from chunk " + label, "chunk-plot");
+  wrap.append(heading, img);
+  elTabPlotsZoomInner.appendChild(wrap);
   return id;
 }
 
@@ -2529,11 +2715,11 @@ function renderFilesTab(outputFiles, chunkByFilePath) {
 }
 
 function finalizeResultsPlaceholders() {
-  if (elTabPlotsPanel.childElementCount === 0) {
+  if (elTabPlotsZoomInner.childElementCount === 0) {
     const p = document.createElement("p");
     p.className = "help-text";
     p.textContent = "No plots were generated by this run.";
-    elTabPlotsPanel.appendChild(p);
+    elTabPlotsZoomInner.appendChild(p);
   }
 }
 
@@ -2578,20 +2764,39 @@ function renderNotRunChunk(node, label, container) {
 
 /* Renders one executed chunk's result into the Report tab and mirrors each captured plot into the
    Plots tab gallery (the same ImageBitmap can be drawn into two canvases; drawing does not
-   consume it). Returns the <details> element so callers can append a "Continue anyway" button. */
-function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure) {
+   consume it). Returns the wrapping element so callers can append a "Continue anyway" button.
+
+   codeFolding (output.html_document.code_folding, spec: EFDC-Repo-Template default "show") only
+   folds the *source*, never the results -- real rmarkdown always shows chunk output regardless of
+   this setting -- so the source lives in its own nested <details class="chunk-code-fold">, while
+   everything else in the outer .chunk-block stays outside it and always visible. "hide" starts
+   that nested <details> closed; "none" skips the fold entirely and always shows the source, with
+   no toggle at all, matching rmarkdown's own three-way meaning for this option. */
+function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure, codeFolding) {
   if (effectiveOptions.include === false && !isFailure) return null;
-  const details = document.createElement("details");
-  details.className = "chunk-block" + (isFailure ? " chunk-block-error" : "");
-  details.open = true;
-  const summary = document.createElement("summary");
-  summary.textContent = (isFailure ? "FAILED: " : "") + "Chunk: " + label + " (" + elapsedMs + " ms)";
-  details.appendChild(summary);
+  const wrap = document.createElement("div");
+  wrap.className = "chunk-block" + (isFailure ? " chunk-block-error" : "");
+  const header = document.createElement("div");
+  header.className = "chunk-block-header";
+  header.textContent = (isFailure ? "FAILED: " : "") + "Chunk: " + label + " (" + elapsedMs + " ms)";
+  wrap.appendChild(header);
 
   if (effectiveOptions.echo !== false) {
-    const pre = document.createElement("pre"); pre.className = "chunk-source";
-    const code = document.createElement("code"); code.textContent = node.source;
-    pre.appendChild(code); details.appendChild(pre);
+    if (codeFolding === "none") {
+      const pre = document.createElement("pre"); pre.className = "chunk-source";
+      const code = document.createElement("code"); code.textContent = node.source;
+      pre.appendChild(code); wrap.appendChild(pre);
+    } else {
+      const fold = document.createElement("details");
+      fold.className = "chunk-code-fold";
+      fold.open = codeFolding !== "hide";
+      const summary = document.createElement("summary"); summary.textContent = "Code";
+      fold.appendChild(summary);
+      const pre = document.createElement("pre"); pre.className = "chunk-source";
+      const code = document.createElement("code"); code.textContent = node.source;
+      pre.appendChild(code); fold.appendChild(pre);
+      wrap.appendChild(fold);
+    }
   }
 
   const outWrap = document.createElement("div");
@@ -2607,25 +2812,20 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
     outWrap.appendChild(line);
     hasVisibleOutput = true;
   }
-  if (hasVisibleOutput) details.appendChild(outWrap);
+  if (hasVisibleOutput) wrap.appendChild(outWrap);
 
   let plotIdx = 0;
   for (const bitmap of capture.images || []) {
     plotIdx++;
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width; canvas.height = bitmap.height;
-    canvas.className = "chunk-plot";
-    canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", "Plot " + plotIdx + " from chunk " + label);
-    canvas.getContext("2d").drawImage(bitmap, 0, 0);
-    details.appendChild(canvas);
+    const img = bitmapToPlotImage(bitmap, "Plot " + plotIdx + " from chunk " + label, "chunk-plot");
+    wrap.appendChild(img);
     const plotItemId = appendPlotToGallery(bitmap, label, plotIdx);
     node.plotItemIds = node.plotItemIds || [];
     node.plotItemIds.push(plotItemId);
   }
 
-  container.appendChild(details);
-  return details;
+  container.appendChild(wrap);
+  return wrap;
 }
 
 /* Executes chunk nodes sequentially from startIndex in a shared runState, in R's persistent
@@ -2641,14 +2841,14 @@ async function runChunksFrom(runState, startIndex) {
   for (let idx = startIndex; idx < runState.nodes.length; idx++) {
     const node = runState.nodes[idx];
 
-    if (node.type === "prose") { renderProseNode(node, elTabReportPanel); continue; }
+    if (node.type === "prose") { renderProseNode(node, elTabReportZoomInner); continue; }
 
     runState.chunkCounter++;
     const label = node.label || ("unnamed-chunk-" + runState.chunkCounter);
     setStatus("Running chunk " + runState.chunkCounter + " of " + runState.totalChunks + ": " + label + "...");
 
     if (node.engine.toLowerCase() !== "r") {
-      renderSkippedEngineChunk(node, label, elTabReportPanel);
+      renderSkippedEngineChunk(node, label, elTabReportZoomInner);
       runState.manifestChunks.push({ label, engine: node.engine, status: "skipped-non-r" });
       continue;
     }
@@ -2656,7 +2856,7 @@ async function runChunksFrom(runState, startIndex) {
     const effectiveOptions = resolveEffectiveChunkOptions(runState.defaults, node.rawOptions, label);
 
     if (effectiveOptions.eval === false) {
-      renderNotRunChunk(node, label, elTabReportPanel);
+      renderNotRunChunk(node, label, elTabReportZoomInner);
       runState.manifestChunks.push({ label, engine: "r", status: "not-run" });
       continue;
     }
@@ -2691,7 +2891,7 @@ async function runChunksFrom(runState, startIndex) {
 
     const missingFileMessage = detectMissingFileError(capture.output);
     if (missingFileMessage) {
-      renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, true);
+      renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
       runState.manifestChunks.push({ label, engine: "r", status: "error", elapsedMs });
       runState.missingFileMessage = missingFileMessage;
       runState.failed = true;
@@ -2711,7 +2911,7 @@ async function runChunksFrom(runState, startIndex) {
     }
 
     if (hasError && effectiveOptions.error !== true) {
-      const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, true);
+      const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
       const continueBtn = document.createElement("button");
       continueBtn.type = "button";
       continueBtn.className = "btn btn-secondary btn-sm";
@@ -2728,7 +2928,7 @@ async function runChunksFrom(runState, startIndex) {
       return;
     }
 
-    renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportPanel, false);
+    renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, false, runState.outputOptions.code_folding);
     runState.manifestChunks.push({ label, engine: "r", status: hasError ? "error-continued" : "ok", elapsedMs });
   }
   runState.failed = false;
@@ -2746,6 +2946,79 @@ function buildChunkAttributionMap(nodes) {
   return map;
 }
 
+function slugifyHeadingText(text) {
+  return (text || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+}
+
+/* Builds a Table of Contents and applies section numbering to the just-rendered report, honoring
+   output.html_document's toc / number_sections / toc_float settings (spec: EFDC-Repo-Template
+   defaults, resolveOutputOptions). Walks h1-h3 in document order -- toc_depth isn't itself a
+   configurable option ShareR exposes, so it's fixed at pandoc's own real default of 3; deeper
+   headings still render normally, just without a TOC entry or a number. Numbering is inserted as
+   a leading <span>, never by rewriting textContent, so any inline markup marked already produced
+   inside the heading (bold, code, links) survives untouched. toc_float's own "floating" (sticky
+   sidebar) behavior is not reproduced -- the TOC is a static block at the top of the Report tab,
+   not pinned while scrolling -- but collapsed/smooth_scroll are both honored. Called once per
+   run, after every prose/chunk node has already been appended to the Report tab. */
+function buildReportTocAndNumbering(runState) {
+  const outputOptions = runState.outputOptions;
+  const scrollHost = elTabReportPanel.closest(".tab-panels");
+  if (scrollHost) scrollHost.style.scrollBehavior = outputOptions.toc_float.smooth_scroll ? "smooth" : "auto";
+
+  const headings = Array.from(elTabReportZoomInner.querySelectorAll("h1, h2, h3"));
+  if (headings.length === 0) return;
+
+  const counters = [0, 0, 0];
+  const usedSlugs = new Set();
+  const tocEntries = [];
+  for (const heading of headings) {
+    const originalText = heading.textContent.trim();
+    const level = parseInt(heading.tagName.slice(1), 10);
+
+    let numberText = "";
+    if (outputOptions.number_sections) {
+      counters[level - 1] += 1;
+      for (let i = level; i < counters.length; i++) counters[i] = 0;
+      numberText = counters.slice(0, level).join(".");
+      const numberSpan = document.createElement("span");
+      numberSpan.className = "section-number";
+      numberSpan.textContent = numberText + " ";
+      heading.insertBefore(numberSpan, heading.firstChild);
+    }
+
+    const baseSlug = slugifyHeadingText(originalText);
+    let dedupeSlug = baseSlug, n = 2;
+    while (usedSlugs.has(dedupeSlug)) { dedupeSlug = baseSlug + "-" + n; n++; }
+    usedSlugs.add(dedupeSlug);
+    heading.id = dedupeSlug;
+
+    tocEntries.push({ level, id: dedupeSlug, text: (numberText ? numberText + " " : "") + originalText });
+  }
+
+  if (!outputOptions.toc) return;
+  const nav = document.createElement("nav");
+  nav.className = "report-toc";
+  nav.setAttribute("aria-label", "Table of contents");
+  const details = document.createElement("details");
+  details.open = !outputOptions.toc_float.collapsed;
+  const summary = document.createElement("summary");
+  summary.textContent = "Contents";
+  details.appendChild(summary);
+  const list = document.createElement("ul");
+  for (const entry of tocEntries) {
+    const li = document.createElement("li");
+    li.className = "report-toc-level-" + entry.level;
+    const a = document.createElement("a");
+    a.href = "#" + entry.id;
+    a.textContent = entry.text;
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+  details.appendChild(list);
+  nav.appendChild(details);
+  elTabReportZoomInner.insertBefore(nav, elTabReportZoomInner.firstChild);
+}
+
 async function finalizeRun(runState) {
   if (runState.finalized) return;
   runState.finalized = true;
@@ -2757,6 +3030,7 @@ async function finalizeRun(runState) {
   renderFilesTab(outputFiles, chunkByFilePath);
   finalizeResultsPlaceholders();
   annotateSourceViewerOutputMarkers(runState);
+  buildReportTocAndNumbering(runState);
 
   const durationMs = Date.now() - runState.startTime;
   let rVersion = "unknown";
@@ -2770,7 +3044,10 @@ async function finalizeRun(runState) {
     durationMs, manifestChunks: runState.manifestChunks
   });
 
-  App.lastRunInfo = { outputFiles, entryPath: runState.entryPath, entryBytes: runState.entryBytes, manifest };
+  App.lastRunInfo = {
+    outputFiles, entryPath: runState.entryPath, entryBytes: runState.entryBytes, manifest,
+    cssPath: runState.outputOptions.css
+  };
   elDownloadZipButton.disabled = false;
 
   if (!runState.missingFileMessage) {
@@ -2800,41 +3077,51 @@ function buildRunManifest(info) {
 
 /* ### ZIP export (spec section 10.4) ### */
 
-let cachedUmStyleCss = null;
-async function fetchUmStyleCssForExport() {
-  if (cachedUmStyleCss !== null) return cachedUmStyleCss;
+const cssExportCache = new Map();
+
+/* Fetches the stylesheet named by output.html_document's css: option for inlining into the
+   exported self-contained report.html, defaulting to ShareR's own styles/um-style.css when the
+   document's front matter doesn't set one (resolveOutputOptions). Only ever fetches a same-origin
+   path: css: comes from the loaded document's own front matter, which is author-controlled, not
+   something the visitor typed -- an external URL there would let a document silently beacon the
+   visitor's IP/user-agent to a host of the author's choosing every time the report is viewed or
+   exported, with no visible confirmation. A cross-origin (or unparsable) path is not fetched at
+   all; it silently falls back to ShareR's own default stylesheet instead (fail closed). */
+async function fetchCssForExport(cssPath) {
+  const requested = cssPath || REAL_DEFAULT_HTML_DOCUMENT_OPTIONS.css;
+  let path = requested;
   try {
-    const res = await fetch("styles/um-style.css");
-    cachedUmStyleCss = res.ok ? await res.text() : "";
-  } catch (err) {
-    cachedUmStyleCss = "";
+    const resolved = new URL(requested, window.location.href);
+    if (resolved.origin !== window.location.origin) path = REAL_DEFAULT_HTML_DOCUMENT_OPTIONS.css;
+  } catch {
+    path = REAL_DEFAULT_HTML_DOCUMENT_OPTIONS.css;
   }
-  return cachedUmStyleCss;
+  if (cssExportCache.has(path)) return cssExportCache.get(path);
+  let text = "";
+  try {
+    const res = await fetch(path);
+    text = res.ok ? await res.text() : "";
+  } catch (err) {
+    text = "";
+  }
+  cssExportCache.set(path, text);
+  return text;
 }
 
-/* A serialized <canvas> carries no pixel data, so every plot canvas in the exported report must
-   be converted to a static <img> -- read from the *original*, live canvas, since a cloned canvas
-   has no pixel buffer either -- before the DOM is serialized to a string, or report.html would
-   show only blank plot boxes. */
+/* Plots are already <img src="data:..."> elements (bitmapToPlotImage), not live <canvas>, so
+   cloning the report's content is enough to serialize them into a static report.html -- no
+   canvas-to-image conversion needed here. Clones .zoom-inner specifically (the actual content),
+   not the outer tabpanel, so the export never carries the live view's zoom transform/sizing. */
 async function renderReportAsSelfContainedHtml() {
-  const clone = elTabReportPanel.cloneNode(true);
-  const originalCanvases = elTabReportPanel.querySelectorAll("canvas");
-  const cloneCanvases = clone.querySelectorAll("canvas");
-  for (let i = 0; i < cloneCanvases.length; i++) {
-    const img = document.createElement("img");
-    img.src = originalCanvases[i].toDataURL("image/png");
-    img.alt = originalCanvases[i].getAttribute("aria-label") || "Plot";
-    img.style.maxWidth = "100%";
-    cloneCanvases[i].replaceWith(img);
-  }
-  const umCss = await fetchUmStyleCssForExport();
+  const clone = elTabReportZoomInner.cloneNode(true);
+  const reportCss = await fetchCssForExport(App.lastRunInfo && App.lastRunInfo.cssPath);
   const extraCss = "body{font-family:system-ui,sans-serif;margin:1.5rem;} " +
-    "pre{overflow-x:auto;background:#1e1e1e;color:#d4d4d4;padding:0.5rem;border-radius:4px;} " +
+    "pre{overflow-x:auto;background:#f5f5f5;color:#1a1a1a;border:1px solid #ddd;padding:0.5rem;border-radius:4px;} " +
     "details{border:1px solid #c7ccd1;border-radius:6px;padding:0.6rem 0.8rem;margin:0 0 1rem;} " +
     "img{max-width:100%;height:auto;border:1px solid #c7ccd1;}";
   return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">" +
     "<title>ShareR report: " + basenameOf(App.selectedEntryPath || "report") + "</title>" +
-    "<style>" + umCss + "\n" + extraCss + "</style></head><body><main>" + clone.innerHTML +
+    "<style>" + reportCss + "\n" + extraCss + "</style></head><body><main>" + clone.innerHTML +
     "</main></body></html>";
 }
 
@@ -2895,8 +3182,8 @@ async function downloadResultsZip() {
 function clearResultsForNewRun() {
   for (const url of App.objectUrls) { try { URL.revokeObjectURL(url); } catch (err) { /* already revoked */ } }
   App.objectUrls = [];
-  elTabReportPanel.innerHTML = "";
-  elTabPlotsPanel.innerHTML = "";
+  elTabReportZoomInner.innerHTML = "";
+  elTabPlotsZoomInner.innerHTML = "";
   elTabFilesPanel.innerHTML = "";
   elDownloadZipButton.disabled = true;
   App.lastRunInfo = null;
@@ -2947,18 +3234,20 @@ async function executeSelectedEntry(isRetry) {
     const isRmd = /\.rmd$/i.test(App.selectedEntryPath);
 
     let knitrParams = null;
+    let outputOptions = EFDC_TEMPLATE_DEFAULT_HTML_DOCUMENT_OPTIONS;
     let nodes;
     let lineOffset = 0;
     if (isRmd) {
       const { frontMatterText, body, bodyStartLine } = splitFrontMatter(code);
-      let rawParams = {};
+      let parsedFrontMatter = {};
       if (frontMatterText) {
-        try { rawParams = (jsyaml.load(frontMatterText) || {}).params || {}; }
+        try { parsedFrontMatter = jsyaml.load(frontMatterText) || {}; }
         catch (err) {
           throw new ShareRError("Could not parse the .Rmd YAML front matter: " + (err && err.message ? err.message : err));
         }
       }
-      knitrParams = buildKnitrParams(rawParams);
+      knitrParams = buildKnitrParams(parsedFrontMatter.params || {});
+      outputOptions = resolveOutputOptions(parsedFrontMatter, !!frontMatterText);
       nodes = parseRmdChunks(body);
       lineOffset = bodyStartLine || 0;
     } else {
@@ -2981,7 +3270,7 @@ async function executeSelectedEntry(isRetry) {
       chunkCounter: 0, totalChunks: rChunkCount, manifestChunks: [],
       entryPath: App.selectedEntryPath, entryBytes: staged.bytes, sourceLabel: describeSource(staged),
       beforeSnapshot, lastSnapshot: beforeSnapshot, lineOffset,
-      installedPackages: installedList, knitrParams,
+      installedPackages: installedList, knitrParams, outputOptions,
       startTime: Date.now(), finalized: false, failed: false, missingFileMessage: null
     };
 
@@ -3081,6 +3370,18 @@ const elTabFilesBtn = document.getElementById("tab-files-btn");
 const elTabReportPanel = document.getElementById("tab-report-panel");
 const elTabPlotsPanel = document.getElementById("tab-plots-panel");
 const elTabFilesPanel = document.getElementById("tab-files-panel");
+
+// The *outer* tabpanel elements above keep their ARIA/tab-visibility role and their full,
+// unscaled width (the "larger frame" the zoom control's content appears centered inside); all
+// actual report/plot content is appended to these *inner* wrappers instead, which is what
+// applyZoom()/the ResizeObserver in initZoomControl() actually transform/measure.
+const elTabReportZoomInner = document.getElementById("tab-report-zoom-inner");
+const elTabPlotsZoomInner = document.getElementById("tab-plots-zoom-inner");
+
+const elZoomControl = document.getElementById("zoom-control");
+const elZoomOutButton = document.getElementById("zoom-out-button");
+const elZoomInButton = document.getElementById("zoom-in-button");
+const elZoomLevelReadout = document.getElementById("zoom-level-readout");
 
 /* ### UI: rendering ### */
 
@@ -3479,6 +3780,9 @@ function activateTab(index) {
     btn.tabIndex = selected ? 0 : -1;
     TAB_PANELS[i].hidden = !selected;
   });
+  // Zoom only makes sense for Report/Plots (index 0/1) -- Files is a list of download rows, not
+  // wide charts, so the floating control has nothing useful to do there.
+  elZoomControl.hidden = index === 2;
 }
 
 function initResultsTabs() {
@@ -3497,6 +3801,68 @@ function initResultsTabs() {
       }
     });
   });
+}
+
+/* ### UI: Report/Plots zoom control ###
+   Wide screens stretch plots to fill the pane's width, which -- since aspect ratio is preserved
+   -- makes them proportionally taller too, often taller than the viewport; zooming out gives an
+   at-a-glance view without scrolling.
+
+   Built on transform:scale(), not the CSS `zoom` property: zoom turned out not to reliably shrink
+   plots at all in real-world testing (a <canvas> confirmed not to respect it in an isolated test,
+   and moving to <img> wasn't sufficient either -- reported still not working in real Chrome).
+   transform is a pure paint-time operation applied uniformly to the whole subtree regardless of
+   what's inside it (an ordinary block, an <img>, previously a <canvas> -- it doesn't matter), so
+   it can't have that kind of element-specific inconsistency, and it's standard/universally
+   supported rather than Chromium/Safari-only. Each zoomable tab has an *outer* frame (the actual
+   tabpanel, kept at the pane's full natural width -- "the larger frame") containing an *inner*
+   wrapper that is the one actually transformed; transform-origin:top center means content smaller
+   than the frame reads as centered inside it, matching how a graphics-library zoom (e.g. an SVG
+   viewBox transform) typically presents a scaled-down view. Since transform doesn't shrink the
+   *outer* box's own contribution to the page's layout/scroll height, a ResizeObserver on each
+   inner wrapper keeps the outer's explicit height in sync with (natural height * zoom) --
+   otherwise zooming out would make the content look smaller without actually reclaiming any
+   scrollable space, which was the entire point. */
+function computeDefaultZoom() {
+  return window.innerWidth >= CONFIG.WIDE_SCREEN_BREAKPOINT_PX ? CONFIG.ZOOM_DEFAULT_WIDE : CONFIG.ZOOM_DEFAULT_NARROW;
+}
+
+function refreshZoomFrameHeight(outerEl, innerEl) {
+  outerEl.style.height = (innerEl.scrollHeight * App.reportZoom) + "px";
+}
+
+function applyZoom(value) {
+  App.reportZoom = Math.min(CONFIG.ZOOM_MAX, Math.max(CONFIG.ZOOM_MIN, value));
+  const transform = "scale(" + App.reportZoom + ")";
+  elTabReportZoomInner.style.transform = transform;
+  elTabPlotsZoomInner.style.transform = transform;
+  refreshZoomFrameHeight(elTabReportPanel, elTabReportZoomInner);
+  refreshZoomFrameHeight(elTabPlotsPanel, elTabPlotsZoomInner);
+  elZoomLevelReadout.textContent = Math.round(App.reportZoom * 100) + "%";
+}
+
+function initZoomControl() {
+  elZoomOutButton.addEventListener("click", () => {
+    App.reportZoomManuallySet = true;
+    applyZoom(App.reportZoom - CONFIG.ZOOM_STEP);
+  });
+  elZoomInButton.addEventListener("click", () => {
+    App.reportZoomManuallySet = true;
+    applyZoom(App.reportZoom + CONFIG.ZOOM_STEP);
+  });
+  window.addEventListener("resize", () => {
+    if (App.reportZoomManuallySet) return;
+    applyZoom(computeDefaultZoom());
+  });
+  // Keeps the outer frame's height correct as content is added/removed (chunks and plots render
+  // progressively during a run), without needing a manual refresh call at every render site.
+  const zoomResizeObserver = new ResizeObserver(() => {
+    refreshZoomFrameHeight(elTabReportPanel, elTabReportZoomInner);
+    refreshZoomFrameHeight(elTabPlotsPanel, elTabPlotsZoomInner);
+  });
+  zoomResizeObserver.observe(elTabReportZoomInner);
+  zoomResizeObserver.observe(elTabPlotsZoomInner);
+  applyZoom(computeDefaultZoom());
 }
 
 /* ### UI: collapsible execution log (spec section 10.3) ###
@@ -3695,6 +4061,7 @@ function bootstrap() {
   initResultsTabs();
   initConsoleToggle();
   initSourceToggle();
+  initZoomControl();
 
   const missingLibs = checkJsDependenciesLoaded();
   if (missingLibs.length) {
