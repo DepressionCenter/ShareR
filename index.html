@@ -903,6 +903,48 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .modal-close:hover, .modal-close:focus-visible { color: var(--um-maize); }
   .modal-body { padding: 1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
 
+  /* ---------- Error modal: replaces a bare alert() so a run failure reads as a designed part of
+     the app (spec/user direction 2026-07-29) rather than a raw browser dialog that just points at
+     the log. Same header treatment as the "Load a script" modal -- no alarm-red, just a plain,
+     calm dialog. The execution log is still one click away via the "View Execution Log" button,
+     for anyone who wants the full technical detail, but the plain-language reason is already in
+     the dialog body, not hidden behind that click. ---------- */
+  dialog#error-modal {
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    width: min(520px, 92vw);
+    max-height: 88vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  }
+  dialog#error-modal::backdrop { background: rgba(0, 39, 76, 0.55); }
+  .error-modal-body { padding: 1.1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
+  .error-modal-message { margin: 0; white-space: pre-line; line-height: 1.5; }
+  .error-modal-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.25rem; }
+
+  /* Plain neutral-gray buttons, deliberately not U-M maize/blue: this dialog reports a problem, and
+     a bright brand-colored action button reads as an inviting call-to-action, not a neutral
+     acknowledgment. */
+  .btn-neutral, .btn-neutral:visited {
+    background-color: var(--um-white);
+    color: var(--um-dark-blue);
+    border: 1px solid var(--panel-border);
+  }
+  .btn-neutral:hover, .btn-neutral:focus-visible {
+    background-color: #eef0f2;
+    border-color: var(--um-dark-grey);
+  }
+  .btn-neutral-solid, .btn-neutral-solid:visited {
+    background-color: var(--um-dark-grey);
+    color: var(--um-white);
+    border: 1px solid var(--um-dark-grey);
+  }
+  .btn-neutral-solid:hover, .btn-neutral-solid:focus-visible {
+    background-color: #24282a;
+    border-color: #24282a;
+  }
+
   .workspace-empty-state .btn { margin-top: 0.3rem; }
 
   @media (max-width: 900px) {
@@ -1105,6 +1147,20 @@ with this program. If not, see https://www.gnu.org/licenses/.
   </div>
 </dialog>
 
+<dialog id="error-modal" class="error-modal" aria-labelledby="error-modal-title" role="alertdialog">
+  <div class="modal-header">
+    <h2 id="error-modal-title">Unable to Run Script</h2>
+    <button type="button" id="close-error-modal-button" class="modal-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="modal-body error-modal-body">
+    <p id="error-modal-message" class="error-modal-message"></p>
+    <div class="error-modal-actions">
+      <button type="button" id="error-modal-log-button" class="btn btn-neutral btn-sm">View Execution Log</button>
+      <button type="button" id="error-modal-ok-button" class="btn btn-neutral-solid btn-sm">OK</button>
+    </div>
+  </div>
+</dialog>
+
 <footer class="app-footer">
   <div class="footer-credits">
     <span>&copy; 2026 The Regents of the University of Michigan</span>
@@ -1138,6 +1194,17 @@ const CONFIG = Object.freeze({
   WEBR_BASE_URL:           "https://webr.r-wasm.org/v0.6.0/",
   WEBR_CDN_URL:            "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
   WEBR_REPO_URL:           "https://repo.r-wasm.org",
+  // Only consulted as a fallback (installPackagesWithProgress), never merged into the primary
+  // install call. webR's install() builds one vectorized `contriburl` across every repo in the
+  // list and reads them as a single available.packages() call; these r-universe.dev repos serve
+  // an empty (but 200 OK) PACKAGES index for most R version dirs, and merging them in up front was
+  // observed to make package lookups fail for packages that installed fine from repo.r-wasm.org
+  // alone. Retrying only the still-missing packages, only after the primary repo alone has already
+  // failed them, gets the wider search (e.g. fst via fstpackage.r-universe.dev) without that risk.
+  WEBR_FALLBACK_REPO_URLS: Object.freeze([
+    "https://tidyverse.r-universe.dev",
+    "https://fstpackage.r-universe.dev" 
+  ]),
   CHANNEL_TYPE:            "postmessage",
 
   CDN_ORIGIN:              "https://cdn.jsdelivr.net",
@@ -1378,7 +1445,7 @@ function matchGithubBlobUrl(u) {
 
 function parseAppParams(search) {
   const qp = new URLSearchParams(search);
-  const entryRaw = sanitizePastedValue(qp.get("entry") || qp.get("script") || "");
+  const entryRaw = sanitizePastedValue(qp.get("entry") || qp.get("script") || qp.get("file") || "");
   const dataValues = qp.getAll("data")
     .flatMap((v) => v.split(","))
     .map((s) => sanitizePastedValue(s))
@@ -2437,6 +2504,20 @@ const RE_MISSING_FILE_ERROR = /cannot open (?:the )?(?:file|connection)|no such 
    quotes ('ggplot2') when run non-interactively; matching both keeps this working either way. */
 const RE_MISSING_PACKAGE_ERROR = /there is no package called\s*[‘']([^’']+)[’']/i;
 
+/* A function from a package whose library() call was skipped (disableMissingPackageLoadCalls)
+   fails this way -- R's message doesn't name the package, only the function, so this is a
+   deliberately loose heuristic: only trusted when the run already has at least one known-missing
+   package to blame it on (see isPackageRelatedErrorText). */
+const RE_FUNCTION_NOT_FOUND = /could not find function/i;
+
+/* True when an R error's text is attributable to a package ShareR already knows is uninstallable
+   in this run -- either directly (the exact "no package called" wording) or via the looser
+   could-not-find-function heuristic above, which only applies once missingPackages is non-empty. */
+function isPackageRelatedErrorText(text, missingPackages) {
+  if (RE_MISSING_PACKAGE_ERROR.test(text)) return true;
+  return !!(missingPackages && missingPackages.length > 0 && RE_FUNCTION_NOT_FOUND.test(text));
+}
+
 function detectMissingFileError(outputItems) {
   for (const item of outputItems) {
     if (item.type !== "error") continue;
@@ -2709,6 +2790,53 @@ function detectPackagesInText(text, set) {
   while ((m = RE_PKG_COLON.exec(text))) set.add(m[1]);
 }
 
+/* Disables library()/require() calls for packages already confirmed uninstallable
+   (runState.missingPackages), in a private copy of the chunk source used only for execution --
+   node.source (the source viewer, and the code echoed in the report) is never touched. Without
+   this, library(fst) itself throws webR's raw "package or namespace load failed for 'fst' ...
+   there is no package called 'fstcore'" error, which (unlike an ordinary stop()) does not always
+   surface as a capturable R condition -- it can reject shelter.captureR's promise outright. Skipping
+   the call avoids that class of failure entirely; any code further down that actually calls a
+   function from the package still fails, but with a plain, always-capturable "could not find
+   function" error, which runChunksFrom treats as a normal (non-halting) package-related failure.
+   Paren-matching is a simple byte-by-byte depth count, no R-string/comment awareness -- correct for
+   the vast majority of real library()/require() calls; one this scanner can't fully match is just
+   left alone, and its own natural failure still gets the same friendly, non-halting treatment once
+   it occurs, so this is never a correctness requirement, only a niceness-of-error one. */
+function disableMissingPackageLoadCalls(source, missingPackages) {
+  if (!missingPackages || missingPackages.length === 0) return source;
+  const missingSet = new Set(missingPackages);
+  const re = /\b(library|require)\s*\(/g;
+  let out = "";
+  let lastIndex = 0;
+  let m;
+  while ((m = re.exec(source))) {
+    const callStart = m.index;
+    const parenOpen = re.lastIndex - 1;
+    let depth = 1;
+    let i = parenOpen + 1;
+    while (i < source.length && depth > 0) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")") depth--;
+      i++;
+    }
+    if (depth !== 0) continue; // unmatched paren; leave this call alone
+    const callEnd = i;
+    const argsText = source.slice(parenOpen + 1, callEnd - 1);
+    const nameMatch = argsText.match(/^\s*["']?([A-Za-z][A-Za-z0-9._]*)["']?/);
+    const pkgName = nameMatch ? nameMatch[1] : null;
+    if (pkgName && missingSet.has(pkgName)) {
+      out += source.slice(lastIndex, callStart) + "invisible(NULL)";
+      lastIndex = callEnd;
+      re.lastIndex = callEnd;
+      appendLogLine("message", 'Skipping "' + m[1] + "(" + pkgName + ')" in this chunk: ' +
+        describeMissingPackage(pkgName));
+    }
+  }
+  out += source.slice(lastIndex);
+  return out;
+}
+
 /* Scans only r-engine chunk/script source (never prose, never a non-r chunk) for library()/
    require()/requireNamespace()/pkg:: references, unions with the packages= URL param (already
    parsed but previously unused) and any other staged .R/.Rmd files, always adds jsonlite, and
@@ -2751,24 +2879,31 @@ function describePackageInstallFailure(err, requestedList) {
   const m = raw.match(/['"]([A-Za-z][A-Za-z0-9._]*)['"]/);
   const named = m ? m[1] : null;
   const base = named
-    ? 'The R package "' + named + '" could not be installed.'
-    : "Installing R package(s) (" + requestedList.join(", ") + ") failed.";
-  return base + " Packages must be precompiled for WebAssembly; webR cannot build them from " +
-    "source. This is most often caused by a package with no WebAssembly build available in the " +
-    "configured repositories. Check the execution log above for the specific download that " +
-    "failed. Raw error: " + raw;
+    ? 'The web-based version of R does not currently support the "' + named + '" package.'
+    : "The web-based version of R does not currently support one or more of the requested " +
+      "packages (" + requestedList.join(", ") + ").";
+  return base + " Packages must be precompiled specifically for this browser environment; ShareR " +
+    "(via webR) cannot build a package from source. This is most often caused by a package with " +
+    "no browser-compatible build available in the configured repositories. Raw error: " + raw;
 }
 
-/* Hand-verified, deliberately short: only packages we are certain need a JVM (via rJava), which a
-   WebAssembly sandbox can never provide -- not "no build yet," but "not possible, ever." Value is a
-   suggested pure-R replacement, or null when no drop-in equivalent is known. Extend only with
-   packages/alternatives that are actually verified, never guessed. */
+/* Hand-verified, deliberately short: only packages we are certain can never work in a WebAssembly
+   sandbox -- not "no build yet," but "not possible, ever" -- each with the specific verified reason
+   (so the message doesn't misattribute e.g. a threading limitation to rJava) and a suggested pure-R
+   replacement, or null when no drop-in equivalent is known. Extend only with packages/reasons that
+   are actually verified, never guessed. */
 const KNOWN_IMPOSSIBLE_PACKAGES = {
-  "XLConnect": "openxlsx (or readxl for read-only workbooks)",
-  "xlsx": "openxlsx (or readxl for read-only workbooks)",
-  "xlsxjars": "openxlsx",
-  "rJava": null,
-  "RJDBC": null
+  "XLConnect":  { reason: "requires a Java Virtual Machine (via rJava). A browser sandbox cannot run a JVM", alternative: "openxlsx (or readxl for read-only workbooks)" },
+  "xlsx":       { reason: "requires a Java Virtual Machine (via rJava). A browser sandbox cannot run a JVM", alternative: "openxlsx (or readxl for read-only workbooks)" },
+  "xlsxjars":   { reason: "requires a Java Virtual Machine (via rJava). A browser sandbox cannot run a JVM", alternative: "openxlsx" },
+  "rJava":      { reason: "requires a Java Virtual Machine, which a browser sandbox cannot run", alternative: null },
+  "RJDBC":      { reason: "requires a Java Virtual Machine (via rJava). A browser sandbox cannot run a JVM", alternative: null },
+  // fstcore's WebAssembly build fails on r-universe (job status FAIL, no artifact, as of 2026-07-29:
+  // https://marcusklik.r-universe.dev/api/packages/fstcore), and it has no build at all on
+  // repo.r-wasm.org -- most likely fstlib's multithreading (OpenMP) does not port to the
+  // single-threaded Emscripten target webR uses. fst depends on fstcore, so it fails the same way.
+  "fstcore":    { reason: "has no working WebAssembly build in any configured repository (its build fails, most likely due to multithreading that does not port to WebAssembly)", alternative: "base R's saveRDS()/readRDS() for data frame serialization" },
+  "fst":        { reason: "depends on fstcore, which has no working WebAssembly build in any configured repository (its build fails, most likely due to multithreading that does not port to WebAssembly)", alternative: "base R's saveRDS()/readRDS() for data frame serialization" }
 };
 
 /* Ground-truth counterpart to describePackageInstallFailure, for when installPackages() resolved
@@ -2777,18 +2912,18 @@ const KNOWN_IMPOSSIBLE_PACKAGES = {
    rejection. Takes the exact missing-package list rather than regex-guessing one name out of an
    error message, since here the missing set is known precisely. */
 function describeMissingPackage(pkg) {
-  const alt = KNOWN_IMPOSSIBLE_PACKAGES[pkg];
-  if (alt !== undefined) {
-    return 'The R package "' + pkg + '" requires a Java Virtual Machine (via rJava). A browser ' +
-      "sandbox cannot run a JVM, so this package can never work here — it is not a " +
-      "temporarily missing download." + (alt
-        ? ' Consider using "' + alt + '" instead, which is pure R and WebAssembly-compatible.'
+  const known = KNOWN_IMPOSSIBLE_PACKAGES[pkg];
+  if (known !== undefined) {
+    return 'The web-based version of R does not currently support the "' + pkg + '" package: it ' +
+      known.reason + ", so this package can never work here — it is not a temporarily missing " +
+      "download." + (known.alternative
+        ? ' Consider using "' + known.alternative + '" instead, which works in the browser.'
         : " There is no drop-in pure-R replacement; ask the script author for a different approach.");
   }
-  return 'The R package "' + pkg + '" could not be installed. Packages must be precompiled for ' +
-    "WebAssembly; webR cannot build them from source. This is most often caused by a package with " +
-    "no WebAssembly build available in the configured repositories. Check the execution log above " +
-    "for the specific download that failed.";
+  return 'The web-based version of R does not currently support the "' + pkg + '" package. ' +
+    "Packages must be precompiled specifically for this browser environment; ShareR (via webR) " +
+    "cannot build a package from source. This is most often caused by a package with no " +
+    "browser-compatible build available in the configured repositories.";
 }
 
 function describeMissingAfterInstall(missingList) {
@@ -2829,31 +2964,60 @@ async function verifyPackagesInstalled(engine, packageList) {
 
 /* One webR.installPackages() call (spec 9.2: let webR resolve dependencies, do not reimplement
    it). Progress text is routed through the single, already-attached engine.stream() reader via
-   App.installStreamActive -- see the comment on attachLiveProgressIndicator above. installPackages()
-   resolving is not proof of success (it behaves like install.packages(): an unavailable package
-   just warns and resolves), so verifyPackagesInstalled below re-checks before any chunk runs. */
-async function installPackagesWithProgress(engine, packageList, extraRepos) {
-  if (packageList.length === 0) return [];
-  appendLogLine("message", "Installing R package(s): " + packageList.join(", ") + "...");
-  setStatus("Installing R packages...");
-  const repos = extraRepos && extraRepos.length ? [CONFIG.WEBR_REPO_URL].concat(extraRepos) : undefined;
+   App.installStreamActive -- see the comment on attachLiveProgressIndicator above. Logs and swallows
+   its own failure rather than throwing: a hard failure of the install call itself (network outage,
+   worker crash) is handled the same way as "some packages just aren't available" below -- either
+   way, verifyPackagesInstalled is the actual source of truth on what's usable, and a preflight
+   package problem should never by itself take down chunks that don't need that package. */
+async function runInstallPackagesCall(engine, packageList, repos) {
   App.installStreamActive = true;
   try {
     await withTimeout(
-      engine.installPackages(packageList, repos ? { repos, quiet: false } : { quiet: false }),
+      engine.installPackages(packageList, { repos, quiet: false }),
       CONFIG.INSTALL_TIMEOUT_MS,
       "Package installation"
     );
   } catch (err) {
-    throw new ShareRError(describePackageInstallFailure(err, packageList));
+    appendLogLine("error", describePackageInstallFailure(err, packageList));
   } finally {
     App.installStreamActive = false;
   }
-  const missing = await verifyPackagesInstalled(engine, packageList);
-  if (missing.length > 0) {
-    throw new ShareRError(describeMissingAfterInstall(missing));
+}
+
+/* installPackages() resolving is not proof of success (it behaves like install.packages(): an
+   unavailable package just warns and resolves), so verifyPackagesInstalled re-checks before any
+   chunk runs. A second install attempt, widened to CONFIG.WEBR_FALLBACK_REPO_URLS, only runs for
+   packages still missing after the primary repo -- see the comment on WEBR_FALLBACK_REPO_URLS for
+   why those repos are never merged into the first attempt.
+
+   A package that never becomes loadable is logged, not thrown: only the chunk(s) that actually use
+   it are affected, and letting the run proceed means every chunk before that point still executes
+   and renders normally -- the missing package then surfaces as a completely normal R error (e.g.
+   "there is no package called 'fst'") at the exact chunk that needs it, handled by runChunksFrom's
+   existing per-chunk error UI exactly like any other runtime error, instead of losing the whole
+   report over a dependency one specific chunk near the end happens to need. Returns only the
+   subset of packageList that is actually confirmed loadable; runState.missingPackages (set by the
+   caller) carries the rest so the per-chunk error handler can name the real cause instead of
+   guessing. */
+async function installPackagesWithProgress(engine, packageList, extraRepos) {
+  if (packageList.length === 0) return { installed: [], missing: [] };
+  appendLogLine("message", "Installing R package(s): " + packageList.join(", ") + "...");
+  setStatus("Installing R packages...");
+  const primaryRepos = [CONFIG.WEBR_REPO_URL].concat(extraRepos || []);
+  await runInstallPackagesCall(engine, packageList, primaryRepos);
+
+  let missing = await verifyPackagesInstalled(engine, packageList);
+  if (missing.length > 0 && CONFIG.WEBR_FALLBACK_REPO_URLS.length > 0) {
+    appendLogLine("message", "Retrying " + missing.join(", ") + " against additional package repositories...");
+    setStatus("Installing R packages...");
+    await runInstallPackagesCall(engine, missing, primaryRepos.concat(CONFIG.WEBR_FALLBACK_REPO_URLS));
+    missing = await verifyPackagesInstalled(engine, packageList);
   }
-  return packageList;
+
+  if (missing.length > 0) {
+    appendLogLine("error", describeMissingAfterInstall(missing));
+  }
+  return { installed: packageList.filter((p) => !missing.includes(p)), missing };
 }
 
 /* ### Outputs: recursive VFS diff (spec section 10.1) ### */
@@ -3241,14 +3405,24 @@ async function runChunksFrom(runState, startIndex) {
 
     const t0 = performance.now();
     const shelter = await new engine.Shelter();
+    const execSource = disableMissingPackageLoadCalls(node.source, runState.missingPackages);
     let capture;
     try {
-      capture = await shelter.captureR(node.source, {
-        withAutoprint: true,
-        captureStreams: true,
-        captureConditions: true,
-        captureGraphics: figDimsForChunk(effectiveOptions)
-      });
+      try {
+        capture = await shelter.captureR(execSource, {
+          withAutoprint: true,
+          captureStreams: true,
+          captureConditions: true,
+          captureGraphics: figDimsForChunk(effectiveOptions)
+        });
+      } catch (err) {
+        // Some R errors (notably library()/require() failing to load a namespace) reject
+        // captureR's promise outright instead of arriving as a capturable "error" condition in
+        // capture.output. Wrapping the rejection into that same shape lets every check below
+        // (detectMissingFileError, the package-related-error check, rendering) treat it exactly
+        // like any other chunk error, uniformly, rather than needing a separate code path.
+        capture = { output: [{ type: "error", data: { message: err && err.message ? err.message : String(err) } }], images: [] };
+      }
     } finally {
       await shelter.purge();
     }
@@ -3283,12 +3457,42 @@ async function runChunksFrom(runState, startIndex) {
       appendLogLine(o.type, "[" + label + "] " + text);
       if (o.type === "error" && typeof text === "string") {
         const pkgMatch = text.match(RE_MISSING_PACKAGE_ERROR);
-        if (pkgMatch) appendLogLine("message", 'This chunk needs the R package "' + pkgMatch[1] +
-          '", which was not detected automatically for the package preflight step.');
+        if (pkgMatch) {
+          // Two distinct causes read very differently to a researcher: the preflight already knew
+          // this package couldn't be installed (give the specific, already-known reason), versus a
+          // package the regex-based preflight scan in detectPackages simply never noticed (e.g. a
+          // package loaded through an indirect call detectPackages doesn't recognize).
+          appendLogLine("message", runState.missingPackages.includes(pkgMatch[1])
+            ? describeMissingPackage(pkgMatch[1])
+            : 'This chunk needs the R package "' + pkgMatch[1] +
+              '", which was not detected automatically for the package preflight step.');
+        } else if (RE_FUNCTION_NOT_FOUND.test(text) && runState.missingPackages.length > 0) {
+          // Most likely a call into one of the packages whose library()/require() call was
+          // skipped earlier in this chunk (disableMissingPackageLoadCalls) -- R's own message
+          // names the function, not the package, so this can only name the candidate package(s).
+          appendLogLine("message", "This is most likely because " +
+            (runState.missingPackages.length === 1 ? "the " : "one of the ") +
+            runState.missingPackages.map((p) => '"' + p + '"').join(", ") +
+            (runState.missingPackages.length === 1 ? " package" : " packages") +
+            " above could not be loaded.");
+        }
       }
     }
 
     if (hasError && effectiveOptions.error !== true) {
+      const errorTexts = capture.output.filter((o) => o.type === "error").map(describeCondition);
+      const allPackageRelated = errorTexts.every((t) => typeof t === "string" && isPackageRelatedErrorText(t, runState.missingPackages));
+
+      if (allPackageRelated) {
+        // A package ShareR already knows can't be installed here is not treated as fatal to the
+        // run: the reason is already explained above (describeMissingPackage), so the remaining
+        // chunks run automatically instead of waiting on a manual "Continue" click. Still rendered
+        // with the failed styling (isFailure=true) so the problem stays visible in the report.
+        renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
+        runState.manifestChunks.push({ label, engine: "r", status: "error-package-skipped", elapsedMs });
+        continue;
+      }
+
       const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
       const continueBtn = document.createElement("button");
       continueBtn.type = "button";
@@ -3296,7 +3500,12 @@ async function runChunksFrom(runState, startIndex) {
       continueBtn.textContent = "Continue running the remaining chunks";
       continueBtn.addEventListener("click", () => {
         continueBtn.disabled = true;
-        runChunksFrom(runState, idx + 1);
+        // finalizeRun already ran once (it's a one-shot guard, so it can't rebuild the report a
+        // second time without duplicating the TOC/section numbering) and won't run again for this
+        // continuation, so nothing else will hide the loading overlay that runChunksFrom's own
+        // per-chunk progress updates reopen -- do it here once the continuation settles, whether
+        // it finishes cleanly or halts again at a later chunk.
+        runChunksFrom(runState, idx + 1).finally(() => hideReportLoadingOverlay());
       }, { once: true });
       if (details) details.appendChild(continueBtn);
       appendLogLine("error", "Chunk `" + label + "` failed; stopping. See the Report tab.");
@@ -3645,7 +3854,8 @@ async function executeSelectedEntry(isRetry) {
     }
 
     const packageList = detectPackages(nodes, isRmd);
-    const installedList = await installPackagesWithProgress(engine, packageList, App.reposExplicitList);
+    const { installed: installedList, missing: missingPackages } =
+      await installPackagesWithProgress(engine, packageList, App.reposExplicitList);
 
     if (isRmd) {
       setStatus("Setting up parameters...");
@@ -3660,7 +3870,7 @@ async function executeSelectedEntry(isRetry) {
       chunkCounter: 0, totalChunks: rChunkCount, manifestChunks: [],
       entryPath: App.selectedEntryPath, entryBytes: staged.bytes, sourceLabel: describeSource(staged),
       beforeSnapshot, lastSnapshot: beforeSnapshot, lineOffset,
-      installedPackages: installedList, knitrParams, outputOptions,
+      installedPackages: installedList, missingPackages, knitrParams, outputOptions,
       startTime: Date.now(), finalized: false, failed: false, missingFileMessage: null
     };
     updateReportLoadingOverlay("Running R script…", 0);
@@ -3686,9 +3896,7 @@ async function executeSelectedEntry(isRetry) {
     const message = err && err.message ? err.message : String(err);
     appendLogLine("error", message);
     setStatus("Error. See log below.");
-    // Short and plain-language on purpose: the full technical explanation is already in the log
-    // above; this alert's only job is to make sure a failure isn't missed.
-    alert("Unable to run this script. See the Execution Log for details.");
+    showErrorModal(describeFatalRunError(message));
     hideReportLoadingOverlay();
     console.error(err);
   } finally {
@@ -3758,6 +3966,12 @@ const elLoadModal = document.getElementById("load-script-modal");
 const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
 const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
 const elAddMoreFilesButton = document.getElementById("add-more-files-button");
+
+const elErrorModal = document.getElementById("error-modal");
+const elErrorModalMessage = document.getElementById("error-modal-message");
+const elCloseErrorModalButton = document.getElementById("close-error-modal-button");
+const elErrorModalOkButton = document.getElementById("error-modal-ok-button");
+const elErrorModalLogButton = document.getElementById("error-modal-log-button");
 
 const elPrintResultsButton = document.getElementById("print-results-button");
 const elDownloadZipButton = document.getElementById("download-zip-button");
@@ -4214,6 +4428,35 @@ function maybeCloseLoadModalAfterStaging() {
   if (App.selectedEntryPath || App.candidates) closeLoadModal();
 }
 
+/* ### UI: run-failure error modal ###
+   Replaces a bare alert() (spec/user direction 2026-07-29): a run failure this fatal -- the whole
+   report never even started, e.g. a YAML parse error or an unreadable entry file -- deserves a
+   designed dialog, not a generic browser alert pointing at the collapsed log. Package-install
+   failures do NOT go through this dialog any more; see installPackagesWithProgress's comment for
+   why those are logged and let the run continue instead. textContent only, never innerHTML:
+   message text can echo content pulled from a loaded script/repo (e.g. a YAML field), which must
+   never be interpreted as markup. */
+function showErrorModal(message) {
+  elErrorModalMessage.textContent = message;
+  if (!elErrorModal.open) elErrorModal.showModal();
+}
+
+/* A message this dialog shows already fully explains itself only when it's one ShareR authored
+   specifically for a not-supported package (describeMissingPackage/describePackageInstallFailure
+   both include this exact phrase); anything else -- a YAML parse error, a raw R condition, an
+   unexpected JS exception -- is real, useful detail for the log but not something to paraphrase
+   correctly on the fly, so the dialog falls back to one plain sentence and points at the log
+   (which already has the raw message, logged before this is ever called) instead of guessing at a
+   friendlier rewrite. */
+function describeFatalRunError(message) {
+  if (typeof message === "string" && message.includes("does not currently support")) return message;
+  return "An error occurred while executing this R script. View log for details.";
+}
+
+function closeErrorModal() {
+  if (elErrorModal.open) elErrorModal.close();
+}
+
 /* ### UI: results tabs -- real ARIA tabs with roving tabindex (spec section 11.2) ###
    The shell ships tabindex="-1" on two of the three tab buttons by default, so Tab alone can
    never reach them; ArrowLeft/ArrowRight/Home/End must move focus and activate, or this would be
@@ -4328,6 +4571,19 @@ function initConsoleToggle() {
   });
 }
 
+/* Expands the execution log if collapsed and scrolls it into view -- used by the error modal's
+   "View Execution Log" button, so that action reliably reveals the log regardless of its current
+   toggle state instead of only working half the time. */
+function expandExecutionLog() {
+  const icon = document.getElementById("console-toggle-icon");
+  if (elLog.classList.contains("log-collapsed")) {
+    elLog.classList.remove("log-collapsed");
+    elConsoleToggleButton.setAttribute("aria-expanded", "true");
+    if (icon) icon.textContent = String.fromCharCode(0x25BE);
+  }
+  elConsoleToggleButton.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 /* Show/Hide Source Code toggle button (ShareR-UI-Specification.md section 3): a plain button
    with aria-expanded, not a <details> element, so its label text can read "Show"/"Hide" exactly
    like the mockup. Also widens the workspace pane toward 40% while the editor is open --
@@ -4411,6 +4667,11 @@ elCloseLoadModalButton.addEventListener("click", () => closeLoadModal());
 // it), which is how native <dialog> lets a click "outside" the visible box be told apart from a
 // click on its content.
 elLoadModal.addEventListener("click", (e) => { if (e.target === elLoadModal) closeLoadModal(); });
+
+elCloseErrorModalButton.addEventListener("click", () => closeErrorModal());
+elErrorModalOkButton.addEventListener("click", () => closeErrorModal());
+elErrorModalLogButton.addEventListener("click", () => { closeErrorModal(); expandExecutionLog(); });
+elErrorModal.addEventListener("click", (e) => { if (e.target === elErrorModal) closeErrorModal(); });
 
 elSourceForm.addEventListener("submit", (e) => {
   e.preventDefault();
