@@ -738,6 +738,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .chunk-output-stderr, .chunk-output-error { color: #a4271f; }
   .chunk-output-warning { color: #6b5300; }
   .chunk-output-message { color: var(--um-medium-blue); }
+  .chunk-output-html { white-space: normal; font-family: system-ui, -apple-system, sans-serif; overflow-x: auto; }
+  .chunk-output-html table { border-collapse: collapse; font-size: 0.85rem; }
+  .chunk-output-html th, .chunk-output-html td { border: 1px solid var(--panel-border); padding: 0.3rem 0.5rem; }
   .chunk-plot {
     max-width: 100%;
     height: auto;
@@ -746,6 +749,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border: 1px solid var(--panel-border);
   }
   .plot-gallery-item {
+    position: relative;
     background: #f3f4f6;
     border: 1px solid var(--panel-border);
     border-radius: 6px;
@@ -753,6 +757,25 @@ with this program. If not, see https://www.gnu.org/licenses/.
     margin-bottom: 1rem;
   }
   .plot-gallery-heading { font-size: 0.95rem; margin: 0 0 0.3rem; }
+  .plot-inline-wrap { position: relative; display: inline-block; max-width: 100%; }
+
+  /* Ghost icon button revealed on hover/focus, adapted for a single top-right action per card
+     rather than a row of several. */
+  .ghost-icon-btn {
+    position: absolute; top: 0.5rem; right: 0.5rem;
+    width: 34px; height: 34px; padding: 0; border: 1px solid var(--panel-border); border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95); color: var(--um-dark-blue);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    opacity: 0; transition: opacity 0.15s ease, background 0.15s ease;
+  }
+  .ghost-icon-btn svg { width: 18px; height: 18px; }
+  .plot-gallery-item:hover .ghost-icon-btn,
+  .plot-inline-wrap:hover .ghost-icon-btn,
+  .ghost-icon-btn:hover,
+  .ghost-icon-btn:focus-visible { opacity: 1; }
+  .ghost-icon-btn:hover { background: var(--um-maize); }
 
   /* Output gutter markers (source viewer) and the highlight-flash they trigger on the Plots/
      Files tab item they jump to (spec: ShareR-UI-Specification.md section 3). */
@@ -796,6 +819,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-size: 1rem;
     line-height: 1;
   }
+  .file-row-icon-link {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0.1rem;
+  }
+  .file-row-icon-link:hover, .file-row-icon-link:focus-visible { border-color: var(--panel-border); }
   .file-row-name { font-weight: 600; font-size: 0.9rem; word-break: break-all; }
   .file-row-size { font-size: 0.8rem; color: var(--text-muted); }
   .file-row-image-preview { max-width: 6rem; max-height: 4rem; border: 1px solid var(--panel-border); }
@@ -1226,7 +1257,7 @@ const CONFIG = Object.freeze({
   INSTALL_TIMEOUT_MS:      600000,
   STALL_WARNING_MS:        120000,
 
-  APP_VERSION:             "2026.07.28-stage2b",
+  APP_VERSION:             "0.9-beta1",
   CSV_PREVIEW_MAX_ROWS:    20,
 
   // Report/Plots default zoom: wide screens render plots wide but leave too little vertical
@@ -3104,6 +3135,46 @@ function bitmapToPlotImage(bitmap, altText, className) {
   return img;
 }
 
+/* Redraws a captured plot ImageBitmap into its own canvas (independent of bitmapToPlotImage's
+   offscreen one, which is never kept around) so it can be exported as a standalone PNG file. */
+function plotBitmapToPngBlob(bitmap) {
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+const DOWNLOAD_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M8 1a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V1.75A.75.75 0 0 1 8 1Z"/>' +
+  '<path d="M2.75 12.5a.75.75 0 0 1 .75.75v.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-.5a.75.75 0 0 1 .75-.75Z"/>' +
+  '</svg>';
+
+/* Shared by every "download this plot as PNG" affordance (Plots tab gallery card, inline plot in
+   the Report tab) so the icon, filename convention, and click behavior stay in one place. */
+function createPlotDownloadButton(bitmap, label, plotIdx) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost-icon-btn";
+  btn.innerHTML = DOWNLOAD_ICON_SVG;
+  btn.setAttribute("aria-label", "Download this plot as a PNG image");
+  btn.title = "Download PNG";
+  btn.addEventListener("click", async () => {
+    const blob = await plotBitmapToPngBlob(bitmap);
+    downloadBlob(blob, "plot-" + slugifyForElementId(label) + "-" + plotIdx + ".png");
+  });
+  return btn;
+}
+
 function appendPlotToGallery(bitmap, label, plotIdx) {
   const id = "plot-item-" + slugifyForElementId(label) + "-" + plotIdx;
   const wrap = document.createElement("div");
@@ -3114,7 +3185,8 @@ function appendPlotToGallery(bitmap, label, plotIdx) {
   heading.className = "plot-gallery-heading";
   heading.textContent = "Chunk " + label + " - plot " + plotIdx;
   const img = bitmapToPlotImage(bitmap, "Plot " + plotIdx + " from chunk " + label, "chunk-plot");
-  wrap.append(heading, img);
+  const downloadBtn = createPlotDownloadButton(bitmap, label, plotIdx);
+  wrap.append(heading, img, downloadBtn);
   elTabPlotsZoomInner.appendChild(wrap);
   return id;
 }
@@ -3160,18 +3232,25 @@ function renderFilesTab(outputFiles, chunkByFilePath) {
     row.className = "file-row";
     row.id = "file-item-" + slugifyForElementId(f.path);
     row.tabIndex = -1;
-    const iconEl = document.createElement("div");
-    iconEl.className = "file-row-icon";
-    iconEl.setAttribute("aria-hidden", "true");
-    iconEl.textContent = fileTypeIcons[ext] || "📄";
     const attribution = chunkByFilePath.get(f.path);
-    if (attribution) {
-      iconEl.title = attribution.label
-        ? "Generated by chunk `" + attribution.label + "`"
-        : "Generated at line " + attribution.line;
+    const iconTitle = attribution
+      ? (attribution.label ? "Generated by chunk `" + attribution.label + "`" : "Generated at line " + attribution.line)
+      : "Generated by ShareR™";
+    let iconEl;
+    if (attribution && attribution.reportElementId) {
+      iconEl = document.createElement("button");
+      iconEl.type = "button";
+      iconEl.className = "file-row-icon file-row-icon-link";
+      iconEl.title = iconTitle + " -- jump to it in the Report tab";
+      iconEl.setAttribute("aria-label", iconTitle + ", jump to it in the Report tab");
+      iconEl.addEventListener("click", () => jumpToOutput(0, attribution.reportElementId));
     } else {
-      iconEl.title = "Generated by ShareR™";
+      iconEl = document.createElement("div");
+      iconEl.className = "file-row-icon";
+      iconEl.setAttribute("aria-hidden", "true");
+      iconEl.title = iconTitle;
     }
+    iconEl.textContent = fileTypeIcons[ext] || "📄";
     const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = f.path;
     const sizeEl = document.createElement("div"); sizeEl.className = "file-row-size"; sizeEl.textContent = formatBytes(f.size);
     const blob = new Blob([f.bytes], { type: mimeTypeFor(ext) });
@@ -3275,6 +3354,12 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
   if (effectiveOptions.include === false && !isFailure) return null;
   const wrap = document.createElement("div");
   wrap.className = "chunk-block" + (isFailure ? " chunk-block-error" : "");
+  // Suffixed with startLine, not just the label, since authors commonly reuse the same chunk
+  // label (or rely on the "unnamed-chunk-N" default) more than once in one document -- an id
+  // keyed on label alone would collide and jumpToOutput would land on the first matching chunk.
+  wrap.id = "report-chunk-" + slugifyForElementId(label) + "-" + (node.startLine || 0);
+  wrap.tabIndex = -1;
+  node.reportElementId = wrap.id;
   const header = document.createElement("div");
   header.className = "chunk-block-header";
   header.textContent = (isFailure ? "FAILED: " : "") + "Chunk: " + label + " (" + elapsedMs + " ms)";
@@ -3306,8 +3391,16 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
     if (o.type === "message" && effectiveOptions.message === false) continue;
     if (o.type === "stdout" && effectiveOptions.results === "hide") continue;
     const line = document.createElement("div");
-    line.className = "chunk-output-line chunk-output-" + o.type;
-    line.textContent = describeCondition(o);
+    const text = describeCondition(o);
+    // R print methods for table-like objects (e.g. the table1 package, kable(format="html"))
+    // autoprint a literal HTML fragment as stdout rather than a knitr `results='asis'` directive
+    // ShareR could special-case per chunk option -- textContent would otherwise dump the markup
+    // itself onto the page as visible text. Sanitized the same way prose HTML already is (spec
+    // 0.1, AGENTS.md section 7): this is the only other innerHTML assignment in the file.
+    const looksLikeHtmlFragment = o.type === "stdout" && typeof text === "string" && /^\s*<[a-z][\s\S]*>\s*$/i.test(text);
+    line.className = "chunk-output-line chunk-output-" + o.type + (looksLikeHtmlFragment ? " chunk-output-html" : "");
+    if (looksLikeHtmlFragment) line.innerHTML = DOMPurify.sanitize(text);
+    else line.textContent = text;
     outWrap.appendChild(line);
     hasVisibleOutput = true;
   }
@@ -3317,7 +3410,10 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
   for (const bitmap of capture.images || []) {
     plotIdx++;
     const img = bitmapToPlotImage(bitmap, "Plot " + plotIdx + " from chunk " + label, "chunk-plot");
-    wrap.appendChild(img);
+    const plotWrap = document.createElement("div");
+    plotWrap.className = "plot-inline-wrap";
+    plotWrap.append(img, createPlotDownloadButton(bitmap, label, plotIdx));
+    wrap.appendChild(plotWrap);
     const plotItemId = appendPlotToGallery(bitmap, label, plotIdx);
     node.plotItemIds = node.plotItemIds || [];
     node.plotItemIds.push(plotItemId);
@@ -3494,7 +3590,8 @@ function buildChunkAttributionMap(nodes) {
     for (const p of node.producedFilePaths) {
       map.set(p, {
         label: node.label || "unnamed chunk",
-        line: typeof node.startLine === "number" ? (node.startLine + 1) : null
+        line: typeof node.startLine === "number" ? (node.startLine + 1) : null,
+        reportElementId: node.reportElementId || null
       });
     }
   }
@@ -4251,10 +4348,16 @@ function renderSourceViewer() {
 
 /* Activates a Results tab and scroll-and-flashes one of its items -- used both by the output
    gutter markers below and available generally. Honors prefers-reduced-motion via the
-   .highlight-flash CSS rule itself (spec section 11.2). */
+   .highlight-flash CSS rule itself (spec section 11.2). Report/Plots panels size themselves via a
+   ResizeObserver that only fires for a *visible* element, so a panel whose content changed while
+   it was the hidden tab can carry a stale (often too-small) explicit height -- refreshing it here,
+   synchronously right after activateTab reveals the panel, avoids scrollIntoView computing against
+   that stale size and landing somewhere else in the document entirely. */
 function jumpToOutput(tabIndex, elementId) {
   activateTab(tabIndex);
   TAB_BUTTONS[tabIndex].focus();
+  if (tabIndex === 0) refreshZoomFrameHeight(elTabReportPanel, elTabReportZoomInner);
+  else if (tabIndex === 1) refreshZoomFrameHeight(elTabPlotsPanel, elTabPlotsZoomInner);
   const target = document.getElementById(elementId);
   if (!target) return;
   target.scrollIntoView({ behavior: "smooth", block: "center" });
