@@ -28,7 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 ShareR™ runs R and R Markdown scripts entirely inside a web browser. There is no server, no R installation, and no setup. Point it at a GitHub repository, add your own data files, and press Run.
 
-![Preview Image](./images/ShareR-preview-2.png "ShareR Preview")
+<a href="https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR" target="_blank" title="View live demo of ShareR">![Preview Image](./images/ShareR-preview-2.png "ShareR Preview")</a>
 
 ShareR™ lets you run an R analysis right in your web browser, no installation required. Share a link to your R script or R Markdown file on GitHub, and anyone can open it, add their own data, and run it instantly, even on a locked-down work laptop where they can't install software.
 
@@ -41,14 +41,14 @@ For research teams, that means anyone on the project can run the same analysis t
 **Run someone else's analysis**
 
 1. Open ShareR with the repository in the URL:
-   `https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR`
+   <a href="https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR" target="_blank" title="View live demo of ShareR">`https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR`</a>
 2. Wait for the one-time download of the R engine and packages. The script will run automatically using the sample data file(s) included in the repository.
 3. You can also replace the data files with your own in the Workspace panel, then click the yellow Run button. ShareR will use your files instead of the sample data, and regenerate the report tab.
 4. Read the report, then press **Download all outputs** to get a ZIP with the report, the generated files, the console log, and a run manifest.
 
 **Run your own script without a repository**
 
-1. Open `https://code.depressioncenter.org/ShareR/` with no parameters.
+1. Open <a href="https://code.depressioncenter.org/ShareR/" target="_blank" title="View live demo of ShareR">`https://code.depressioncenter.org/ShareR/`</a> with no parameters.
 2. Drop in your `.R` or `.Rmd` file together with its data files, or drop a whole folder.
 3. Press **Run analysis**.
 
@@ -80,43 +80,6 @@ For research teams, that means anyone on the project can run the same analysis t
 3. Add your organization's name to `CONFIG.TRUSTED_OWNERS` in `index.html`, so that repositories you publish don't show visitors an "unknown author" warning.
 4. That's it. There's no build step, no software to install, nothing to compile. Whatever is in the repository is exactly what gets published.
 
-#### Try It Yourself, with Sample Data
-
-`DepressionCenter/EMA-CleanR` is a ready-made example: an R Markdown workflow that cleans up and charts Ecological Momentary Assessment survey data. It comes with a made-up sample file, `EMA-Data.csv`, so you can try it without using anyone's real data.
-
-1. Open `?repo=DepressionCenter/EMA-CleanR`.
-2. ShareR finds the script automatically and lists which R packages it will need.
-3. Press Run. You'll see the analysis progress step by step, with a live log.
-4. The script creates a folder of results, six summary spreadsheets, and ShareR offers each one for download.
-5. Want to use your own data instead? Just drag a file named `EMA-Data.csv` onto the page before you run it, and ShareR will use yours in place of the sample.
-
-#### Keeping Your Results Reproducible
-
-Every time you run an analysis, ShareR saves a small summary file alongside your results. It records exactly what was run: the version of ShareR and of R, which exact version of the script ran, a fingerprint of each input file, which package versions were used, and how long each step took. Keep this file if you plan to report or publish your results, since it is your record of exactly how they were produced.
-
-
-### What Goes In and What Comes Out
-
-**What you can bring in**
-
-| Source | What it accepts | Notes |
-| --- | --- | --- |
-| A public GitHub repository | any file in the project | ShareR reads files directly from GitHub. Very large files, over 25 MB, are skipped with a warning. |
-| Files from your computer, dragged, dropped, or pasted | any file, including whole folders | Files up to 250 MB each, depending on how much space your browser has available. |
-
-Everything you add is placed into a private workspace inside your browser, in the same folder the script expects, so scripts behave the way they normally would. One thing to note: any dates or times the script generates use your computer's local time zone.
-
-**What you get out**
-
-| Output | Where to find it |
-| --- | --- |
-| A readable report | Shown right on the page, and available as a standalone file you can save |
-| Charts and plots | Shown in the report |
-| Any files the script creates | Listed individually, each with its own download button |
-| A live log of what happened | Shown on the page as it runs, and available to save afterward |
-| A record of exactly how the analysis was run | Saved as a small summary file |
-| Everything together | One download containing all of the above |
-
 
 ### Requirements and Configuration
 
@@ -127,8 +90,8 @@ Everything you add is placed into a private workspace inside your browser, in th
 | Parameter | Meaning | Default |
 | --- | --- | --- |
 | `repo` | `Owner/RepoName` of a public GitHub repository | none, which starts ShareR in upload mode |
-| `ref` | Branch, tag, or commit SHA. `branch` is accepted as an alias. | the repository's default branch |
-| `entry` | Path to the script to run | auto-detected |
+| `ref` | Branch, tag, or commit SHA. `branch` is accepted as an alias. | the repository's default branch (main) |
+| `entry` or `script` | Path to the script to run or the URL to the script (if not using GitHub) | auto-detected (when using GitHub) |
 | `autorun` | `1` to run automatically once preflight passes | `0` |
 
 **For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted on the same GitHub repo will be loaded automatically.
@@ -143,18 +106,15 @@ Everything you add is placed into a private workspace inside your browser, in th
 
 **What ShareR does reach out for:** when you point it at a GitHub repository, it does contact GitHub to fetch that repository's files, which means GitHub can see which project you're running, the same as it would if you visited that page in your browser. ShareR also downloads the R software itself the first time you use it. None of this ever includes your own data. If you'd rather ShareR make no outside requests at all, you can use it with files from your computer once the R software is already cached.
 
-**On compliance:** ShareR hasn't been formally reviewed or certified for any specific type of sensitive or regulated data. Please check with your IRB and with Michigan Medicine Information Assurance before using it with participant data, rather than relying on this page alone.
+**On compliance:** Always check with your IRB and your organization's cybersecurity or information assurance team before using this application with PHI or confidential data.
 
-**A note on running other people's code:** ShareR can open and run any public GitHub repository, not just ones from this Center. The code always runs safely inside your browser and can't reach the rest of your computer, but it can read any file you personally add to the page. If you point ShareR at a repository from an unfamiliar source, it will warn you first and ask you to confirm.
+**A note on running other people's code:** ShareR can open and run any public GitHub repository. The code always runs safely inside your browser and can't reach the rest of your computer, but it can read any file you personally add to the page.
 
 **Accessibility:** ShareR is built to work well with screen readers, keyboard-only navigation, and other assistive technology, aiming to meet the WCAG 2.2 AA accessibility standard.
 
 **A few things ShareR can't do yet:**
 
-+ Because of how it's hosted, a running analysis can't be interrupted partway through. Stopping it restarts the R engine instead. It's clearly labeled as such.
-+ ShareR can't produce a PDF or Word document, or recreate a report exactly pixel-for-pixel. It builds an equivalent, readable report instead.
-+ A few advanced R Markdown features aren't supported yet.
-+ Only R packages that have a browser-compatible version available can be used. If a script needs one that isn't available, ShareR will tell you before running anything.
++ Only R packages that have a browser-compatible version available can be used. If a script needs one that isn't available, ShareR will display an error message, but will give you the option to try running the script anyway without the missing packages.
 + Your browser has a limited amount of memory, so very large datasets combined with many packages may not fit.
 + Private (non-public) GitHub repositories aren't supported directly. Use the drag-and-drop upload option instead. ShareR never asks for, and never stores, any GitHub login or access credentials.
 
