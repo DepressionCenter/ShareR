@@ -1225,8 +1225,9 @@ const CONFIG = Object.freeze({
   // r-universe.dev repos serve an empty-but-200 PACKAGES index for most R versions, which broke
   // lookups for packages that installed fine from repo.r-wasm.org alone when merged up front.
   WEBR_FALLBACK_REPO_URLS: Object.freeze([
+    "https://code.depressioncenter.org/ShareR",
     "https://tidyverse.r-universe.dev",
-    "https://fstpackage.r-universe.dev" 
+    "https://fstpackage.r-universe.dev"
   ]),
   CHANNEL_TYPE:            "postmessage",
 
