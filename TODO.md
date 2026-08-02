@@ -138,7 +138,7 @@ Split deliberately so each sub-stage ends at a **manually verifiable running app
 
 ### Stage 2D - UI/UX Enhancement Pass
 
-Nine requested changes, sequenced so the highest-risk/most-foundational item (the editor rewrite) happens first — everything else that touches the same DOM (gutter markers, the script picker, panel resize) is then built once against the final structure instead of being redone.
+Ten requested changes, sequenced so the highest-risk/most-foundational item (the editor rewrite) happens first — everything else that touches the same DOM (gutter markers, the script picker, panel resize) is then built once against the final structure instead of being redone.
 
 Shared building blocks used by more than one sub-stage:
 - **Ghost icon-button CSS**, adapted from `c:\git\FieldStationAI\index.html:313-328` (`.msg-actions button` pattern: transparent background, low-opacity until hover/focus, circular hit target, `opacity` transition, revealed on container `:hover`/`:focus-within`). Define once as a reusable class (e.g. `.ghost-icon-btn` + a `.ghost-icon-btn-group` container), used by the per-plot download button (2D.4), the editor-header toolbar (2D.1/2D.2), and anywhere else an icon-only low-emphasis action is needed.
@@ -192,6 +192,8 @@ Touches `.plot-gallery-item` (`index.html:3138-3151`, CSS `index.html:753-760`) 
 
 **Done when:** every rendered plot has a small top-right icon-only button that downloads that exact plot as a standalone PNG.
 
+**STATUS: COMPLETE (2026-07-30).** Implemented as specified, with two adjustments made once it was visible in the running app: the download icon is a hand-authored inline SVG (`DOWNLOAD_ICON_SVG`), not a text glyph — the first attempt used a plain "⤓" character, which rendered too thin to read clearly at button size — via a shared `createPlotDownloadButton()` + widened `.ghost-icon-btn` (28px→34px, added border and maize hover fill). The same button was also added to each plot rendered inline in the **Report** tab (a new `.plot-inline-wrap` container), not just the Plots-tab gallery — not in the original 2D.4 scope, but requested once the Plots-tab version was working and the Report tab's plots were noticed to have none.
+
 #### 2D.5 - Output-file gutter icon jumps to its Report section
 
 Touches `renderChunkResult` (`index.html:3311-3358`, no `id` currently set on the chunk's wrapping `div`), `buildChunkAttributionMap` (referenced at `index.html:3622`), and `renderFilesTab`'s icon (`index.html:3194-3205`).
@@ -203,6 +205,8 @@ This turned out to be straightforward, not "non-trivial" — the reverse-directi
 3. In `renderFilesTab`, when `attribution.reportElementId` exists, make `iconEl` a real `<button>` (not a plain `<div>`) calling `jumpToOutput(0, attribution.reportElementId)`, keeping the existing tooltip text. Files with no chunk attribution (e.g. `run-manifest.json`) keep the icon non-interactive, as today.
 
 **Done when:** clicking a file's icon in the Files tab switches to the Report tab and scroll-and-flashes the chunk that produced it, mirroring the existing gutter-to-output jump in reverse.
+
+**STATUS: COMPLETE (2026-07-30).** Implemented as specified, plus two latent bugs found and fixed along the way — both real defects in shared code other `jumpToOutput` callers depend on too, not scoped to this feature alone: (1) `report-chunk-` ids were keyed only by chunk label, so a script with duplicate/default-named chunks collided and every file jumped to the *first* matching chunk — fixed by suffixing the id with the chunk's own `startLine`, mirroring the dedupe-slug pattern `buildReportTocAndNumbering` already uses for heading ids. (2) `jumpToOutput` could scroll to the wrong place (or leave the pane stuck at the top, unable to scroll further) when the target tab's zoom-frame height was stale from having been computed while that tab was hidden — its `ResizeObserver` never fires for a hidden element — fixed by forcing a synchronous height refresh immediately after `activateTab()`, before scrolling. Diagnosing this also surfaced a real, pre-existing, unrelated rendering gap noticed via the same EMA-CleanR test run (not originally scoped to 2D.5, fixed adjacent to it since it blocked verification): R's `results='asis'`-style HTML output (e.g. the `table1` package's printed tables) and raw HTML mixed with markdown directly in `.Rmd` prose were not rendering correctly. Fixed with a new `sanitizeRAsisHtml`/`runInlineMarkdownOverTextNodes` pair plus a `marked.use({ renderer: { html(token) {...} } })` override, which reproduces pandoc's own documented behavior (confirmed against pandoc's docs, not assumed): HTML tags pass through untouched, but the text between them still gets run through markdown.
 
 #### 2D.6 - Report/Plots tab export buttons: Web page, Word, Open Document, PowerPoint
 
@@ -244,6 +248,27 @@ Same pattern as 2D.8, three buttons:
 
 **Done when (2D.8 + 2D.9 together):** both fake rows appear above the real output files, visually distinguished as not-a-real-output-file, and all six buttons across the two rows work as specified.
 
+#### 2D.10 - Detect a script's own interactive-input calls and pre-fill them, unmodified
+
+**Non-negotiable constraint driving this whole sub-stage:** the researcher's script is never touched or required to follow a ShareR-specific convention — no new chunk option, no wrapper function, no `sharer::` package to import. ShareR only ever *parses what's already there*. This directly follows from the project's own reason for existing (run an unmodified repository) — see the "Removed from the spec as over-engineering" table earlier in this plan, `sharer.json`/`.sharerignore` row.
+
+Real, synchronous, mid-statement input (making R's own `readline()`/`menu()`/`browser()` actually block and wait) is confirmed **not possible** under the `PostMessage` channel ShareR uses — webR's own docs state plainly that these are unsupported on that channel. The only alternative, the `SharedArrayBuffer` channel, requires `crossOriginIsolated` (real `COOP`/`COEP` response headers), which GitHub Pages cannot serve natively; the only workaround is a Service Worker header-injection hack, which would mean reversing the Stage-2-revision decision to remove the service worker entirely (see the same "Removed from the spec" table, service worker row). Not pursued here.
+
+Instead: pause at the **chunk boundary** (which already exists as a natural pause point — one `shelter.captureR()` call per chunk), ask once before that chunk runs, and **rewrite the chunk's source text** to splice in the answer before executing it — the same "detect a call via regex, rewrite the chunk source, execute once" shape `disableMissingPackageLoadCalls` already uses for `library()`/`require()` calls, applied to a different set of calls.
+
+1. During the same per-chunk pre-scan pass that already runs `PLOT_CALL_RE`/`FILE_WRITE_CALL_RE` and the package-detection scan, comment-stripped the same way (`findCommentStart`), also scan for calls to `readline(`, `scan(`, `menu(`, `file.choose(`, `askYesNo(`.
+2. Extract each full call expression with the same balanced-paren matching (and the same documented limitation) `disableMissingPackageLoadCalls` already accepts: no string/comment awareness *inside* the parens, best-effort, not a real R parser.
+3. Best-effort label extraction per call: the first quoted-string-literal argument for `readline("...")`/`askYesNo("...")`; a literal `c("a", "b", ...)` of quoted strings parsed into real choices for `menu(...)`; no parsing needed for `file.choose()`. A call whose relevant argument isn't a static literal falls back to a generic "this chunk asks for input" label — the same class of best-effort fallback the plot/file gutter markers already use when a candidate line can't be matched confidently.
+4. One native `<dialog>` (reusing 2D.1's dialog infrastructure) per chunk, listing every call detected in that chunk with one labeled field each: text input for `readline`/`scan(character)`, a number input for `scan(numeric)`, a radio/select list built from `menu()`'s parsed choices, a real `<input type="file">` for `file.choose()` that stages the picked file into the VFS via the app's existing local-file-staging path (no second upload mechanism), and Yes/No/Cancel for `askYesNo()`. Every field has a visible Skip affordance.
+5. Rewrite the chunk's source by replacing each matched call expression with a properly R-quoted literal of the answer — via a small dedicated R-literal-quoting helper (escapes backslashes/quotes/newlines), never naive string concatenation, per `AGENTS.md` section 7. Skipped fields get exactly the value real, unmodified `Rscript` batch execution already produces for that call today: `""` for `readline`/`scan(character)`, `NA` for `scan(numeric)`/`askYesNo()`, `0` for `menu()` (R's own documented "user cancelled" return). `file.choose()` is replaced with the quoted staged file path.
+6. Execute the rewritten chunk exactly once — mirrors `disableMissingPackageLoadCalls`'s existing "one rewrite, one real execution" shape; the original, unrewritten text is never actually run.
+
+**Known limitations, stated plainly rather than glossed over:**
+- Detection is regex/paren-balance based, not a real parser: calls built indirectly (`fn <- readline; fn()`), or whose arguments aren't static literals, may be missed or fall back to a generic prompt.
+- One modal per chunk, not per statement: a chunk needing a *later* prompt computed from an *earlier* prompt's answer within the same chunk isn't supported — the researcher would need two chunks, which is a normal authoring choice already available to them, not something ShareR imposes.
+
+**Done when:** an unmodified script containing a real `readline("Enter your name: ")` (or `scan()`/`menu()`/`file.choose()`/`askYesNo()`) call — sourced from a repo the researcher never touched for ShareR — shows one modal before that chunk runs, and the chunk executes using either the entered value or R's own real batch-mode default when skipped.
+
 ---
 
 ### Stage 2E - Accessibility, Errors, and Documentation
@@ -258,7 +283,7 @@ Same pattern as 2D.8, three buttons:
 4. axe-core pass plus the manual checklist (keyboard, screen reader, 200 percent zoom, forced-colors) recorded in `docs/security-privacy-accessibility.md`. Per `AGENTS.md` section 11, record what was actually run; do not claim passes.
 5. Rewrite `README.md` from the EFDC template to match the as-built app, including the CORS limitation and the honest privacy language from spec 2.3.
 
-**Additional item picked up from Stage 2D:** explicitly re-verify keyboard operability and focus handling for the five new interactive components built in 2D (CM6 editor + maximize dialog, script-picker popover, workspace collapse/resize separator, per-plot ghost buttons, new file-row button sets) as part of the manual accessibility checklist in item 4 above — these are new enough that they shouldn't be assumed correct just because they reused native primitives (`<dialog>`, `popover`) elsewhere in this plan.
+**Additional item picked up from Stage 2D:** explicitly re-verify keyboard operability and focus handling for the six new interactive components built in 2D (CM6 editor + maximize dialog, script-picker popover, workspace collapse/resize separator, per-plot ghost buttons, new file-row button sets, the interactive-input dialog from 2D.10) as part of the manual accessibility checklist in item 4 above — these are new enough that they shouldn't be assumed correct just because they reused native primitives (`<dialog>`, `popover`) elsewhere in this plan.
 
 **Done when:** spec 15 items 14-22 pass and the README matches reality.
 
