@@ -3316,12 +3316,63 @@ function renderProseNode(node, container) {
   const safe = DOMPurify.sanitize(raw);
   const div = document.createElement("div");
   div.className = "prose-block";
-  // The one deliberate innerHTML assignment in this app: author-supplied .Rmd prose routinely
-  // contains raw HTML, and it is sanitized immediately above via DOMPurify (spec 0.1 and 8.3;
-  // AGENTS.md section 7). Never assign anything else in this file to innerHTML.
+  // One of the two deliberate innerHTML assignments in this app (the other is
+  // sanitizeRAsisHtml below): author-supplied .Rmd prose routinely contains raw HTML, and it is
+  // sanitized immediately above via DOMPurify (spec 0.1 and 8.3; AGENTS.md section 7). Never
+  // assign anything else in this file to innerHTML.
   div.innerHTML = safe;
   container.appendChild(div);
 }
+
+const ASIS_HTML_SKIP_TAGS = new Set(["SCRIPT", "STYLE", "PRE", "TEXTAREA"]);
+
+/* Parses an HTML fragment into a detached, inert <template> (never attached to the live document,
+   so nothing executes) and replaces every text node -- other than ones inside <script>/<style>/
+   <pre>/<textarea> -- with marked.parseInline() output, returning the reassembled (still
+   unsanitized) markup. Tags are left exactly as given; only the text between them is markdown-
+   processed. Shared by sanitizeRAsisHtml below and the marked HTML-block renderer override, since
+   both need the same "process the text, leave the tags" pass, just at different points in the
+   pipeline (a whole standalone fragment vs. one block token inside a larger parse). */
+function runInlineMarkdownOverTextNodes(htmlText) {
+  const template = document.createElement("template");
+  template.innerHTML = htmlText;
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT, {
+    acceptNode(textNode) {
+      for (let el = textNode.parentElement; el; el = el.parentElement) {
+        if (ASIS_HTML_SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+      }
+      return textNode.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+  const textNodes = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) textNodes.push(n);
+  for (const textNode of textNodes) {
+    const inlineTemplate = document.createElement("template");
+    inlineTemplate.innerHTML = marked.parseInline(textNode.nodeValue);
+    textNode.replaceWith(inlineTemplate.content);
+  }
+  return template.innerHTML;
+}
+
+/* R's autoprinted "asis" HTML (e.g. the table1 package's <table>) mixes literal tags with
+   markdown syntax the same way pandoc's own markdown reader does: pandoc passes HTML tags through
+   untouched but still runs its markdown inline parser over the text between them -- unlike
+   CommonMark parsers such as marked, which treat a whole raw HTML block as opaque by default. */
+function sanitizeRAsisHtml(text) {
+  return DOMPurify.sanitize(runInlineMarkdownOverTextNodes(text));
+}
+
+/* Prose written directly in the .Rmd body has the exact same gap when an author drops raw HTML
+   into markdown prose with markdown syntax still inside it (e.g. `<p><i>...[a link](url)...</i>
+   </p>` on its own line) -- marked's default `html` renderer returns a block-level HTML token's
+   text unchanged (see marked's own Renderer.html), so any markdown inside stays literal. This
+   override runs the same pass as sanitizeRAsisHtml on just that one token's text before marked
+   assembles the rest of the document, leaving normally-parsed markdown elsewhere untouched --
+   token.pre (the token sits inside an unclosed raw <pre>/<script>/etc. block) is passed through
+   verbatim, matching pandoc's own <script>/<style>/<pre>/<textarea> exception. */
+marked.use({ renderer: { html(token) {
+  return token.pre ? token.text : runInlineMarkdownOverTextNodes(token.text);
+} } });
 
 function renderSkippedEngineChunk(node, label, container) {
   const details = document.createElement("details");
@@ -3387,23 +3438,49 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
   const outWrap = document.createElement("div");
   outWrap.className = "chunk-output";
   let hasVisibleOutput = false;
-  for (const o of capture.output) {
-    if (o.type === "warning" && effectiveOptions.warning === false) continue;
-    if (o.type === "message" && effectiveOptions.message === false) continue;
-    if (o.type === "stdout" && effectiveOptions.results === "hide") continue;
-    const line = document.createElement("div");
-    const text = describeCondition(o);
-    // R print methods for table-like objects (e.g. the table1 package, kable(format="html"))
-    // autoprint a literal HTML fragment as stdout rather than a knitr `results='asis'` directive
-    // ShareR could special-case per chunk option -- textContent would otherwise dump the markup
-    // itself onto the page as visible text. Sanitized the same way prose HTML already is (spec
-    // 0.1, AGENTS.md section 7): this is the only other innerHTML assignment in the file.
-    const looksLikeHtmlFragment = o.type === "stdout" && typeof text === "string" && /^\s*<[a-z][\s\S]*>\s*$/i.test(text);
-    line.className = "chunk-output-line chunk-output-" + o.type + (looksLikeHtmlFragment ? " chunk-output-html" : "");
-    if (looksLikeHtmlFragment) line.innerHTML = DOMPurify.sanitize(text);
-    else line.textContent = text;
-    outWrap.appendChild(line);
-    hasVisibleOutput = true;
+  const visibleOutput = capture.output.filter((o) =>
+    !(o.type === "warning" && effectiveOptions.warning === false) &&
+    !(o.type === "message" && effectiveOptions.message === false) &&
+    !(o.type === "stdout" && effectiveOptions.results === "hide"));
+  for (let i = 0; i < visibleOutput.length; i++) {
+    const o = visibleOutput[i];
+    if (o.type !== "stdout") {
+      const line = document.createElement("div");
+      line.className = "chunk-output-line chunk-output-" + o.type;
+      line.textContent = describeCondition(o);
+      outWrap.appendChild(line);
+      hasVisibleOutput = true;
+      continue;
+    }
+    // webR's captureR delivers one stdout entry per console line write, not one per R print()/
+    // cat() call -- an autoprinted HTML table (e.g. the table1 package) therefore arrives as many
+    // separate entries, one of which can be a lone "</tr>" with no opening tag of its own. Judging
+    // HTML-ness one entry at a time misses that: the closing tag never matches on its own and
+    // leaks onto the page as literal text. Grouping the whole consecutive stdout run and judging
+    // the joined text fixes that, while plain multi-line text output still renders one line per
+    // div exactly as before.
+    let j = i;
+    const lines = [];
+    while (j < visibleOutput.length && visibleOutput[j].type === "stdout") { lines.push(describeCondition(visibleOutput[j])); j++; }
+    i = j - 1;
+    const joined = lines.join("\n");
+    const trimmed = joined.trim();
+    const looksLikeHtmlBlock = /^<[a-z]/i.test(trimmed) && trimmed.endsWith(">");
+    if (looksLikeHtmlBlock) {
+      const line = document.createElement("div");
+      line.className = "chunk-output-line chunk-output-stdout chunk-output-html";
+      line.innerHTML = sanitizeRAsisHtml(joined);
+      outWrap.appendChild(line);
+      hasVisibleOutput = true;
+    } else {
+      for (const text of lines) {
+        const line = document.createElement("div");
+        line.className = "chunk-output-line chunk-output-stdout";
+        line.textContent = text;
+        outWrap.appendChild(line);
+        hasVisibleOutput = true;
+      }
+    }
   }
   if (hasVisibleOutput) wrap.appendChild(outWrap);
 
