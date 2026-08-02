@@ -283,11 +283,85 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .panel-header h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
 
   .workspace-pane {
+    position: relative;
     flex: 1 1 280px;
     max-width: 320px;
     min-width: 260px;
     transition: max-width 0.2s ease;
   }
+  /* Collapsed size (width on desktop, height on mobile) is always pinned via matching inline
+     min/max styles from JS, never this class -- see setWorkspacePaneCollapsed. */
+  .workspace-pane.collapsed .panel-header,
+  .workspace-pane.collapsed .panel-scroll {
+    /* Also silences #staging-messages' aria-live region while collapsed -- accepted because
+       panel-scroll holds several interactive controls that a clip-based hide would leave
+       tabbable but invisible, a worse regression than a missed announcement. */
+    display: none;
+  }
+  /* The full-height strip is only the invisible drag hit-zone (grab anywhere along the edge);
+     the visible grip -- a short gray pill with darker dots -- is centered within it, so nothing
+     draws as a border/box down the whole side of the panel. */
+  .workspace-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .workspace-resize-handle .grip-pill {
+    pointer-events: none; /* purely decorative; clicks must reach the handle underneath */
+    width: 10px;
+    height: 72px;
+    border-radius: 5px;
+    background: var(--panel-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease;
+  }
+  .workspace-resize-handle .grip-pill svg { color: var(--um-dark-blue); }
+  .workspace-resize-handle:hover .grip-pill,
+  .workspace-resize-handle.dragging .grip-pill {
+    background: var(--um-medium-blue);
+  }
+  .workspace-resize-handle:focus-visible {
+    outline: 3px solid var(--um-medium-blue);
+    outline-offset: -3px; /* .panel has overflow:hidden; a positive offset would get clipped */
+  }
+  .workspace-resize-handle[aria-disabled="true"] { cursor: default; }
+  .workspace-resize-handle[aria-disabled="true"] .grip-pill { visibility: hidden; }
+  /* Reserves room so the header's own "Change script..." button never renders underneath the
+     collapse toggle below, which is positioned independently of header layout (it must survive
+     .panel-header being hidden on collapse, so it can't just be a normal header child). */
+  #workspace-pane .panel-header { padding-right: 40px; }
+  .workspace-collapse-btn {
+    position: absolute;
+    top: 8px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--panel-border);
+    border-radius: 50%;
+    background: var(--panel-bg);
+    color: var(--um-dark-blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .workspace-collapse-btn svg {
+    width: 12px;
+    height: 12px;
+    transition: transform 0.15s ease;
+  }
+  .workspace-collapse-btn svg.icon-flipped { transform: rotate(180deg); }
+  .workspace-collapse-btn:hover, .workspace-collapse-btn:focus-visible { background: var(--um-maize); }
   /* A flex column (not just an overflow wrapper) so .editor-container can claim the remaining
      space with flex:1; overflow-y:auto here is only a safety net for unusually tall content. */
   .panel-scroll {
@@ -380,13 +454,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
 
   .staging-messages { margin: 0.5rem 0 0; }
+  .staging-messages:empty { margin: 0; } /* no visible messages -- don't hold space open for them */
   .staging-msg { padding: 0.3rem 0.5rem; border-radius: 4px; margin-bottom: 0.3rem; font-size: 0.85rem; }
   .staging-msg-error { background-color: #fdecea; color: #7a1a12; border: 1px solid #e5a19a; }
   .staging-msg-warning { background-color: #fff6d9; color: #5c4600; border: 1px solid var(--um-maize); }
   .staging-msg-info { background-color: #eaf1fb; color: var(--um-dark-blue); border: 1px solid var(--um-medium-blue); }
 
   /* ---------- Workspace: Input Data carousel (ShareR-UI-Specification.md section 3) ---------- */
-  .section { padding: 0.75rem 1rem; border-bottom: 1px solid var(--panel-border); }
+  .section { padding: 0.35rem 1rem 0.75rem; border-bottom: 1px solid var(--panel-border); }
   .section-label-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.4rem; }
   .section-label {
     font-size: 0.75rem;
@@ -428,7 +503,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .data-icon { font-size: 1.25rem; line-height: 1; }
   .data-filename {
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     margin: 0.25rem 0 0.1rem;
     white-space: nowrap;
     overflow: hidden;
@@ -436,23 +511,19 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
   .data-status { font-size: 0.65rem; color: var(--text-muted); margin-bottom: 0.35rem; }
   .data-card-actions { display: flex; gap: 0.25rem; justify-content: center; }
-  .data-card-actions button { font-size: 0.65rem; padding: 2px 5px; }
+  .data-card-actions button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    width: 26px;
+    height: 26px;
+  }
 
   /* ---------- Source code editor: dark theme, gutter markers, safe token-based highlighting ----------
      Every line is built from createElement()/textContent/createTextNode calls only (see
      appendTokenizedLine()); author-controlled script text is never assigned via innerHTML
      (spec 0.1 / AGENTS.md section 7). */
-  .code-toggle-wrapper { padding: 0 1rem 0.5rem; }
-  .toggle-btn {
-    background: none;
-    border: none;
-    color: var(--um-medium-blue);
-    font-weight: 600;
-    font-size: 0.8rem;
-    cursor: pointer;
-    padding: 0.2rem 0;
-  }
-  .toggle-btn:hover, .toggle-btn:focus-visible { text-decoration: underline; }
 
   /* flex:1 (not a fixed max-height) lets this claim exactly the vertical space .panel-scroll has
      left, so .editor-body's own overflow is normally the only scrollbar in the whole pane -- see
@@ -976,6 +1047,69 @@ with this program. If not, see https://www.gnu.org/licenses/.
   @media (max-width: 900px) {
     main#main-content { flex-direction: column; }
     .workspace-pane { max-width: none; resize: vertical; }
+    /* Stacked panels have no natural height cap otherwise, so panel-scroll's overflow-y:auto
+       never actually kicks in -- each panel just grows to fit all of its content instead of
+       scrolling internally. */
+    .workspace-pane, .results-pane { max-height: 100vh; }
+    /* The source editor is always shown once a script is staged (no more show/hide toggle), so
+       the pane needs a standing floor here, not a toggle-triggered one: .editor-container relies
+       on flex:1/min-height:0 to claim whatever height .panel-scroll has left, which only resolves
+       to something visible if the whole ancestor chain has a real height -- on the stacked mobile
+       layout that chain is otherwise just a plain (and, per the note above, likely first-layout-
+       frozen) flex-basis/flex-grow share of #main-content. A static rule is safe here (unlike a
+       later class/inline change) since it's part of the very first layout, not a change to it. */
+    .workspace-pane:not(.collapsed) { min-height: 60vh; }
+    /* Horizontal drag-resize is desktop-only (see initWorkspacePaneCollapseAndResize); the
+       vertical axis here is covered by the native resize:vertical grip above instead. */
+    .workspace-resize-handle { display: none; }
+    /* Collapsing shrinks height here, not width, so the chevron should point up/down rather than
+       the desktop left/right -- same base icon, rotated an extra quarter-turn (composed with
+       icon-flipped's own 180deg, not stacked as a separate transform, since only one transform
+       declaration ever applies). */
+    .workspace-collapse-btn svg { transform: rotate(90deg); }
+    .workspace-collapse-btn svg.icon-flipped { transform: rotate(270deg); }
+
+    /* Header: drop the tagline and the repo-name label entirely -- there's no room for branding
+       plus the action buttons at this width otherwise. */
+    header.app-header { padding: 0.4rem 0.75rem; gap: 0.4rem; }
+    header.app-header h1 { font-size: 1rem; }
+    .header-source-badge { font-size: 0.8rem; }
+    .slogan, .header-center-label { display: none; }
+
+    /* Icon-only buttons: the visible label is dropped, but each button still carries an
+       aria-label (kept in sync with any dynamic state, e.g. downloadResultsZip's "Building
+       ZIP..." text) so its accessible name survives the text being hidden here. */
+    #run-button .btn-text,
+    #stop-button .btn-text,
+    #print-results-button .btn-text,
+    #download-zip-button .btn-text {
+      display: none;
+    }
+    /* Shrinks the button box around each icon (padding only -- the play/stop glyphs themselves
+       keep their own explicit 14px size) and the GitHub mark, which at its default 26px otherwise
+       dwarfs the 14px play/stop icons next to it once their button padding is this tight. */
+    #run-button, #stop-button { padding: 5px 8px; }
+    .github-link svg { width: 18px; height: 18px; }
+
+    /* Clip-hidden (not display:none) rather than a plain class swap, so the <select> it labels
+       keeps a real accessible name for screen reader users even though the text isn't shown. */
+    .mobile-sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* Footer: smaller still than the existing 0.7rem base, and the GitHub link's label text
+       drops in favor of just the icon (the link's own aria-label above covers the accessible
+       name). */
+    footer.app-footer { font-size: 0.6rem; }
+    .footer-github-text { display: none; }
   }
 </style>
 </head>
@@ -992,8 +1126,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
   </div>
   <div id="header-center-label" class="header-center-label" aria-hidden="true"></div>
   <div class="header-right">
-    <button id="run-button" type="button" class="btn btn-primary" disabled><span aria-hidden="true">&#9654;</span> Run</button>
-    <button id="stop-button" type="button" class="btn btn-secondary" disabled>Stop and reset R</button>
+    <button id="run-button" type="button" class="btn btn-primary" disabled aria-label="Run" title="Run">
+      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11l9-5.5-9-5.5z"></path></svg></span>
+      <span class="btn-text">Run</span>
+    </button>
+    <button id="stop-button" type="button" class="btn btn-secondary" disabled aria-label="Stop and reset R" title="Stop and reset R">
+      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><rect x="3" y="3" width="10" height="10" rx="1"></rect></svg></span>
+      <span class="btn-text">Stop</span>
+    </button>
     <a class="github-link" href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener"
       aria-label="View ShareR source code on GitHub">
       <svg height="26" viewBox="0 0 16 16" width="26" fill="currentColor" aria-hidden="true" focusable="false">
@@ -1041,22 +1181,37 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </div>
 
       <div class="field" id="entry-select-field" hidden>
-        <label for="entry-select">Script to run</label>
+        <label for="entry-select" class="mobile-sr-only">Script to run</label>
         <select id="entry-select"></select>
       </div>
 
-      <div class="code-toggle-wrapper">
-        <button type="button" id="source-toggle-button" class="toggle-btn" aria-expanded="false"
-          aria-controls="source-editor" hidden>
-          <span id="source-toggle-icon" aria-hidden="true">&#9656;</span><span id="source-toggle-label"> Show Source Code</span>
-        </button>
-      </div>
       <div id="source-editor" class="editor-container" hidden>
         <div id="source-viewer-filename" class="editor-header"></div>
         <div id="source-code-lines" class="editor-body"></div>
       </div>
 
     </div>
+    <div class="workspace-resize-handle" id="workspace-resize-handle"
+      role="separator" aria-orientation="vertical" tabindex="0"
+      aria-controls="workspace-pane" aria-label="Resize workspace panel" aria-valuemin="260">
+      <div class="grip-pill">
+        <svg height="40" viewBox="0 0 6 42" width="6" fill="currentColor" aria-hidden="true" focusable="false">
+          <circle cx="1.5" cy="3" r="1"></circle><circle cx="4.5" cy="3" r="1"></circle>
+          <circle cx="1.5" cy="9" r="1"></circle><circle cx="4.5" cy="9" r="1"></circle>
+          <circle cx="1.5" cy="15" r="1"></circle><circle cx="4.5" cy="15" r="1"></circle>
+          <circle cx="1.5" cy="21" r="1"></circle><circle cx="4.5" cy="21" r="1"></circle>
+          <circle cx="1.5" cy="27" r="1"></circle><circle cx="4.5" cy="27" r="1"></circle>
+          <circle cx="1.5" cy="33" r="1"></circle><circle cx="4.5" cy="33" r="1"></circle>
+          <circle cx="1.5" cy="39" r="1"></circle><circle cx="4.5" cy="39" r="1"></circle>
+        </svg>
+      </div>
+    </div>
+    <button type="button" id="workspace-collapse-toggle" class="workspace-collapse-btn"
+      aria-expanded="true" aria-label="Collapse workspace panel" title="Collapse panel">
+      <svg height="12" viewBox="0 0 16 16" width="12" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"></path>
+      </svg>
+    </button>
   </section>
 
   <section class="panel results-pane" aria-label="Results">
@@ -1067,10 +1222,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" role="tab" id="tab-files-btn" aria-selected="false" aria-controls="tab-files-panel" tabindex="-1">Files</button>
       </div>
       <div class="results-actions">
-        <button type="button" id="print-results-button" class="btn btn-secondary btn-sm">
+        <button type="button" id="print-results-button" class="btn btn-secondary btn-sm" aria-label="Print" title="Print">
           <span class="btn-icon" aria-hidden="true">🖨️</span><span class="btn-text">Print</span>
         </button>
-        <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled>
+        <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled aria-label="Download all as ZIP" title="Download all as ZIP">
           <span class="btn-icon" aria-hidden="true">⤓</span><span class="btn-text">Download all (.zip)</span>
         </button>
       </div>
@@ -1193,11 +1348,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
     <span class="footer-divider" aria-hidden="true">|</span>
     <a href="https://depressioncenter.org" target="_blank" rel="noopener">Eisenberg Family Depression Center</a>
     <span class="footer-divider" aria-hidden="true">|</span>
-    <a href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener">
+    <a href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener" aria-label="View ShareR source code on GitHub">
       <svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false">
         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
       </svg>
-      View Code on GitHub
+      <span class="footer-github-text">View Code on GitHub</span>
     </a>
   </div>
   <div class="print-footer-copyright" aria-hidden="true" style="display:none;">
@@ -1269,7 +1424,15 @@ const CONFIG = Object.freeze({
   ZOOM_DEFAULT_NARROW:     1.0,
   ZOOM_STEP:               0.05,
   ZOOM_MIN:                0.25,
-  ZOOM_MAX:                2.0
+  ZOOM_MAX:                2.0,
+
+  // Mirrors the @media (max-width: 900px) breakpoint and .workspace-pane's base min-width in
+  // the stylesheet -- duplicated here since a CSS media query can't reference a JS constant.
+  MOBILE_BREAKPOINT_PX:              900,
+  WORKSPACE_PANE_MIN_WIDTH_PX:       260,
+  WORKSPACE_PANE_MAX_WIDTH_PCT:      0.7,
+  WORKSPACE_PANE_COLLAPSED_THICKNESS_PX: 32,
+  WORKSPACE_PANE_KEY_STEP_PX:        20
 });
 
 /* ### Errors ### */
@@ -2459,7 +2622,11 @@ const App = {
   installStreamActive: false,
   executionLogLines: [],
   reportZoom: 1,
-  reportZoomManuallySet: false
+  reportZoomManuallySet: false,
+  workspacePaneCollapsed: false,
+  workspacePaneExpandedWidth: null, // {maxWidth, minWidth} in effect right before collapsing (desktop)
+  workspacePaneExpandedHeight: null, // {maxHeight, minHeight} in effect right before collapsing (mobile)
+  workspacePaneMobileLayout: false // true when the stacked (<=900px) column layout is active
 };
 
 function decodeUtf8(bytes) {
@@ -3158,6 +3325,20 @@ const DOWNLOAD_ICON_SVG =
   '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
   '<path d="M8 1a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V1.75A.75.75 0 0 1 8 1Z"/>' +
   '<path d="M2.75 12.5a.75.75 0 0 1 .75.75v.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-.5a.75.75 0 0 1 .75-.75Z"/>' +
+  '</svg>';
+
+// An upload-into-tray glyph (mirrors DOWNLOAD_ICON_SVG's shape) for "replace with a local file".
+const REPLACE_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path d="M8 2 11.5 6.5 9 6.5 9 10.5 7 10.5 7 6.5 4.5 6.5Z"/>' +
+  '<rect x="3" y="12.5" width="10" height="1.5" rx="0.5"/>' +
+  '</svg>';
+
+const REMOVE_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<rect x="6" y="1.5" width="4" height="1.5" rx="0.5"/>' +
+  '<rect x="3" y="4" width="10" height="1.5" rx="0.5"/>' +
+  '<path d="M4.3 6 11.7 6 10.9 14 5.1 14Z"/>' +
   '</svg>';
 
 /* Shared by every "download this plot as PNG" affordance (Plots tab gallery card, inline plot in
@@ -3891,6 +4072,10 @@ async function downloadResultsZip() {
   const zipButtonLabel = elDownloadZipButton.querySelector(".btn-text");
   const previousLabel = zipButtonLabel.textContent;
   zipButtonLabel.textContent = "Building ZIP...";
+  // aria-label overrides the button's text content for its accessible name (needed so the name
+  // survives .btn-text being hidden on narrow screens), so it must be kept in sync by hand here
+  // rather than just relying on the visible text change above.
+  elDownloadZipButton.setAttribute("aria-label", "Building ZIP");
   try {
     const info = App.lastRunInfo;
     const entries = [];
@@ -3911,6 +4096,7 @@ async function downloadResultsZip() {
   } finally {
     elDownloadZipButton.disabled = false;
     zipButtonLabel.textContent = previousLabel;
+    elDownloadZipButton.setAttribute("aria-label", "Download all as ZIP");
   }
 }
 
@@ -4092,10 +4278,10 @@ const elLog = document.getElementById("output-log");
 const elHeaderCenterLabel = document.getElementById("header-center-label");
 const elWorkspacePane = document.getElementById("workspace-pane");
 const elWorkspaceEmptyState = document.getElementById("workspace-empty-state");
+const elMainContent = document.getElementById("main-content");
+const elWorkspaceResizeHandle = document.getElementById("workspace-resize-handle");
+const elWorkspaceCollapseToggle = document.getElementById("workspace-collapse-toggle");
 const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empty-button");
-const elSourceToggleButton = document.getElementById("source-toggle-button");
-const elSourceToggleIcon = document.getElementById("source-toggle-icon");
-const elSourceToggleLabel = document.getElementById("source-toggle-label");
 const elSourceEditor = document.getElementById("source-editor");
 const elSourceViewerFilename = document.getElementById("source-viewer-filename");
 const elSourceCodeLines = document.getElementById("source-code-lines");
@@ -4262,14 +4448,16 @@ function renderStagedFiles() {
     const replaceBtn = document.createElement("button");
     replaceBtn.type = "button";
     replaceBtn.className = "btn btn-secondary btn-sm";
-    replaceBtn.textContent = "Replace";
+    replaceBtn.innerHTML = REPLACE_ICON_SVG;
     replaceBtn.setAttribute("aria-label", "Replace " + f.path + " with a file from your computer");
+    replaceBtn.title = "Replace " + f.path;
     replaceBtn.addEventListener("click", () => replaceStagedFile(f.path));
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-sm";
-    removeBtn.textContent = "Remove";
+    removeBtn.innerHTML = REMOVE_ICON_SVG;
     removeBtn.setAttribute("aria-label", "Remove " + f.path);
+    removeBtn.title = "Remove " + f.path;
     removeBtn.addEventListener("click", () => { App.stagedStore.remove(f.path); updateSelectedEntry(); });
     actions.append(replaceBtn, removeBtn);
     li.append(icon, name, status, actions);
@@ -4389,18 +4577,18 @@ function appendTokenizedLine(container, line) {
 
 /* Fills the source-code editor from the selected entry's decoded bytes: one .code-line row per
    line, each with a gutter (marker slot + line number) and a tokenized .code-text cell, matching
-   ShareR-UI-Specification.md section 3. Toggle open/closed state is left alone here so switching
-   which script is selected doesn't collapse an editor the researcher already opened. */
+   ShareR-UI-Specification.md section 3. Always shown once a script is staged -- there's nothing
+   else competing for the workspace pane's remaining vertical space, so there's no reason to make
+   viewing the code an extra click. */
 function renderSourceViewer() {
   elSourceCodeLines.innerHTML = "";
   elSourceViewerFilename.textContent = "";
   const staged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
   if (!staged) {
-    elSourceToggleButton.hidden = true;
     elSourceEditor.hidden = true;
     return;
   }
-  elSourceToggleButton.hidden = false;
+  elSourceEditor.hidden = false;
   elSourceViewerFilename.textContent = staged.path;
   const text = decodeUtf8(staged.bytes);
   const frag = document.createDocumentFragment();
@@ -4709,21 +4897,127 @@ function expandExecutionLog() {
   elConsoleToggleButton.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-/* Show/Hide Source Code toggle button (ShareR-UI-Specification.md section 3): a plain button
-   with aria-expanded, not a <details> element, so its label text can read "Show"/"Hide" exactly
-   like the mockup. Also widens the workspace pane toward 40% while the editor is open --
-   deliberately set as an inline style, not toggled via a CSS class: Chromium freezes a
-   `resize`-enabled flex item's max-width the first time it is laid out, so a later class-driven
-   stylesheet change to max-width is silently ignored on the resize axis. Direct inline style
-   assignment is what the mockup itself does, and is what actually takes effect here too. */
-function initSourceToggle() {
-  elSourceToggleButton.addEventListener("click", () => {
-    const opening = elSourceEditor.hidden;
-    elSourceEditor.hidden = !opening;
-    elSourceToggleButton.setAttribute("aria-expanded", opening ? "true" : "false");
-    elSourceToggleIcon.textContent = String.fromCharCode(opening ? 0x25BE : 0x25B8);
-    elSourceToggleLabel.textContent = opening ? " Hide Source Code" : " Show Source Code";
-    elWorkspacePane.style.maxWidth = opening ? "40%" : "";
+function updateWorkspaceSeparatorAria() {
+  const px = Math.round(elWorkspacePane.getBoundingClientRect().width);
+  elWorkspaceResizeHandle.setAttribute("aria-valuenow", String(px));
+  elWorkspaceResizeHandle.setAttribute("aria-valuetext", px + "px");
+}
+
+/* Collapsing always pins the matching min/max pair to the same value (never just one side, and
+   never via the .collapsed class alone): a lone max constrains the flex algorithm's result only
+   if that result would have been larger anyway, it can't force a SMALLER size than flex:1's own
+   share of the row would naturally give the pane, and a lone class-driven min/max risks Chromium
+   freezing a resize-enabled flex item's size the first time it's laid out, silently ignoring a
+   later class-driven stylesheet change on the resize axis (inline style assignment isn't subject
+   to this and is what actually takes effect). Desktop collapses width (the row axis); the mobile
+   column layout collapses height instead, since panels stack there. */
+function setWorkspacePaneCollapsed(collapsed) {
+  if (collapsed === App.workspacePaneCollapsed) return;
+  App.workspacePaneCollapsed = collapsed;
+  elWorkspacePane.classList.toggle("collapsed", collapsed);
+  elWorkspaceCollapseToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  elWorkspaceCollapseToggle.setAttribute("aria-label", collapsed ? "Expand workspace panel" : "Collapse workspace panel");
+  elWorkspaceCollapseToggle.title = collapsed ? "Expand panel" : "Collapse panel";
+  elWorkspaceCollapseToggle.querySelector("svg").classList.toggle("icon-flipped", collapsed);
+  elWorkspaceResizeHandle.setAttribute("aria-disabled", collapsed ? "true" : "false");
+  if (App.workspacePaneMobileLayout) {
+    if (collapsed) {
+      App.workspacePaneExpandedHeight = { maxHeight: elWorkspacePane.style.maxHeight, minHeight: elWorkspacePane.style.minHeight };
+      const px = CONFIG.WORKSPACE_PANE_COLLAPSED_THICKNESS_PX + "px";
+      elWorkspacePane.style.maxHeight = px;
+      elWorkspacePane.style.minHeight = px;
+    } else {
+      const restore = App.workspacePaneExpandedHeight || { maxHeight: "", minHeight: "" };
+      elWorkspacePane.style.maxHeight = restore.maxHeight;
+      elWorkspacePane.style.minHeight = restore.minHeight;
+    }
+  } else {
+    if (collapsed) {
+      App.workspacePaneExpandedWidth = { maxWidth: elWorkspacePane.style.maxWidth, minWidth: elWorkspacePane.style.minWidth };
+      const px = CONFIG.WORKSPACE_PANE_COLLAPSED_THICKNESS_PX + "px";
+      elWorkspacePane.style.maxWidth = px;
+      elWorkspacePane.style.minWidth = px;
+    } else {
+      const restore = App.workspacePaneExpandedWidth || { maxWidth: "", minWidth: "" };
+      elWorkspacePane.style.maxWidth = restore.maxWidth;
+      elWorkspacePane.style.minWidth = restore.minWidth;
+    }
+  }
+  updateWorkspaceSeparatorAria();
+}
+
+/* max-width alone is a ceiling, not a target: it only clamps the flex algorithm's own computed
+   size DOWN, it can never pull the pane WIDER than what flex:1 vs .results-pane's flex:2 would
+   naturally resolve to (well under half the container). Pinning min-width to the same value
+   forces an exact width regardless of the flex-grow ratio. */
+function setWorkspacePaneWidthPx(px, maxAllowedPx) {
+  const clamped = Math.min(maxAllowedPx, Math.max(CONFIG.WORKSPACE_PANE_MIN_WIDTH_PX, px));
+  elWorkspacePane.style.maxWidth = clamped + "px";
+  elWorkspacePane.style.minWidth = clamped + "px";
+  elWorkspaceResizeHandle.setAttribute("aria-valuemax", String(Math.round(maxAllowedPx)));
+  updateWorkspaceSeparatorAria();
+}
+
+/* Pointer-drag and keyboard resize are only wired above the mobile breakpoint, checked once here
+   (not a live resize listener) -- below it, the pane's native resize:vertical CSS handles the
+   stacked mobile layout's (different, vertical) resize axis instead. */
+function initWorkspacePaneCollapseAndResize() {
+  const isMobile = window.matchMedia("(max-width: " + CONFIG.MOBILE_BREAKPOINT_PX + "px)").matches;
+  App.workspacePaneMobileLayout = isMobile;
+  updateWorkspaceSeparatorAria();
+
+  elWorkspaceCollapseToggle.addEventListener("click", () => {
+    setWorkspacePaneCollapsed(!App.workspacePaneCollapsed);
+  });
+
+  if (isMobile) {
+    setWorkspacePaneCollapsed(true);
+    return;
+  }
+
+  let dragging = false;
+  let startX = 0;
+  let startWidthPx = 0;
+  let maxAllowedPx = 0;
+
+  function onPointerMove(e) {
+    if (!dragging) return;
+    setWorkspacePaneWidthPx(startWidthPx + (e.clientX - startX), maxAllowedPx);
+  }
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    elWorkspacePane.style.transition = "";
+    elWorkspaceResizeHandle.classList.remove("dragging");
+    document.removeEventListener("pointermove", onPointerMove);
+    document.removeEventListener("pointerup", endDrag);
+    document.removeEventListener("pointercancel", endDrag);
+    window.removeEventListener("blur", endDrag);
+  }
+
+  elWorkspaceResizeHandle.addEventListener("pointerdown", (e) => {
+    if (App.workspacePaneCollapsed) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragging = true;
+    startX = e.clientX;
+    startWidthPx = elWorkspacePane.getBoundingClientRect().width;
+    maxAllowedPx = elMainContent.clientWidth * CONFIG.WORKSPACE_PANE_MAX_WIDTH_PCT;
+    elWorkspacePane.style.transition = "none"; // live drag must track the pointer 1:1, not ease
+    elWorkspaceResizeHandle.classList.add("dragging");
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+    window.addEventListener("blur", endDrag);
+  });
+
+  elWorkspaceResizeHandle.addEventListener("keydown", (e) => {
+    if (App.workspacePaneCollapsed) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const current = elWorkspacePane.getBoundingClientRect().width;
+    const step = e.key === "ArrowRight" ? CONFIG.WORKSPACE_PANE_KEY_STEP_PX : -CONFIG.WORKSPACE_PANE_KEY_STEP_PX;
+    const stepMaxAllowedPx = elMainContent.clientWidth * CONFIG.WORKSPACE_PANE_MAX_WIDTH_PCT;
+    setWorkspacePaneWidthPx(current + step, stepMaxAllowedPx);
   });
 }
 
@@ -4899,8 +5193,8 @@ elDownloadZipButton.addEventListener("click", downloadResultsZip);
 function bootstrap() {
   initResultsTabs();
   initConsoleToggle();
-  initSourceToggle();
   initZoomControl();
+  initWorkspacePaneCollapseAndResize();
 
   const missingLibs = checkJsDependenciesLoaded();
   if (missingLibs.length) {
