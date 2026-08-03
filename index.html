@@ -262,7 +262,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
   main#main-content {
     flex: 1;
     display: flex;
-    gap: 1rem;
+    gap: 0; /* desktop spacing between the two panes now comes from .workspace-resize-handle's own
+               margin, since the handle is a real flex item sitting in that gap -- restored to 1rem
+               for the stacked mobile layout below, where there's no handle to supply it. */
     padding: 1rem 1rem 0.35rem;
     min-height: 0;
     align-items: stretch;
@@ -303,15 +305,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
        tabbable but invisible, a worse regression than a missed announcement. */
     display: none;
   }
-  /* The full-height strip is only the invisible drag hit-zone (grab anywhere along the edge);
-     the visible grip -- a short gray pill with darker dots -- is centered within it, so nothing
-     draws as a border/box down the whole side of the panel. */
+  /* A real flex item sitting between .workspace-pane and .results-pane (not an absolutely-
+     positioned overlay on the workspace pane's own edge), so the drag strip -- and its scrollbar
+     clearance -- sit in the actual seam between the two panes rather than over either pane's
+     content. The full-height strip itself is only the invisible drag hit-zone (grab anywhere along
+     the seam); the visible grip -- a short gray pill with darker dots -- is centered within it, so
+     nothing draws as a border/box down the whole height of the layout. */
   .workspace-resize-handle {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 14px;
+    flex: 0 0 14px;
+    align-self: stretch;
+    margin: 0 0.15rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -336,7 +339,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
   .workspace-resize-handle:focus-visible {
     outline: 3px solid var(--um-medium-blue);
-    outline-offset: -3px; /* .panel has overflow:hidden; a positive offset would get clipped */
+    outline-offset: -3px; /* inset so the outline stays inside the handle's own 14px hit-zone */
   }
   .workspace-resize-handle[aria-disabled="true"] { cursor: default; }
   .workspace-resize-handle[aria-disabled="true"] .grip-pill { visibility: hidden; }
@@ -541,7 +544,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     flex-direction: column;
     background: var(--source-bg);
     color: var(--source-fg);
-    margin: 0 1rem 0.75rem;
+    margin: 0.5rem;
     border-radius: 4px;
     overflow: hidden;
     flex: 1;
@@ -563,10 +566,70 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .editor-header-filename {
     flex: 1;
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .editor-header-filename:hover .editor-header-filename-text { text-decoration: underline; }
+  .editor-header-filename:focus-visible { outline: 2px solid var(--um-maize); outline-offset: 1px; border-radius: 3px; }
+  .editor-header-filename-text {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .editor-header-filename-chevron { flex: 0 0 auto; opacity: 0.8; transition: transform 0.15s ease; }
+  .editor-header-filename[aria-expanded="true"] .editor-header-filename-chevron { transform: rotate(180deg); }
+
+  /* Script picker popover (Stage 2D.2): native [popover] gives light-dismiss/Escape for free, so
+     this only needs to own its own look plus JS-computed position (anchored under the trigger
+     button via getBoundingClientRect -- CSS anchor positioning isn't reliable enough across
+     browsers yet to depend on for this). Dark palette matches .editor-header, the toolbar it
+     hangs off of, rather than the app's light UM theme. */
+  .script-picker-popover {
+    position: fixed;
+    margin: 0;
+    padding: 0.35rem;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: #252526;
+    color: #d4d4d4;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.8rem;
+    overflow: auto;
+  }
+  .script-picker-list { list-style: none; margin: 0; padding-left: 0.9rem; }
+  .script-picker-tree > .script-picker-list { padding-left: 0; }
+  .script-picker-folder {
+    padding: 0.2rem 0.4rem;
+    color: #9cdcfe;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  .script-picker-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: inherit;
+    padding: 0.3rem 0.5rem;
+    cursor: pointer;
+    font: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .script-picker-item:hover { background: rgba(255, 255, 255, 0.1); }
+  .script-picker-item:focus-visible { outline: 2px solid var(--um-maize); outline-offset: -2px; }
   .editor-header-actions { display: flex; gap: 0.25rem; flex: 0 0 auto; }
   /* .ghost-icon-btn's base rule (below) is written for a single absolutely-positioned corner
      button over a hover-card; this context-scoped override adapts the same shape/hover behavior
@@ -1151,7 +1214,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .workspace-empty-state .btn { margin-top: 0.3rem; }
 
   @media (max-width: 900px) {
-    main#main-content { flex-direction: column; }
+    main#main-content { flex-direction: column; gap: 1rem; }
     .workspace-pane { max-width: none; resize: vertical; }
     /* Stacked panels have no natural height cap otherwise, so panel-scroll's overflow-y:auto
        never actually kicks in -- each panel just grows to fit all of its content instead of
@@ -1196,20 +1259,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
        dwarfs the 14px play/stop icons next to it once their button padding is this tight. */
     #run-button, #stop-button { padding: 5px 8px; }
     .github-link svg { width: 18px; height: 18px; }
-
-    /* Clip-hidden (not display:none) rather than a plain class swap, so the <select> it labels
-       keeps a real accessible name for screen reader users even though the text isn't shown. */
-    .mobile-sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
 
     /* Footer: smaller still than the existing 0.7rem base, and the GitHub link's label text
        drops in favor of just the icon (the link's own aria-label above covers the accessible
@@ -1286,17 +1335,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <ul id="data-file-carousel" class="file-carousel" aria-labelledby="input-data-label"></ul>
       </div>
 
-      <div class="field" id="entry-select-field" hidden>
-        <label for="entry-select" class="mobile-sr-only">Script to run</label>
-        <select id="entry-select"></select>
-      </div>
-
       <div id="source-editor" class="editor-container" hidden>
         <div class="editor-header">
-          <!-- Plain text for now, not a <button> -- Stage 2D.2 converts this into the real
-               script-picker popover trigger (aria-haspopup etc.); until that behavior exists, a
-               clickable-looking control here would be a false affordance. -->
-          <div id="source-viewer-filename" class="editor-header-filename"></div>
+          <button type="button" id="source-viewer-filename" class="editor-header-filename"
+            popovertarget="script-picker-popover" aria-haspopup="true" aria-expanded="false">
+            <span id="source-viewer-filename-text" class="editor-header-filename-text"></span>
+            <svg class="editor-header-filename-chevron" viewBox="0 0 16 16" width="12" height="12"
+              fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4.5 6 8 9.5 11.5 6"></path>
+            </svg>
+          </button>
           <div class="editor-header-actions">
             <button type="button" id="source-download-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Download script" title="Download script"></button>
             <button type="button" id="source-maximize-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Maximize editor" title="Maximize"></button>
@@ -1305,21 +1354,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <div id="source-code-lines" class="editor-body"></div>
       </div>
 
-    </div>
-    <div class="workspace-resize-handle" id="workspace-resize-handle"
-      role="separator" aria-orientation="vertical" tabindex="0"
-      aria-controls="workspace-pane" aria-label="Resize workspace panel" aria-valuemin="260">
-      <div class="grip-pill">
-        <svg height="40" viewBox="0 0 6 42" width="6" fill="currentColor" aria-hidden="true" focusable="false">
-          <circle cx="1.5" cy="3" r="1"></circle><circle cx="4.5" cy="3" r="1"></circle>
-          <circle cx="1.5" cy="9" r="1"></circle><circle cx="4.5" cy="9" r="1"></circle>
-          <circle cx="1.5" cy="15" r="1"></circle><circle cx="4.5" cy="15" r="1"></circle>
-          <circle cx="1.5" cy="21" r="1"></circle><circle cx="4.5" cy="21" r="1"></circle>
-          <circle cx="1.5" cy="27" r="1"></circle><circle cx="4.5" cy="27" r="1"></circle>
-          <circle cx="1.5" cy="33" r="1"></circle><circle cx="4.5" cy="33" r="1"></circle>
-          <circle cx="1.5" cy="39" r="1"></circle><circle cx="4.5" cy="39" r="1"></circle>
-        </svg>
+      <div id="script-picker-popover" popover class="script-picker-popover" aria-label="Choose script to run">
+        <div id="script-picker-tree" class="script-picker-tree"></div>
       </div>
+
     </div>
     <button type="button" id="workspace-collapse-toggle" class="workspace-collapse-btn"
       aria-expanded="true" aria-label="Collapse workspace panel" title="Collapse panel">
@@ -1328,6 +1366,22 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </svg>
     </button>
   </section>
+
+  <div class="workspace-resize-handle" id="workspace-resize-handle"
+    role="separator" aria-orientation="vertical" tabindex="0"
+    aria-controls="workspace-pane" aria-label="Resize workspace panel" aria-valuemin="260">
+    <div class="grip-pill">
+      <svg height="40" viewBox="0 0 6 42" width="6" fill="currentColor" aria-hidden="true" focusable="false">
+        <circle cx="1.5" cy="3" r="1"></circle><circle cx="4.5" cy="3" r="1"></circle>
+        <circle cx="1.5" cy="9" r="1"></circle><circle cx="4.5" cy="9" r="1"></circle>
+        <circle cx="1.5" cy="15" r="1"></circle><circle cx="4.5" cy="15" r="1"></circle>
+        <circle cx="1.5" cy="21" r="1"></circle><circle cx="4.5" cy="21" r="1"></circle>
+        <circle cx="1.5" cy="27" r="1"></circle><circle cx="4.5" cy="27" r="1"></circle>
+        <circle cx="1.5" cy="33" r="1"></circle><circle cx="4.5" cy="33" r="1"></circle>
+        <circle cx="1.5" cy="39" r="1"></circle><circle cx="4.5" cy="39" r="1"></circle>
+      </svg>
+    </div>
+  </div>
 
   <section class="panel results-pane" aria-label="Results">
     <div class="results-tabs-row">
@@ -4482,8 +4536,8 @@ const elEntryCandidates = document.getElementById("entry-candidates");
 const elEntryCandidatesList = document.getElementById("entry-candidates-list");
 const elChooseEntryButton = document.getElementById("choose-entry-button");
 
-const elEntrySelectField = document.getElementById("entry-select-field");
-const elEntrySelect = document.getElementById("entry-select");
+const elScriptPickerPopover = document.getElementById("script-picker-popover");
+const elScriptPickerTree = document.getElementById("script-picker-tree");
 const elRunSourceLine = document.getElementById("run-source-line");
 
 const elRun = document.getElementById("run-button");
@@ -4500,6 +4554,7 @@ const elWorkspaceCollapseToggle = document.getElementById("workspace-collapse-to
 const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empty-button");
 const elSourceEditor = document.getElementById("source-editor");
 const elSourceViewerFilename = document.getElementById("source-viewer-filename");
+const elSourceViewerFilenameText = document.getElementById("source-viewer-filename-text");
 const elSourceCodeLines = document.getElementById("source-code-lines");
 const elSourceMaximizeButton = document.getElementById("source-maximize-button");
 const elSourceDownloadButton = document.getElementById("source-download-button");
@@ -4717,17 +4772,79 @@ function renderEntryCandidates() {
   });
 }
 
-function renderEntrySelect(scripts, chosen) {
-  if (scripts.length === 0) { elEntrySelectField.hidden = true; return; }
-  elEntrySelectField.hidden = false;
-  elEntrySelect.innerHTML = "";
+/* Groups a flat staged-scripts array into a nested plain-object tree by "/"-splitting each path,
+   for the script picker popover (Stage 2D.2). Folders are never real nodes with their own
+   identity beyond grouping -- only leaves carry a staged-file entry. */
+function buildScriptPickerTree(scripts) {
+  const root = { children: new Map() };
   for (const f of scripts) {
-    const opt = document.createElement("option");
-    opt.value = f.path;
-    opt.textContent = f.path;
-    if (f.path === chosen) opt.selected = true;
-    elEntrySelect.appendChild(opt);
+    const parts = f.path.split("/");
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (!node.children.has(part)) node.children.set(part, { children: new Map() });
+      node = node.children.get(part);
+    }
+    node.children.set(parts[parts.length - 1], { file: f });
   }
+  return root;
+}
+
+function renderScriptPickerNode(node, chosenPath) {
+  const ul = document.createElement("ul");
+  ul.className = "script-picker-list";
+  for (const [name, child] of node.children) {
+    const li = document.createElement("li");
+    if (child.file) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "script-picker-item";
+      btn.textContent = name;
+      if (child.file.path === chosenPath) {
+        btn.classList.add("selected");
+        btn.setAttribute("aria-current", "true");
+      }
+      btn.addEventListener("click", () => selectScriptFromPicker(child.file.path));
+      li.appendChild(btn);
+    } else {
+      const label = document.createElement("div");
+      label.className = "script-picker-folder";
+      label.textContent = name;
+      li.append(label, renderScriptPickerNode(child, chosenPath));
+    }
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function renderScriptPicker(scripts, chosen) {
+  elScriptPickerTree.innerHTML = "";
+  if (scripts.length === 0) return;
+  elScriptPickerTree.appendChild(renderScriptPickerNode(buildScriptPickerTree(scripts), chosen));
+}
+
+/* Selecting a file in the popover drives the same state transition the old <select>'s change
+   handler used -- only the UI layer changed, not the selection state machine. */
+function selectScriptFromPicker(path) {
+  App.explicitEntryPath = path;
+  syncUrlBar({ entry: path });
+  updateSelectedEntry();
+  elScriptPickerPopover.hidePopover();
+}
+
+/* Positions the popover under its trigger button via getBoundingClientRect rather than CSS anchor
+   positioning, which isn't reliably supported across browsers yet -- runs in "beforetoggle" so the
+   popover never flashes at its default position before landing in the right place. */
+function positionScriptPickerPopover() {
+  const rect = elSourceViewerFilename.getBoundingClientRect();
+  const margin = 8;
+  const width = Math.min(340, window.innerWidth - margin * 2);
+  let left = Math.min(rect.left, window.innerWidth - margin - width);
+  left = Math.max(margin, left);
+  elScriptPickerPopover.style.left = left + "px";
+  elScriptPickerPopover.style.top = (rect.bottom + 4) + "px";
+  elScriptPickerPopover.style.width = width + "px";
+  elScriptPickerPopover.style.maxHeight = Math.min(400, window.innerHeight - rect.bottom - margin) + "px";
 }
 
 function renderRunSourceLine() {
@@ -4795,13 +4912,13 @@ async function renderSourceViewer() {
   const staged = path ? App.stagedStore.get(path) : null;
   if (!staged) {
     elSourceEditor.hidden = true;
-    elSourceViewerFilename.textContent = "";
+    elSourceViewerFilenameText.textContent = "";
     elSourceMaximizeTitle.textContent = "";
     if (App.sourceEditor) { App.sourceEditor.remove(); App.sourceEditor = null; }
     return;
   }
   elSourceEditor.hidden = false;
-  elSourceViewerFilename.textContent = staged.path;
+  elSourceViewerFilenameText.textContent = staged.path;
   elSourceMaximizeTitle.textContent = staged.name;
   const text = decodeUtf8(staged.bytes);
   // "rmd" is a custom grammar registered by getPrismCodeEditor() -> registerRmdGrammar() below,
@@ -4991,7 +5108,7 @@ function updateSelectedEntry() {
   }
   if (!chosen && scripts.length === 1) chosen = scripts[0].path;
   App.selectedEntryPath = chosen;
-  renderEntrySelect(scripts, chosen);
+  renderScriptPicker(scripts, chosen);
   renderRunSourceLine();
   renderSourceViewer();
   updateHeaderSourceBadge();
@@ -5455,10 +5572,22 @@ elChooseEntryButton.addEventListener("click", () => {
   completeCandidateSelection(checked.value);
 });
 
-elEntrySelect.addEventListener("change", () => {
-  App.explicitEntryPath = elEntrySelect.value;
-  syncUrlBar({ entry: elEntrySelect.value });
-  updateSelectedEntry();
+elScriptPickerPopover.addEventListener("beforetoggle", (e) => {
+  if (e.newState === "open") positionScriptPickerPopover();
+});
+elScriptPickerPopover.addEventListener("toggle", (e) => {
+  const open = e.newState === "open";
+  elSourceViewerFilename.setAttribute("aria-expanded", String(open));
+  if (open) {
+    const current = elScriptPickerTree.querySelector('[aria-current="true"]') ||
+      elScriptPickerTree.querySelector(".script-picker-item");
+    if (current) current.focus();
+  } else if (document.activeElement === document.body || elScriptPickerPopover.contains(document.activeElement)) {
+    // Only steal focus back to the trigger for Escape/selection closes (focus still inside the
+    // popover, or nothing else claimed it) -- light-dismiss by clicking a different control should
+    // leave focus wherever the user actually clicked, not yank it back here.
+    elSourceViewerFilename.focus();
+  }
 });
 
 elRun.addEventListener("click", runEntry);
