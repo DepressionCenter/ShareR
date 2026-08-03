@@ -2611,7 +2611,6 @@ async function stageFromParams(params, staged, messages, onProgress) {
   // Resolve which script is the entry point before downloading anything, so only the files
   // actually needed get fetched instead of mirroring the whole repository (spec section 0.1).
   let repoEntryPath = null;
-  let entryAutoDetected = false;
   if (effectiveEntryRaw && !/^https?:\/\//i.test(effectiveEntryRaw)) {
     if (!repoInfo) throw new ShareRError('entry="' + effectiveEntryRaw + '" looks like a repository-relative path, but no repo= parameter was given.');
     if (!RE_PATH.test(effectiveEntryRaw)) throw new ShareRError("Not a valid repository path: " + effectiveEntryRaw);
@@ -2620,7 +2619,6 @@ async function stageFromParams(params, staged, messages, onProgress) {
     else messages.push({ level: "error", text: "Entry file not found in repository: " + effectiveEntryRaw });
   } else if (!effectiveEntryRaw && repoInfo) {
     repoEntryPath = autoDetectEntry(tree.entries);
-    entryAutoDetected = true;
   }
 
   if (repoInfo) {
@@ -2629,11 +2627,11 @@ async function stageFromParams(params, staged, messages, onProgress) {
     if (repoEntryPath) {
       explicitEntryPath = repoEntryPath;
       await syncScriptDependencies(repoInfo, tree, refUsed, repoEntryPath, staged, messages, repoSyncCtx);
-      // Auto-detection picked a best guess without the researcher's confirmation (no entry= given),
-      // so also stage every other script in the repo -- otherwise the script-picker popover
-      // (Stage 2D.2) would only ever offer the one script ShareR happened to guess, with no way to
-      // switch to a sibling script that source()/child= dependency-walking never had reason to visit.
-      if (entryAutoDetected) await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
+      // Also stage every other script in the repo, entry= given or not -- otherwise the
+      // script-picker popover (Stage 2D.2) would only ever offer whatever source()/child=
+      // dependency-walking from this one entry happened to visit, not every script the researcher
+      // could plausibly want to switch to.
+      await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
       if (params.dataValues.length === 0) {
         await autoDetectAndStageData(repoInfo, tree, refUsed, repoSyncCtx, staged, messages);
       }
