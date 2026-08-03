@@ -3,7 +3,7 @@ This file is part of ShareR™
 index.html: Main HTML file for the ShareR™ application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
-Last Modified: 2026-07-29
+Last Modified: 2026-08-02
 Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
          Provides a workspace / results two-pane layout, Report/Plots/Files tabs, a source viewer,
          package installation, and output rendering (plots, files, CSV preview, ZIP download).
@@ -636,9 +636,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .prism-code-editor .token.keyword { color: #569cd6; }
   .prism-code-editor .token.boolean { color: #569cd6; }
   .prism-code-editor .token.number { color: #b5cea8; }
+  /* Muted rather than plain foreground color (was previously the exact same #d4d4d4 as
+     unhighlighted text, which made every operator/punctuation character visually disappear) --
+     reuses --source-gutter's existing gray so it reads as "secondary," not another new color. */
   .prism-code-editor .token.operator,
-  .prism-code-editor .token.percent-operator { color: #d4d4d4; }
-  .prism-code-editor .token.punctuation { color: #d4d4d4; }
+  .prism-code-editor .token.percent-operator,
+  .prism-code-editor .token.punctuation { color: var(--source-gutter); }
   .prism-code-editor .pce-line { position: relative; }
 
   /* ---------- Results pane ---------- */
@@ -1503,6 +1506,10 @@ const CONFIG = Object.freeze({
   PRISM_CODE_EDITOR_CDN_URL:        "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/index.js",
   PRISM_CODE_EDITOR_LANG_R_CDN_URL: "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/languages/r.js",
   PRISM_CODE_EDITOR_PRISM_R_CDN_URL:"https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/prism/languages/r.js",
+  // Exports the shared `languages` registry object (same one dist/prism/languages/r.js just
+  // populated with .r -- confirmed same hashed internal chunk) so a custom "rmd" grammar can be
+  // registered against it, keyed off .r via `inside` (Stage 2D.1 follow-up: Rmd highlighting).
+  PRISM_CODE_EDITOR_PRISM_CORE_CDN_URL: "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/prism/index.js",
   PRISM_CODE_EDITOR_LAYOUT_CSS_URL: "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/layout.css",
   WEBR_REPO_URL:           "https://repo.r-wasm.org",
   // Fallback only (installPackagesWithProgress), never merged into the primary install call:
@@ -2808,8 +2815,32 @@ async function getPrismCodeEditor() {
   // on import -- neither has anything useful to destructure out.
   await import(CONFIG.PRISM_CODE_EDITOR_LANG_R_CDN_URL);
   await import(CONFIG.PRISM_CODE_EDITOR_PRISM_R_CDN_URL);
+  const { languages } = await import(CONFIG.PRISM_CODE_EDITOR_PRISM_CORE_CDN_URL);
+  registerRmdGrammar(languages);
   App.prismCodeEditor = { createEditor: core.createEditor };
   return App.prismCodeEditor;
+}
+
+/* Custom "rmd" Prism grammar (Stage 2D.1 follow-up), verified in isolation first (per this
+   project's own hard-learned lesson from the abandoned CodeMirror 6 attempt) via
+   scratch/pce-rmd-test.html before being ported here. A single pattern matches a fenced chunk
+   whose engine name is exactly "r"/"R" (word-bounded via the lookahead, so "rust" etc. can't
+   match) from its opening fence through a closing fence of the *same character and length*
+   (backreference \2) -- everything else (YAML front matter, markdown prose, and any non-R-engine
+   chunk) is left as plain text rather than run through a second, potentially-diverging parser.
+   Documented simplification vs. this app's own RE_FENCE_CLOSE_ONLY (used at Run time by
+   parseRmdChunks): that rule also accepts a closing fence *longer* than the opener, which this
+   single regex does not -- accepted as a rare real-world edge case, not worth the added
+   complexity for a highlighting-only, best-effort classifier (spec 0.1 / AGENTS.md section 7,
+   same tolerance already established by disableMissingPackageLoadCalls's own documented limits). */
+function registerRmdGrammar(languages) {
+  if (languages.rmd) return;
+  languages.rmd = {
+    "r-chunk": {
+      pattern: /^([ \t]*)(`{3,}|~{3,})[ \t]*\{[Rr](?=[,\s}])[^}]*\}[ \t]*$[\s\S]*?^[ \t]*\2[ \t]*$/m,
+      inside: languages.r
+    }
+  };
 }
 
 /* webR.stream()'s event shape on the PostMessage channel is unverified, so it only drives a running
@@ -4773,10 +4804,10 @@ async function renderSourceViewer() {
   elSourceViewerFilename.textContent = staged.path;
   elSourceMaximizeTitle.textContent = staged.name;
   const text = decodeUtf8(staged.bytes);
-  // TODO (Stage 2D.1 follow-up): chunk-fence-aware highlighting for .Rmd, reusing parseRmdChunks
-  // so highlighting and execution can never disagree about what counts as an R chunk. Until that
-  // lands, .Rmd renders as plain text rather than mis-highlighting markdown+YAML prose as R.
-  const language = /\.rmd$/i.test(staged.path) ? "text" : "r";
+  // "rmd" is a custom grammar registered by getPrismCodeEditor() -> registerRmdGrammar() below,
+  // not a language prism-code-editor ships itself -- highlights only fenced R chunks (matching
+  // this app's own RE_CHUNK_OPEN in spirit) and leaves YAML front matter/markdown prose plain.
+  const language = /\.rmd$/i.test(staged.path) ? "rmd" : "r";
   const { createEditor } = await getPrismCodeEditor();
   if (path !== App.selectedEntryPath) return; // selection changed while the library was loading
   if (App.sourceEditor) {
