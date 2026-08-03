@@ -726,6 +726,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
     gap: 0.35rem;
     flex-wrap: wrap;
   }
+  .results-export-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    padding-right: 0.35rem;
+    border-right: 1px solid var(--panel-border);
+    margin-right: 0.15rem;
+  }
   .results-tabs {
     display: flex;
     gap: 0.25rem;
@@ -1031,6 +1040,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
     padding: 0.2rem 0.4rem;
     text-align: left;
   }
+  .file-row-text-preview {
+    width: 100%;
+    max-height: 16rem;
+    overflow: auto;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--panel-header-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  /* Distinguishes the always-present "Report"/"Plots" live-view rows (Stage 2D.8/2D.9) from real
+     downloadable output files, which use the same .file-row base. */
+  .file-row-synthetic {
+    border-style: dashed;
+    background: var(--panel-header-bg);
+  }
+  .file-row-synthetic .file-row-size { font-style: italic; }
 
   /* ---------- Console (execution log) ---------- */
   .console-wrapper {
@@ -1383,6 +1412,23 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" role="tab" id="tab-files-btn" aria-selected="false" aria-controls="tab-files-panel" tabindex="-1">Files</button>
       </div>
       <div class="results-actions">
+        <div class="results-export-group" id="results-export-group">
+          <button type="button" id="export-html-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a web page" title="Web page (.html)">
+            <span class="btn-icon" aria-hidden="true">🌐</span><span class="btn-text">Web page</span>
+          </button>
+          <button type="button" id="export-docx-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a Word document" title="Word (.docx)">
+            <span class="btn-icon" aria-hidden="true">📝</span><span class="btn-text">Word</span>
+          </button>
+          <button type="button" id="export-odt-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as an Open Document" title="Open Document (.odt)">
+            <span class="btn-icon" aria-hidden="true">📄</span><span class="btn-text">Open Document</span>
+          </button>
+          <button type="button" id="export-pptx-button" class="btn btn-secondary btn-sm" disabled hidden aria-label="Export the Plots tab as a PowerPoint presentation" title="PowerPoint (.pptx)">
+            <span class="btn-icon" aria-hidden="true">📊</span><span class="btn-text">PowerPoint</span>
+          </button>
+          <button type="button" id="export-pdf-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a PDF" title="PDF (.pdf)">
+            <span class="btn-icon" aria-hidden="true">📕</span><span class="btn-text">PDF</span>
+          </button>
+        </div>
         <button type="button" id="print-results-button" class="btn btn-secondary btn-sm" aria-label="Print" title="Print">
           <span class="btn-icon" aria-hidden="true">🖨️</span><span class="btn-text">Print</span>
         </button>
@@ -1574,8 +1620,27 @@ const CONFIG = Object.freeze({
     jsYaml:    "4.1.0",
     marked:    "15.0.7",
     domPurify: "3.2.4",
-    fflate:    "0.8.2"
+    fflate:    "0.8.2",
+    docx:      "9.7.1",
+    pptxgenjs: "4.0.1",
+    exceljs:   "4.4.0",
+    jspdf:     "4.2.1",
+    jspdfAutotable: "5.0.8"
   }),
+  // Document-export libraries (Stage 2D.6/2D.7), loaded lazily via jsDelivr's "+esm" combinator
+  // (auto-bundles each package's own CJS/UMD build into a real ES module) on first use of the
+  // feature that needs them -- never eagerly, matching getEngine()'s pattern. Each package's
+  // actual export shape was confirmed live against these exact pinned versions before writing any
+  // integration code against them (docx: named exports; pptxgenjs/exceljs: default export only,
+  // ExcelJS's Workbook class hangs off that default object; jspdf: both `default` and `jsPDF`
+  // named exports; jspdf-autotable: only usable as the free `autoTable(doc, options)` function --
+  // its bundled auto-plugin side effect looks for a *global* `window.jsPDF` to patch onto, which a
+  // dynamically-imported jsPDF instance never becomes, so `doc.autoTable(...)` is not available).
+  DOCX_CDN_URL:            "https://cdn.jsdelivr.net/npm/docx@9.7.1/+esm",
+  PPTXGENJS_CDN_URL:       "https://cdn.jsdelivr.net/npm/pptxgenjs@4.0.1/+esm",
+  EXCELJS_CDN_URL:         "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm",
+  JSPDF_CDN_URL:           "https://cdn.jsdelivr.net/npm/jspdf@4.2.1/+esm",
+  JSPDF_AUTOTABLE_CDN_URL: "https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.8/+esm",
 
   GITHUB_API:              "https://api.github.com",
   GITHUB_RAW:              "https://raw.githubusercontent.com",
@@ -2800,6 +2865,10 @@ const App = {
   engine: null,
   prismCodeEditor: null,   // cached lazy-loaded module exports (createEditor, languages, etc.)
   sourceEditor: null,      // the live PrismEditor instance mounted in #source-code-lines, if any
+  docxLib: null,           // cached lazy-loaded document-export libraries (Stage 2D.6/2D.7)
+  pptxGenJsLib: null,
+  excelJsLib: null,
+  jsPdfLib: null,
   running: false,
   repoInfo: null,
   refUsed: null,
@@ -2890,6 +2959,45 @@ function registerRmdGrammar(languages) {
       inside: languages.r
     }
   };
+}
+
+/* ### Document-export library loaders (Stage 2D.6/2D.7), same lazy-import-on-first-use pattern as
+   getEngine()/getPrismCodeEditor() above -- a researcher who never clicks an export button never
+   pays for these libraries' weight. Each memoizes onto its own App field. */
+async function getDocxLib() {
+  if (App.docxLib) return App.docxLib;
+  App.docxLib = await import(CONFIG.DOCX_CDN_URL);
+  return App.docxLib;
+}
+
+async function getPptxGenJsLib() {
+  if (App.pptxGenJsLib) return App.pptxGenJsLib;
+  const mod = await import(CONFIG.PPTXGENJS_CDN_URL);
+  App.pptxGenJsLib = mod.default;
+  return App.pptxGenJsLib;
+}
+
+// ExcelJS's "+esm" bundle exposes only a default export (an object carrying Workbook etc.) rather
+// than individual named exports -- confirmed live against the pinned build before writing this.
+async function getExcelJsLib() {
+  if (App.excelJsLib) return App.excelJsLib;
+  const mod = await import(CONFIG.EXCELJS_CDN_URL);
+  App.excelJsLib = mod.default;
+  return App.excelJsLib;
+}
+
+// jspdf-autotable's bundled auto-plugin side effect only patches a *global* window.jsPDF; a
+// dynamically-imported jsPDF class never becomes that, so doc.autoTable(...) is never available --
+// confirmed live against the pinned build. The free `autoTable(doc, options)` function it also
+// exports is used directly instead, so this loader hands back both pieces together.
+async function getJsPdfLib() {
+  if (App.jsPdfLib) return App.jsPdfLib;
+  const [{ jsPDF }, { autoTable }] = await Promise.all([
+    import(CONFIG.JSPDF_CDN_URL),
+    import(CONFIG.JSPDF_AUTOTABLE_CDN_URL)
+  ]);
+  App.jsPdfLib = { jsPDF, autoTable };
+  return App.jsPdfLib;
 }
 
 /* webR.stream()'s event shape on the PostMessage channel is unverified, so it only drives a running
@@ -3487,9 +3595,10 @@ const MIME_TYPES = {
 function extensionOf(path) { return path.split(".").pop().toLowerCase(); }
 function mimeTypeFor(ext) { return MIME_TYPES[ext] || "application/octet-stream"; }
 
-/* Simple, quote-aware CSV line splitter -- good enough for a first-20-rows preview, not a full
-   RFC 4180 parser (spec 10.2). */
-function splitCsvLine(line) {
+/* Simple, quote-aware CSV/TSV line splitter -- good enough for a first-20-rows preview and the
+   XLSX/PDF table exports (Stage 2D.7), not a full RFC 4180 parser (spec 10.2). One shared parser
+   for both delimiters rather than a second copy for TSV. */
+function splitDelimitedLine(line, delimiter) {
   const cells = [];
   let cur = "", inQuotes = false;
   for (let i = 0; i < line.length; i++) {
@@ -3498,16 +3607,21 @@ function splitCsvLine(line) {
       if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
       else cur += c;
     } else if (c === '"') { inQuotes = true; }
-    else if (c === ",") { cells.push(cur); cur = ""; }
+    else if (c === delimiter) { cells.push(cur); cur = ""; }
     else { cur += c; }
   }
   cells.push(cur);
   return cells;
 }
 
-function buildCsvPreviewTable(text, maxDataRows) {
-  const lines = text.split(/\r\n|\r|\n/).filter((l, idx, arr) => l !== "" || idx < arr.length - 1);
-  const rows = lines.slice(0, maxDataRows + 1).map(splitCsvLine);
+function splitTabularRows(text, delimiter) {
+  return text.split(/\r\n|\r|\n/)
+    .filter((l, idx, arr) => l !== "" || idx < arr.length - 1)
+    .map((line) => splitDelimitedLine(line, delimiter));
+}
+
+function buildCsvPreviewTable(text, maxDataRows, delimiter) {
+  const rows = splitTabularRows(text, delimiter || ",").slice(0, maxDataRows + 1);
   const table = document.createElement("table");
   table.className = "csv-preview-table";
   if (rows.length > 0) {
@@ -3564,6 +3678,33 @@ function downloadBlob(blob, filename) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/* Sourced from the footer markup already in the page (index.html .print-footer-copyright) rather
+   than a second hard-coded string, so the two can never drift apart. Used by every exported
+   document's footer/last-page copyright line (Stage 2D.6/2D.8/2D.9). */
+function getCopyrightFooterText() {
+  return document.querySelector(".print-footer-copyright").textContent.replace(/\s+/g, " ").trim();
+}
+
+// The four Report/Plots export buttons live once in the shared .results-actions toolbar
+// (index.html, present on every tab) but must act on whichever of Report/Plots is currently
+// selected -- mirrors the index checks activateTab() already uses to hide Print/zoom for Files.
+function getActiveTabIndex() {
+  if (!elTabReportPanel.hidden) return 0;
+  if (!elTabPlotsPanel.hidden) return 1;
+  return 2;
+}
+
+// Decodes a data: URL (exactly what bitmapToPlotImage's <img src> already is) into raw bytes, for
+// embedding into formats that need real image bytes rather than a src attribute (docx ImageRun,
+// the hand-built ODT's Pictures/ entries, PptxGenJS's addImage).
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 const DOWNLOAD_ICON_SVG =
@@ -3638,9 +3779,291 @@ function appendPlotToGallery(bitmap, label, plotIdx) {
   return id;
 }
 
+/* ### Per-output-file button set (Stage 2D.7) ### */
+
+const TABULAR_DELIMITERS = { csv: ",", tsv: "\t" };
+const JSON_PREVIEW_EXTS = new Set(["json", "jsonl"]);
+const TEXT_PREVIEW_EXTS = new Set(["txt", "md", "log", "r", "rmd"]);
+const PDF_TEXT_EXTS = new Set(["txt", "log", "md", "json", "r", "rmd"]);
+// jsPDF's addImage supports these raster formats directly; svg/gif/bmp are skipped (no PDF
+// button rendered for them) rather than faked through an unsupported conversion.
+const PDF_IMAGE_FORMATS = { png: "PNG", jpg: "JPEG", jpeg: "JPEG", webp: "WEBP" };
+
+function filePreviewSupported(ext) {
+  return Boolean(TABULAR_DELIMITERS[ext]) || JSON_PREVIEW_EXTS.has(ext) || TEXT_PREVIEW_EXTS.has(ext);
+}
+
+function createFileActionButton(icon, text, ariaLabel) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-secondary btn-sm";
+  const iconEl = document.createElement("span");
+  iconEl.className = "btn-icon"; iconEl.setAttribute("aria-hidden", "true"); iconEl.textContent = icon;
+  const labelEl = document.createElement("span");
+  labelEl.className = "btn-text"; labelEl.textContent = text;
+  btn.append(iconEl, labelEl);
+  if (ariaLabel) btn.setAttribute("aria-label", ariaLabel);
+  return btn;
+}
+
+/* Same shape as handleExportButtonClick (Stage 2D.6) but for per-file/per-row buttons, which name
+   their own fixed download filename rather than deriving one from the active Report/Plots tab. */
+async function handleFileActionClick(btn, buildBlob, filename) {
+  const labelEl = btn.querySelector(".btn-text");
+  const originalLabel = labelEl.textContent;
+  btn.disabled = true; labelEl.textContent = "Building...";
+  try {
+    downloadBlob(await buildBlob(), filename);
+  } catch (err) {
+    appendLogLine("error", "Could not build " + filename + ": " + (err && err.message ? err.message : err));
+  } finally {
+    btn.disabled = false; labelEl.textContent = originalLabel;
+  }
+}
+
+function buildPreviewElement(f, ext) {
+  if (TABULAR_DELIMITERS[ext]) return buildCsvPreviewTable(decodeUtf8(f.bytes), CONFIG.CSV_PREVIEW_MAX_ROWS, TABULAR_DELIMITERS[ext]);
+  const pre = document.createElement("pre");
+  pre.className = "file-row-text-preview";
+  if (ext === "json") {
+    const raw = decodeUtf8(f.bytes);
+    try { pre.textContent = JSON.stringify(JSON.parse(raw), null, 2); }
+    catch (err) { pre.textContent = raw; } // not valid JSON -- fall back to showing it as-is
+  } else if (ext === "jsonl") {
+    pre.textContent = decodeUtf8(f.bytes).split(/\r\n|\r|\n/).filter(Boolean).map((line) => {
+      try { return JSON.stringify(JSON.parse(line), null, 2); } catch (err) { return line; }
+    }).join("\n\n");
+  } else {
+    pre.textContent = decodeUtf8(f.bytes);
+  }
+  return pre;
+}
+
+// Excel's column-width unit is roughly "characters in the default font," not pixels -- ~7px per
+// unit at Calibri 11 is the commonly-cited approximation (there is no official px<->unit formula,
+// since it depends on the rendering font), which is what caps this at 400px worth of width.
+const EXCEL_MAX_COLUMN_WIDTH_CHARS = 57;
+
+async function buildXlsxBlob(text, delimiter, sheetName) {
+  const ExcelJS = await getExcelJsLib();
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet((sheetName || "Sheet1").slice(0, 31));
+  const rows = splitTabularRows(text, delimiter);
+  for (const row of rows) sheet.addRow(row);
+  if (rows.length) {
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true };
+    // Sized to fit the heading text specifically (not the widest data cell) up to the cap, then
+    // wrapped rather than left to overflow or truncate.
+    rows[0].forEach((headerText, i) => {
+      const naturalWidth = String(headerText || "").length + 2;
+      const column = sheet.getColumn(i + 1);
+      column.width = Math.min(naturalWidth, EXCEL_MAX_COLUMN_WIDTH_CHARS);
+      if (naturalWidth > EXCEL_MAX_COLUMN_WIDTH_CHARS) {
+        headerRow.getCell(i + 1).alignment = { wrapText: true, vertical: "bottom" };
+      }
+    });
+  }
+  const buffer = await workbook.xlsx.writeBuffer();
+  return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function addCopyrightFooterToJsPdf(doc) {
+  const pageCount = doc.internal.getNumberOfPages();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.setFontSize(7);
+  doc.setTextColor(102);
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.text(getCopyrightFooterText(), pageWidth / 2, pageHeight - 6, { align: "center" });
+  }
+}
+
+async function buildTabularPdfBlob(text, delimiter, title) {
+  const { jsPDF, autoTable } = await getJsPdfLib();
+  const doc = new jsPDF({ orientation: "landscape" });
+  doc.setFontSize(11);
+  doc.text(title, 14, 12);
+  const rows = splitTabularRows(text, delimiter);
+  autoTable(doc, { head: rows.length ? [rows[0]] : [], body: rows.slice(1), startY: 18, styles: { fontSize: 8 } });
+  addCopyrightFooterToJsPdf(doc);
+  return doc.output("blob");
+}
+
+async function buildTextPdfBlob(text, title) {
+  const { jsPDF } = await getJsPdfLib();
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  doc.setFontSize(12);
+  doc.text(title, margin, margin);
+  doc.setFont("Courier", "normal");
+  doc.setFontSize(9);
+  const lines = doc.splitTextToSize(text, pageWidth - margin * 2);
+  let y = margin + 10;
+  const lineHeight = 4.2;
+  for (const line of lines) {
+    if (y > pageHeight - margin) { doc.addPage(); y = margin; }
+    doc.text(line, margin, y);
+    y += lineHeight;
+  }
+  addCopyrightFooterToJsPdf(doc);
+  return doc.output("blob");
+}
+
+// Takes the already-rendered inline <img> element (Stage 2D.7's per-row image preview,
+// index.html renderFilesTab) directly, avoiding a redundant Blob-to-data-URL round trip just to
+// read pixels back out. Routed through imageForJsPdf (see its comment) rather than handed to
+// jsPDF directly -- a large uploaded/output image would otherwise risk the same "Invalid string
+// length" failure the Report/Plots PDF exports hit on a large embedded figure.
+async function buildImagePdfBlob(imgEl) {
+  const { jsPDF } = await getJsPdfLib();
+  const w = imgEl.naturalWidth, h = imgEl.naturalHeight;
+  const doc = new jsPDF({ orientation: w >= h ? "landscape" : "portrait" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  const dims = scaledImageDims(w, h, pageWidth - margin * 2, pageHeight - margin * 2);
+  doc.addImage(imageForJsPdf(imgEl, dims.width, dims.height), "JPEG",
+    (pageWidth - dims.width) / 2, (pageHeight - dims.height) / 2, dims.width, dims.height);
+  addCopyrightFooterToJsPdf(doc);
+  return doc.output("blob");
+}
+
+function getPdfBuilderForExt(f, ext, imgEl) {
+  if (TABULAR_DELIMITERS[ext]) return () => buildTabularPdfBlob(decodeUtf8(f.bytes), TABULAR_DELIMITERS[ext], f.path);
+  if (PDF_TEXT_EXTS.has(ext)) return () => buildTextPdfBlob(decodeUtf8(f.bytes), f.path);
+  if (PDF_IMAGE_FORMATS[ext] && imgEl) return () => buildImagePdfBlob(imgEl);
+  return null;
+}
+
+// Builds the image preview (if applicable) plus the Preview / Download <ext> / Download XLSX /
+// Download PDF button subset for one real output-file row -- exactly the buttons its file type
+// can honestly support, per file type, not an all-or-nothing decision (TODO.md Stage 2D.7). One
+// shared Blob/objectURL backs both the inline image preview and the Download link -- creating two
+// separate URLs for the same bytes would be pure waste.
+function appendFileRowButtons(row, f, ext) {
+  const blob = new Blob([f.bytes], { type: mimeTypeFor(ext) });
+  const url = URL.createObjectURL(blob);
+  App.objectUrls.push(url);
+
+  let imgEl = null;
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    imgEl = document.createElement("img");
+    imgEl.src = url; imgEl.alt = "Generated image: " + f.path; imgEl.className = "file-row-image-preview";
+    row.appendChild(imgEl);
+  }
+
+  if (filePreviewSupported(ext)) {
+    const isTabular = Boolean(TABULAR_DELIMITERS[ext]);
+    const defaultLabel = isTabular ? "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows" : "Preview";
+    const previewBtn = createFileActionButton("👁", defaultLabel, null);
+    previewBtn.title = isTabular ? defaultLabel : "Preview this file";
+    let previewEl = null;
+    previewBtn.addEventListener("click", () => {
+      if (previewEl) { previewEl.remove(); previewEl = null; previewBtn.querySelector(".btn-text").textContent = defaultLabel; return; }
+      previewEl = buildPreviewElement(f, ext);
+      row.appendChild(previewEl);
+      previewBtn.querySelector(".btn-text").textContent = "Hide preview";
+    });
+    row.appendChild(previewBtn);
+  }
+
+  const downloadLink = document.createElement("a");
+  downloadLink.href = url; downloadLink.download = basenameOf(f.path);
+  downloadLink.className = "btn btn-secondary btn-sm";
+  downloadLink.setAttribute("aria-label", "Download " + f.path);
+  const dlIcon = document.createElement("span");
+  dlIcon.className = "btn-icon"; dlIcon.setAttribute("aria-hidden", "true"); dlIcon.textContent = "⤓";
+  const dlLabel = document.createElement("span");
+  dlLabel.className = "btn-text"; dlLabel.textContent = "Download ." + ext;
+  downloadLink.append(dlIcon, dlLabel);
+  row.appendChild(downloadLink);
+
+  if (TABULAR_DELIMITERS[ext]) {
+    const xlsxBtn = createFileActionButton("📗", "Download XLSX", "Download " + f.path + " as an Excel spreadsheet");
+    const xlsxName = basenameOf(f.path).replace(/\.[^.]+$/, "") + ".xlsx";
+    xlsxBtn.addEventListener("click", () => handleFileActionClick(xlsxBtn,
+      () => buildXlsxBlob(decodeUtf8(f.bytes), TABULAR_DELIMITERS[ext], basenameOf(f.path)), xlsxName));
+    row.appendChild(xlsxBtn);
+  }
+
+  const pdfBuilder = getPdfBuilderForExt(f, ext, imgEl);
+  if (pdfBuilder) {
+    const pdfBtn = createFileActionButton("📕", "Download PDF", "Download " + f.path + " as a PDF");
+    const pdfName = basenameOf(f.path).replace(/\.[^.]+$/, "") + ".pdf";
+    pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, pdfBuilder, pdfName));
+    row.appendChild(pdfBtn);
+  }
+}
+
+/* ### Synthetic "Report"/"Plots" file rows (Stage 2D.8/2D.9) -- always shown above the real
+   output-file list, styled via .file-row-synthetic to read as a live view rather than a saved
+   file. Buttons are deliberately different from the real rows' set, per spec. ### */
+
+function createSyntheticFileRow(icon, name, caption, buttons) {
+  const row = document.createElement("div");
+  row.className = "file-row file-row-synthetic";
+  const iconEl = document.createElement("div");
+  iconEl.className = "file-row-icon"; iconEl.setAttribute("aria-hidden", "true"); iconEl.textContent = icon;
+  const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = name;
+  const captionEl = document.createElement("div"); captionEl.className = "file-row-size"; captionEl.textContent = caption;
+  row.append(iconEl, nameEl, captionEl, ...buttons);
+  return row;
+}
+
+function createReportSyntheticRow() {
+  const previewBtn = createFileActionButton("👁", "Preview", "Show the Report tab");
+  previewBtn.addEventListener("click", () => activateTab(0));
+
+  const scriptBtn = createFileActionButton("📥", "Download Script", "Download the active script's current source");
+  scriptBtn.addEventListener("click", downloadActiveScript);
+
+  const pdfBtn = createFileActionButton("📕", "Download PDF", "Generate a PDF of the Report tab");
+  pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, buildReportPdfBlob, exportFilenameFor("report", "pdf")));
+
+  // This opens the browser's print dialog (same fallback the main toolbar Print button uses), not
+  // a real PDF file -- labeled "Print" rather than "Download PDF" so the button says what it does.
+  const printBtn = createFileActionButton("🖨️", "Print", "Print the Report tab");
+  printBtn.addEventListener("click", () => { activateTab(0); window.print(); });
+
+  return createSyntheticFileRow("📄", "Report", "Live view -- not a saved file", [previewBtn, scriptBtn, pdfBtn, printBtn]);
+}
+
+function createPlotsSyntheticRow() {
+  const previewBtn = createFileActionButton("👁", "Preview", "Show the Plots tab");
+  previewBtn.addEventListener("click", () => activateTab(1));
+
+  const zipBtn = createFileActionButton("📦", "Download ZIP", "Download every plot from this run as a ZIP of PNG files");
+  zipBtn.addEventListener("click", () => handleFileActionClick(zipBtn, async () => {
+    const plotBitmaps = (App.lastRunInfo && App.lastRunInfo.plotBitmaps) || [];
+    const entries = [];
+    for (const p of plotBitmaps) {
+      const pngBlob = await plotBitmapToPngBlob(p.bitmap);
+      entries.push({ name: "plot-" + slugifyForElementId(p.label) + "-" + p.plotIdx + ".png", bytes: new Uint8Array(await pngBlob.arrayBuffer()) });
+    }
+    return zipEntriesToBlob(entries);
+  }, "sharer-plots.zip"));
+
+  const pdfBtn = createFileActionButton("📕", "Download PDF", "Generate a PDF of the Plots tab");
+  pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, buildPlotsPdfBlob, exportFilenameFor("plots", "pdf")));
+
+  const printBtn = createFileActionButton("🖨️", "Print", "Print the Plots tab");
+  printBtn.addEventListener("click", () => { activateTab(1); window.print(); });
+
+  return createSyntheticFileRow("🖼", "Plots", "Live view -- not a saved file", [previewBtn, zipBtn, pdfBtn, printBtn]);
+}
+
 function renderFilesTab(outputFiles, chunkByFilePath) {
   chunkByFilePath = chunkByFilePath || new Map();
   elTabFilesPanel.innerHTML = "";
+  // Always shown, even for a run with zero real output files -- a run essentially always has some
+  // report/plots to view (TODO.md Stage 2D.8/2D.9), so these render before the empty-state check
+  // below rather than being skipped by it.
+  elTabFilesPanel.appendChild(createReportSyntheticRow());
+  elTabFilesPanel.appendChild(createPlotsSyntheticRow());
   if (outputFiles.length === 0) {
     const p = document.createElement("p");
     p.className = "help-text";
@@ -3700,47 +4123,8 @@ function renderFilesTab(outputFiles, chunkByFilePath) {
     iconEl.textContent = fileTypeIcons[ext] || "📄";
     const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = f.path;
     const sizeEl = document.createElement("div"); sizeEl.className = "file-row-size"; sizeEl.textContent = formatBytes(f.size);
-    const blob = new Blob([f.bytes], { type: mimeTypeFor(ext) });
-    const url = URL.createObjectURL(blob);
-    App.objectUrls.push(url);
-    const downloadLink = document.createElement("a");
-    downloadLink.href = url; downloadLink.download = basenameOf(f.path);
-    downloadLink.className = "btn btn-secondary btn-sm";
-    const downloadIcon = document.createElement("span");
-    downloadIcon.className = "btn-icon"; downloadIcon.setAttribute("aria-hidden", "true");
-    downloadIcon.textContent = "⤓";
-    const downloadLabel = document.createElement("span");
-    downloadLabel.className = "btn-text"; downloadLabel.textContent = "Download";
-    downloadLink.append(downloadIcon, downloadLabel);
-    row.append(iconEl, nameEl, sizeEl, downloadLink);
-    if (IMAGE_EXTENSIONS.has(ext)) {
-      const img = document.createElement("img");
-      img.src = url; img.alt = "Generated image: " + f.path; img.className = "file-row-image-preview";
-      row.appendChild(img);
-    }
-    if (ext === "csv") {
-      const previewBtn = document.createElement("button");
-      previewBtn.type = "button"; previewBtn.className = "btn btn-secondary btn-sm";
-      const previewIcon = document.createElement("span");
-      previewIcon.className = "btn-icon"; previewIcon.setAttribute("aria-hidden", "true");
-      previewIcon.textContent = "👁";
-      const previewLabel = document.createElement("span");
-      previewLabel.className = "btn-text";
-      previewLabel.textContent = "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows";
-      previewBtn.append(previewIcon, previewLabel);
-      let previewTable = null;
-      previewBtn.addEventListener("click", () => {
-        if (previewTable) {
-          previewTable.remove(); previewTable = null;
-          previewLabel.textContent = "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows";
-          return;
-        }
-        previewTable = buildCsvPreviewTable(decodeUtf8(f.bytes), CONFIG.CSV_PREVIEW_MAX_ROWS);
-        row.appendChild(previewTable);
-        previewLabel.textContent = "Hide preview";
-      });
-      row.appendChild(previewBtn);
-    }
+    row.append(iconEl, nameEl, sizeEl);
+    appendFileRowButtons(row, f, ext);
     elTabFilesPanel.appendChild(row);
   }
 }
@@ -3941,6 +4325,11 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
     const plotItemId = appendPlotToGallery(bitmap, label, plotIdx);
     node.plotItemIds = node.plotItemIds || [];
     node.plotItemIds.push(plotItemId);
+    // Retained (unlike the plot <img>, which only ever needs a PNG data URL) so the synthetic
+    // Plots file row's "Download ZIP" button (Stage 2D.9) can re-encode every plot from this run
+    // without re-rendering the DOM to find them.
+    node.plotBitmaps = node.plotBitmaps || [];
+    node.plotBitmaps.push({ bitmap, label, plotIdx });
   }
 
   container.appendChild(wrap);
@@ -4223,9 +4612,11 @@ async function finalizeRun(runState) {
 
   App.lastRunInfo = {
     outputFiles, entryPath: runState.entryPath, entryBytes: runState.entryBytes, manifest,
-    cssPath: runState.outputOptions.css
+    cssPath: runState.outputOptions.css,
+    plotBitmaps: runState.nodes.flatMap((n) => n.plotBitmaps || [])
   };
   elDownloadZipButton.disabled = false;
+  setResultsExportButtonsDisabled(false);
 
   if (!runState.missingFileMessage) {
     setStatus(runState.failed ? "Finished with an error. See the Report tab and log below." : "Done.");
@@ -4288,6 +4679,33 @@ async function fetchCssForExport(cssPath) {
   return text;
 }
 
+// Shared by every place this file builds an HTML string from user/report-derived text (export
+// footers, ODT/PPTX text content) rather than assigning it via textContent -- the five characters
+// XML and HTML both need escaped in text content.
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function buildCopyrightFooterHtml() {
+  return "<footer style=\"margin-top:2rem;padding-top:0.5rem;border-top:1px solid #c7ccd1;" +
+    "font-size:0.72rem;color:#333;text-align:center;\">" + escapeHtml(getCopyrightFooterText()) +
+    "</footer>";
+}
+
+function wrapAsStandaloneHtmlDocument(title, bodyHtml, extraCss) {
+  return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">" +
+    "<title>" + escapeHtml(title) + "</title>" +
+    "<style>" + extraCss + "</style></head><body><main>" + bodyHtml + "</main>" +
+    buildCopyrightFooterHtml() + "</body></html>";
+}
+
+const REPORT_EXPORT_EXTRA_CSS =
+  "body{font-family:system-ui,sans-serif;margin:1.5rem;} " +
+  "pre{overflow-x:auto;background:#f5f5f5;color:#1a1a1a;border:1px solid #ddd;padding:0.5rem;border-radius:4px;} " +
+  "details{border:1px solid #c7ccd1;border-radius:6px;padding:0.6rem 0.8rem;margin:0 0 1rem;} " +
+  "img{max-width:100%;height:auto;border:1px solid #c7ccd1;}";
+
 /* Plots are already <img src="data:..."> elements (bitmapToPlotImage), not live <canvas>, so
    cloning the report's content is enough to serialize them into a static report.html -- no
    canvas-to-image conversion needed here. Clones .zoom-inner specifically (the actual content),
@@ -4295,14 +4713,676 @@ async function fetchCssForExport(cssPath) {
 async function renderReportAsSelfContainedHtml() {
   const clone = elTabReportZoomInner.cloneNode(true);
   const reportCss = await fetchCssForExport(App.lastRunInfo && App.lastRunInfo.cssPath);
-  const extraCss = "body{font-family:system-ui,sans-serif;margin:1.5rem;} " +
-    "pre{overflow-x:auto;background:#f5f5f5;color:#1a1a1a;border:1px solid #ddd;padding:0.5rem;border-radius:4px;} " +
-    "details{border:1px solid #c7ccd1;border-radius:6px;padding:0.6rem 0.8rem;margin:0 0 1rem;} " +
-    "img{max-width:100%;height:auto;border:1px solid #c7ccd1;}";
-  return "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\">" +
-    "<title>ShareR report: " + basenameOf(App.selectedEntryPath || "report") + "</title>" +
-    "<style>" + reportCss + "\n" + extraCss + "</style></head><body><main>" + clone.innerHTML +
-    "</main></body></html>";
+  return wrapAsStandaloneHtmlDocument(
+    "ShareR report: " + basenameOf(App.selectedEntryPath || "report"),
+    clone.innerHTML, reportCss + "\n" + REPORT_EXPORT_EXTRA_CSS);
+}
+
+// Plots-tab counterpart of renderReportAsSelfContainedHtml (Stage 2D.6) -- no author css: option
+// applies here (that's an .Rmd html_document front-matter concept, meaningless for a bare image
+// gallery), so this skips fetchCssForExport entirely rather than fetching a stylesheet with
+// nothing in it to style.
+function renderPlotsAsSelfContainedHtml() {
+  const clone = elTabPlotsZoomInner.cloneNode(true);
+  // :not(:last-child) so the final plot doesn't force out a trailing blank page -- same
+  // one-page-per-plot intent as the DOCX/ODT exporters' pageBreakBefore-on-the-next-item approach,
+  // just expressed as CSS since this is a print-facing standalone HTML document.
+  const plotsCss = REPORT_EXPORT_EXTRA_CSS +
+    " .plot-gallery-item:not(:last-child){page-break-after:always;break-after:page;}";
+  return wrapAsStandaloneHtmlDocument(
+    "ShareR plots: " + basenameOf(App.selectedEntryPath || "plots"),
+    clone.innerHTML, plotsCss);
+}
+
+/* ### Report/Plots DOM -> normalized block extraction (Stage 2D.6), shared by the DOCX/ODT/PPTX
+   exporters so each doesn't hand-walk the rendered DOM itself. Returns an array of top-level
+   blocks -- { source: "prose"|"chunk", pieces: [...] } -- grouped this way (rather than one flat
+   piece list) because PptxGenJS wants exactly one slide per top-level block, while DOCX/ODT just
+   flatten every block's pieces into one continuous flow. Each piece is one of:
+     {type:"heading", level, runs} {type:"paragraph", runs} {type:"list", ordered, items: runs[][]}
+     {type:"table", rows} {type:"code", text} {type:"chunkHeader", text} {type:"output", text}
+     {type:"image", dataUrl, alt}
+   where a "runs" array is [{text, bold, italic, code}, ...] -- inline emphasis within a paragraph
+   (e.g. **Summary** at the start of a line) is real markdown/HTML markup on marked's rendered
+   output, not something a plain el.textContent flattening can preserve, so headings/paragraphs/
+   list items carry it through as runs for DOCX/ODT to render as real bold/italic text rather than
+   silently dropping it. Table cells and code/output blocks stay plain text -- inline formatting
+   inside a data table cell or a monospace output line isn't meaningful here.
+   Best-effort over marked's own rendered markup, the same tolerance this file already applies to
+   the PLOT_CALL_RE/FILE_WRITE_CALL_RE gutter-marker heuristics -- an unrecognized element falls
+   back to a plain paragraph of its text content rather than being dropped silently. */
+function extractInlineRuns(containerEl) {
+  const runs = [];
+  function walk(node, style) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.nodeValue) runs.push({ text: node.nodeValue, bold: style.bold, italic: style.italic, code: style.code });
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.tagName === "BR") { runs.push({ text: "\n", bold: style.bold, italic: style.italic, code: style.code }); return; }
+    const next = {
+      bold: style.bold || node.tagName === "STRONG" || node.tagName === "B",
+      italic: style.italic || node.tagName === "EM" || node.tagName === "I",
+      code: style.code || node.tagName === "CODE"
+    };
+    for (const child of node.childNodes) walk(child, next);
+  }
+  for (const child of containerEl.childNodes) walk(child, { bold: false, italic: false, code: false });
+  return runs.length ? runs : [{ text: containerEl.textContent.trim(), bold: false, italic: false, code: false }];
+}
+
+function extractProseBlockPieces(proseBlockEl) {
+  const pieces = [];
+  for (const el of proseBlockEl.children) {
+    const tag = el.tagName;
+    if (/^H[1-6]$/.test(tag)) {
+      pieces.push({ type: "heading", level: Number(tag[1]), runs: extractInlineRuns(el) });
+    } else if (tag === "UL" || tag === "OL") {
+      pieces.push({
+        type: "list", ordered: tag === "OL",
+        items: Array.from(el.children).filter((li) => li.tagName === "LI").map((li) => extractInlineRuns(li))
+      });
+    } else if (tag === "TABLE") {
+      const rows = Array.from(el.querySelectorAll("tr")).map((tr) =>
+        Array.from(tr.children).map((cell) => cell.textContent.trim()));
+      if (rows.length) pieces.push({ type: "table", rows });
+    } else if (tag === "PRE") {
+      const text = el.textContent.replace(/\n+$/, "");
+      if (text.trim()) pieces.push({ type: "code", text });
+    } else if (tag === "IMG") {
+      if (el.src.startsWith("data:")) {
+        pieces.push({ type: "image", dataUrl: el.src, imgEl: el, alt: el.alt || "", width: el.naturalWidth, height: el.naturalHeight });
+      } else if (el.alt) pieces.push({ type: "paragraph", runs: [{ text: "[image: " + el.alt + "]" }] });
+    } else {
+      const nestedImgs = el.querySelectorAll ? el.querySelectorAll("img") : [];
+      for (const img of nestedImgs) {
+        if (img.src.startsWith("data:")) {
+          pieces.push({ type: "image", dataUrl: img.src, imgEl: img, alt: img.alt || "", width: img.naturalWidth, height: img.naturalHeight });
+        }
+      }
+      const text = el.textContent.trim();
+      if (text) pieces.push({ type: "paragraph", runs: extractInlineRuns(el) });
+    }
+  }
+  return pieces;
+}
+
+function extractChunkBlockPieces(chunkBlockEl) {
+  const pieces = [];
+  const header = chunkBlockEl.querySelector(".chunk-block-header");
+  if (header) pieces.push({ type: "chunkHeader", text: header.textContent.trim() });
+  const code = chunkBlockEl.querySelector(".chunk-source code");
+  if (code) pieces.push({ type: "code", text: code.textContent.replace(/\n+$/, "") });
+  for (const line of chunkBlockEl.querySelectorAll(".chunk-output-line")) {
+    const text = line.textContent.replace(/\n+$/, "");
+    if (text) pieces.push({ type: "output", text });
+  }
+  for (const img of chunkBlockEl.querySelectorAll(".plot-inline-wrap img")) {
+    if (img.src.startsWith("data:")) {
+      pieces.push({ type: "image", dataUrl: img.src, imgEl: img, alt: img.alt || "", width: img.naturalWidth, height: img.naturalHeight });
+    }
+  }
+  return pieces;
+}
+
+function extractReportBlocks(zoomInnerEl) {
+  const blocks = [];
+  for (const el of zoomInnerEl.children) {
+    if (el.classList.contains("report-toc")) continue;
+    if (el.classList.contains("prose-block")) {
+      const pieces = extractProseBlockPieces(el);
+      if (pieces.length) blocks.push({ source: "prose", pieces });
+    } else if (el.classList.contains("chunk-block")) {
+      blocks.push({ source: "chunk", pieces: extractChunkBlockPieces(el) });
+    }
+  }
+  return blocks;
+}
+
+// Plots-tab counterpart: no prose to walk, just the gallery's own cards.
+function extractPlotImages(zoomInnerEl) {
+  const images = [];
+  for (const item of zoomInnerEl.querySelectorAll(".plot-gallery-item")) {
+    const img = item.querySelector("img");
+    if (!img || !img.src.startsWith("data:")) continue;
+    const heading = item.querySelector(".plot-gallery-heading");
+    images.push({
+      dataUrl: img.src, imgEl: img, alt: img.alt || "", heading: heading ? heading.textContent.trim() : "",
+      width: img.naturalWidth, height: img.naturalHeight
+    });
+  }
+  return images;
+}
+
+// Preserves aspect ratio while fitting within a maximum box -- shared by the DOCX/ODT/PPTX
+// exporters, each of which needs real pixel dimensions for an embedded image rather than letting
+// it render at its full captured size (CONFIG.FIG_WIDTH_PX x FIG_HEIGHT_PX, often too large for a
+// single page/slide).
+function scaledImageDims(naturalWidth, naturalHeight, maxWidth, maxHeight) {
+  const w = naturalWidth || maxWidth;
+  const h = naturalHeight || maxHeight;
+  const scale = Math.min(maxWidth / w, maxHeight / h, 1);
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
+}
+
+/* ### DOCX export (Stage 2D.6.2) ### */
+
+const DOCX_REPORT_MAX_IMAGE_PX = { width: 550, height: 480 };
+const DOCX_PLOTS_MAX_IMAGE_PX = { width: 860, height: 540 };
+
+// Converts one extractInlineRuns() run array into real docx.TextRun instances, preserving
+// bold/italic/inline-code exactly as marked/DOMPurify rendered them (Stage 2D.6 follow-up fix --
+// the first version flattened every piece to el.textContent, silently dropping this).
+function docxTextRuns(docx, runs) {
+  return runs.map((r) => new docx.TextRun({
+    text: r.text, bold: r.bold || undefined, italics: r.italic || undefined,
+    font: r.code ? "Consolas" : undefined
+  }));
+}
+
+function docxParagraphsForPiece(docx, piece) {
+  const monoRun = (text, color) => new docx.TextRun({ text, font: "Consolas", size: 18, color });
+  switch (piece.type) {
+    case "heading":
+      return [new docx.Paragraph({
+        heading: docx.HeadingLevel["HEADING_" + Math.min(Math.max(piece.level, 1), 6)],
+        spacing: { after: 160 },
+        children: docxTextRuns(docx, piece.runs)
+      })];
+    case "paragraph":
+      return [new docx.Paragraph({ spacing: { after: 120 }, children: docxTextRuns(docx, piece.runs) })];
+    case "list":
+      return piece.items.map((itemRuns, i) =>
+        new docx.Paragraph({
+          spacing: { after: 60 },
+          children: [new docx.TextRun(piece.ordered ? (i + 1) + ". " : "• ")].concat(docxTextRuns(docx, itemRuns))
+        }));
+    case "table":
+      return [new docx.Table({
+        width: { size: 100, type: docx.WidthType.PERCENTAGE },
+        rows: piece.rows.map((row) => new docx.TableRow({
+          children: row.map((cell) => new docx.TableCell({ children: [new docx.Paragraph(cell)] }))
+        }))
+      }), new docx.Paragraph("")];
+    case "chunkHeader":
+      return [new docx.Paragraph({ spacing: { before: 200 }, children: [new docx.TextRun({ text: piece.text, bold: true })] })];
+    case "code":
+      return piece.text.split("\n").map((line) => new docx.Paragraph({ children: [monoRun(line, "1a1a1a")] }));
+    case "output":
+      return [new docx.Paragraph({ children: [monoRun(piece.text, "4b4f52")] })];
+    case "image": {
+      const dims = scaledImageDims(piece.width, piece.height, DOCX_REPORT_MAX_IMAGE_PX.width, DOCX_REPORT_MAX_IMAGE_PX.height);
+      return [new docx.Paragraph({
+        children: [new docx.ImageRun({ data: dataUrlToUint8Array(piece.dataUrl), type: "png", transformation: dims })]
+      })];
+    }
+    default:
+      return [];
+  }
+}
+
+function buildDocxCopyrightFooter(docx) {
+  return new docx.Footer({
+    children: [new docx.Paragraph({
+      alignment: docx.AlignmentType.CENTER,
+      children: [new docx.TextRun({ text: getCopyrightFooterText(), size: 14, color: "666666" })]
+    })]
+  });
+}
+
+async function buildReportDocxBlob() {
+  const docx = await getDocxLib();
+  const pieces = extractReportBlocks(elTabReportZoomInner).flatMap((b) => b.pieces);
+  const children = pieces.flatMap((p) => docxParagraphsForPiece(docx, p));
+  const doc = new docx.Document({
+    sections: [{
+      properties: {},
+      footers: { default: buildDocxCopyrightFooter(docx) },
+      children: children.length ? children : [new docx.Paragraph("No report content was generated by this run.")]
+    }]
+  });
+  return docx.Packer.toBlob(doc);
+}
+
+async function buildPlotsDocxBlob() {
+  const docx = await getDocxLib();
+  const images = extractPlotImages(elTabPlotsZoomInner);
+  const children = [];
+  images.forEach((img, idx) => {
+    const dims = scaledImageDims(img.width, img.height, DOCX_PLOTS_MAX_IMAGE_PX.width, DOCX_PLOTS_MAX_IMAGE_PX.height);
+    children.push(new docx.Paragraph({
+      pageBreakBefore: idx > 0,
+      children: [new docx.TextRun({ text: img.heading || ("Plot " + (idx + 1)), bold: true })]
+    }));
+    children.push(new docx.Paragraph({
+      children: [new docx.ImageRun({ data: dataUrlToUint8Array(img.dataUrl), type: "png", transformation: dims })]
+    }));
+  });
+  const doc = new docx.Document({
+    sections: [{
+      properties: { page: { size: { orientation: docx.PageOrientation.LANDSCAPE } } },
+      footers: { default: buildDocxCopyrightFooter(docx) },
+      children: children.length ? children : [new docx.Paragraph("No plots were generated by this run.")]
+    }]
+  });
+  return docx.Packer.toBlob(doc);
+}
+
+/* ### PPTX export (Stage 2D.6.4) ### */
+
+const PPTX_MASTER_NAME = "SHARER_FOOTER";
+// PptxGenJS's default layout (LAYOUT_16x9) is 10in x 5.63in, already landscape -- no
+// pptx.defineLayout() call needed, matching the "naturally landscape" requirement for free.
+const PPTX_SLIDE_W_IN = 10, PPTX_SLIDE_H_IN = 5.63;
+
+// One slide-master definition carries the copyright footer onto every slide built from it, rather
+// than repeating an addText() call in every slide-building loop.
+function definePptxCopyrightMaster(pptx) {
+  pptx.defineSlideMaster({
+    title: PPTX_MASTER_NAME,
+    objects: [{ text: {
+      text: getCopyrightFooterText(),
+      options: { x: 0.3, y: PPTX_SLIDE_H_IN - 0.35, w: PPTX_SLIDE_W_IN - 0.6, h: 0.3, fontSize: 8, color: "666666", align: "center" }
+    } }]
+  });
+}
+
+// PowerPoint export only ever covers Plots (per explicit follow-up direction -- a report's mix of
+// prose/code/output does not translate to a useful slide-per-block deck the way a plot gallery
+// does), so the title slide names the thing every slide after it illustrates: the repo (if this
+// script came from one) or just the file, plus when the deck was generated.
+function addPptxTitleSlide(pptx) {
+  const slide = pptx.addSlide({ masterName: PPTX_MASTER_NAME });
+  const title = App.repoInfo ? App.repoInfo.repo : basenameOf(App.selectedEntryPath || "ShareR export");
+  const subtitle = App.repoInfo ? basenameOf(App.selectedEntryPath || "") : "";
+  let y = PPTX_SLIDE_H_IN / 2 - (subtitle ? 1.1 : 0.75);
+  slide.addText(title, { x: 0.6, y, w: PPTX_SLIDE_W_IN - 1.2, h: 0.9, fontSize: 32, bold: true, align: "center" });
+  y += 0.9;
+  if (subtitle) {
+    slide.addText(subtitle, { x: 0.6, y, w: PPTX_SLIDE_W_IN - 1.2, h: 0.5, fontSize: 18, align: "center", color: "4b4f52" });
+    y += 0.5;
+  }
+  const generatedOn = new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  slide.addText("Generated " + generatedOn,
+    { x: 0.6, y: y + 0.25, w: PPTX_SLIDE_W_IN - 1.2, h: 0.4, fontSize: 12, align: "center", color: "666666" });
+}
+
+async function buildPlotsPptxBlob() {
+  const PptxGenJS = await getPptxGenJsLib();
+  const pptx = new PptxGenJS();
+  definePptxCopyrightMaster(pptx);
+  addPptxTitleSlide(pptx);
+  const images = extractPlotImages(elTabPlotsZoomInner);
+  if (!images.length) {
+    pptx.addSlide({ masterName: PPTX_MASTER_NAME }).addText(
+      "No plots were generated by this run.", { x: 0.5, y: 0.5, w: "90%", fontSize: 18 });
+  }
+  for (const img of images) {
+    const slide = pptx.addSlide({ masterName: PPTX_MASTER_NAME });
+    if (img.heading) slide.addText(img.heading, { x: 0.4, y: 0.15, w: PPTX_SLIDE_W_IN - 0.8, h: 0.4, fontSize: 16, bold: true });
+    // Bounded well short of the footer (PPTX_SLIDE_H_IN - 1.5, not just up to it) -- a plot at
+    // exactly the available height read as visually touching/covering the footer text in practice.
+    const dims = scaledImageDims(img.width, img.height, PPTX_SLIDE_W_IN - 0.8, PPTX_SLIDE_H_IN - 1.5);
+    slide.addImage({ data: img.dataUrl, x: (PPTX_SLIDE_W_IN - dims.width) / 2, y: 0.65, w: dims.width, h: dims.height });
+  }
+  return pptx.write("blob");
+}
+
+/* ### PDF export (Report/Plots tab -- toolbar + synthetic-row Download PDF) ###
+   Unlike DOCX/PPTX/ODT, where the document format itself is just a description that Word/
+   PowerPoint/LibreOffice paginates, a PDF is already a fixed sequence of laid-out pages -- ShareR
+   has to compute line-wrapping and page breaks by hand. Reuses the same jsPDF instance the per-
+   file exports (Stage 2D.7) already load. */
+
+const PDF_REPORT_MARGIN_MM = 15;
+const PDF_PLOTS_MARGIN_MM = 12;
+
+/* jsPDF's addImage() throws "Invalid string length" on a large source image -- confirmed by
+   reading the pinned build directly: an <img>/<canvas> element input is not actually a separate
+   code path from a raw data: URL string, it just extracts .src/.toDataURL() right back into the
+   same string and runs it through the same base64/PNG decode machinery, so passing an element
+   alone (an earlier fix attempt) does not bound anything. This app's own captured plots are a
+   fixed, modest size (CONFIG.FIG_WIDTH_PX x FIG_HEIGHT_PX), but an .Rmd's prose can embed an
+   arbitrary, much larger image (a high-resolution figure/photo), which is what actually triggers
+   this. Redrawing onto a canvas bounded to the pixel size the PDF page will ever display it at --
+   and re-encoding as JPEG, which skips PNG's alpha-channel decode/refilter step entirely -- keeps
+   the string jsPDF has to process small regardless of the source image's native resolution. */
+const JSPDF_IMAGE_PX_PER_MM = 4; // ~100dpi at the target print size -- ample for a chart/figure.
+function imageForJsPdf(imgEl, targetWidthMm, targetHeightMm) {
+  const w = Math.max(1, Math.round(targetWidthMm * JSPDF_IMAGE_PX_PER_MM));
+  const h = Math.max(1, Math.round(targetHeightMm * JSPDF_IMAGE_PX_PER_MM));
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h); // JPEG has no alpha -- flatten onto white first
+  ctx.drawImage(imgEl, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
+function setPdfRunFont(doc, run, size) {
+  if (run.code) { doc.setFont("Courier", run.bold ? "bold" : "normal"); doc.setFontSize(Math.max(size - 1, 7)); return; }
+  const style = run.bold && run.italic ? "bolditalic" : run.bold ? "bold" : run.italic ? "italic" : "normal";
+  doc.setFont("helvetica", style);
+  doc.setFontSize(size);
+}
+
+/* Word-by-word flow layout for one extractInlineRuns() run array, switching font/style per word so
+   inline bold/italic/code (e.g. a leading "**Summary**") wraps correctly instead of being flattened
+   to plain text. Not a general-purpose text engine -- word-level granularity only, matching this
+   file's existing best-effort tolerance elsewhere (comment-stripped regex heuristics, etc.);
+   good enough for prose, which is exactly what report paragraphs/headings/list items are.
+   addPageFn is called when a line would run past the bottom margin; it must addPage() and return
+   the new top-of-page y. Returns the y position after the last line drawn. */
+function renderPdfRuns(doc, runs, x, y, maxWidth, fontSize, lineHeight, pageBottom, addPageFn) {
+  const words = [];
+  for (const r of runs) {
+    const lines = r.text.split("\n");
+    lines.forEach((lineText, i) => {
+      if (i > 0) words.push({ newline: true });
+      for (const tok of lineText.split(/(\s+)/)) {
+        if (tok !== "") words.push({ text: tok, bold: r.bold, italic: r.italic, code: r.code });
+      }
+    });
+  }
+  let cx = x, cy = y;
+  for (const w of words) {
+    if (w.newline) { cx = x; cy += lineHeight; if (cy > pageBottom) cy = addPageFn(); continue; }
+    setPdfRunFont(doc, w, fontSize);
+    const isSpace = w.text.trim() === "";
+    if (isSpace && cx === x) continue; // never start a wrapped line with a leading space
+    const width = doc.getTextWidth(w.text);
+    if (!isSpace && cx + width > x + maxWidth && cx !== x) {
+      cx = x; cy += lineHeight;
+      if (cy > pageBottom) cy = addPageFn();
+    }
+    doc.text(w.text, cx, cy);
+    cx += width;
+  }
+  return cy + lineHeight;
+}
+
+async function buildReportPdfBlob() {
+  const { jsPDF, autoTable } = await getJsPdfLib();
+  const doc = new jsPDF();
+  const m = PDF_REPORT_MARGIN_MM;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const maxWidth = pageWidth - m * 2;
+  const pageBottom = pageHeight - m;
+  const addPage = () => { doc.addPage(); return m; };
+  let y = m;
+
+  const pieces = extractReportBlocks(elTabReportZoomInner).flatMap((b) => b.pieces);
+  if (!pieces.length) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(12);
+    doc.text("No report content was generated by this run.", m, y);
+  }
+  for (const piece of pieces) {
+    if (y > pageBottom) y = addPage();
+    if (piece.type === "heading") {
+      const size = Math.max(18 - piece.level * 2, 11);
+      y = renderPdfRuns(doc, piece.runs, m, y + 2, maxWidth, size, size * 0.45, pageBottom, addPage) + 1;
+    } else if (piece.type === "paragraph") {
+      y = renderPdfRuns(doc, piece.runs, m, y, maxWidth, 10, 5, pageBottom, addPage) + 1;
+    } else if (piece.type === "list") {
+      for (let i = 0; i < piece.items.length; i++) {
+        if (y > pageBottom) y = addPage();
+        const prefix = { text: piece.ordered ? (i + 1) + ". " : "• " };
+        y = renderPdfRuns(doc, [prefix, ...piece.items[i]], m + 4, y, maxWidth - 4, 10, 5, pageBottom, addPage);
+      }
+      y += 1;
+    } else if (piece.type === "table" && piece.rows.length) {
+      autoTable(doc, {
+        startY: y, head: [piece.rows[0]], body: piece.rows.slice(1),
+        styles: { fontSize: 8 }, margin: { left: m, right: m }
+      });
+      y = doc.lastAutoTable.finalY + 4;
+    } else if (piece.type === "chunkHeader") {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+      doc.text(piece.text, m, y);
+      y += 6;
+    } else if (piece.type === "code" || piece.type === "output") {
+      doc.setFont("Courier", "normal"); doc.setFontSize(8);
+      doc.setTextColor(piece.type === "output" ? 75 : 26);
+      for (const line of doc.splitTextToSize(piece.text, maxWidth)) {
+        if (y > pageBottom) y = addPage();
+        doc.text(line, m, y);
+        y += 4;
+      }
+      doc.setTextColor(0);
+      y += 1;
+    } else if (piece.type === "image") {
+      const dims = scaledImageDims(piece.width, piece.height, maxWidth, pageBottom - m);
+      if (y + dims.height > pageBottom) y = addPage();
+      const x = m + (maxWidth - dims.width) / 2;
+      if (piece.imgEl) doc.addImage(imageForJsPdf(piece.imgEl, dims.width, dims.height), "JPEG", x, y, dims.width, dims.height);
+      y += dims.height + 4;
+    }
+  }
+  addCopyrightFooterToJsPdf(doc);
+  return doc.output("blob");
+}
+
+// One plot per landscape page (same page-break-per-plot rule as the HTML/DOCX/ODT Plots exports),
+// laid out directly rather than through renderPdfRuns since a plot's own heading is a single short
+// run, not wrapped prose.
+async function buildPlotsPdfBlob() {
+  const { jsPDF } = await getJsPdfLib();
+  const doc = new jsPDF({ orientation: "landscape" });
+  const m = PDF_PLOTS_MARGIN_MM;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  const images = extractPlotImages(elTabPlotsZoomInner);
+  if (!images.length) {
+    doc.setFont("helvetica", "normal"); doc.setFontSize(12);
+    doc.text("No plots were generated by this run.", m, m + 8);
+  }
+  images.forEach((img, idx) => {
+    if (idx > 0) doc.addPage();
+    let y = m;
+    if (img.heading) {
+      doc.setFont("helvetica", "bold"); doc.setFontSize(13);
+      doc.text(img.heading, m, y + 5);
+      y += 11;
+    }
+    const dims = scaledImageDims(img.width, img.height, pageWidth - m * 2, pageHeight - y - m - 6);
+    // See imageForJsPdf's comment for why this redraws/re-encodes rather than handing jsPDF the
+    // source image directly.
+    if (img.imgEl) doc.addImage(imageForJsPdf(img.imgEl, dims.width, dims.height), "JPEG", (pageWidth - dims.width) / 2, y, dims.width, dims.height);
+  });
+  addCopyrightFooterToJsPdf(doc);
+  return doc.output("blob");
+}
+
+/* ### ODT export (Stage 2D.6.3) - hand-built ODF package, no templating library ###
+   No maintained, GPLv3-compatible ODF-templating library exists for the browser, and DOCX/PPTX/
+   XLSX/ODT are all zip containers anyway, so this builds the bounded, documented ODF XML skeleton
+   directly and zips it with fflate (already loaded) rather than adding a second zip library.
+   ODF's one real hard constraint: `mimetype` must be the archive's first entry, stored with no
+   compression -- a real reader-compatibility requirement, not a style choice -- which is why this
+   uses fflate.zipSync's per-file [data, {level}] tuple form and inserts "mimetype" as the first
+   object key, rather than the streaming Zip class zipEntriesToBlob (below) uses elsewhere in this
+   file (that class has no per-entry compression control). */
+
+const ODT_HEADING_STYLE_NAMES = ["Heading_1", "Heading_2", "Heading_3", "Heading_4", "Heading_5", "Heading_6"];
+
+function odtStylesXml(landscapeCm) {
+  const page = landscapeCm
+    ? 'fo:page-width="29.7cm" fo:page-height="21.001cm" style:print-orientation="landscape"'
+    : 'fo:page-width="21.001cm" fo:page-height="29.7cm" style:print-orientation="portrait"';
+  const headingStyles = ODT_HEADING_STYLE_NAMES.map((name, i) =>
+    '<style:style style:name="' + name + '" style:display-name="Heading ' + (i + 1) + '" ' +
+    'style:family="paragraph" style:parent-style-name="Heading">' +
+    '<style:paragraph-properties fo:margin-top="0.35cm" fo:margin-bottom="0.15cm"/>' +
+    '<style:text-properties fo:font-size="' + (18 - i * 2) + 'pt" fo:font-weight="bold"/></style:style>'
+  ).join("");
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ' +
+    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ' +
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">' +
+    '<office:styles>' +
+    '<style:default-style style:family="paragraph">' +
+    '<style:text-properties style:font-name="Liberation Sans" fo:font-size="11pt"/></style:default-style>' +
+    '<style:style style:name="Standard" style:family="paragraph" style:class="text">' +
+    '<style:paragraph-properties fo:margin-bottom="0.2cm"/></style:style>' +
+    '<style:style style:name="Heading" style:family="paragraph" style:class="text">' +
+    '<style:text-properties fo:font-weight="bold"/></style:style>' +
+    headingStyles +
+    '<style:style style:name="Footer" style:family="paragraph">' +
+    '<style:paragraph-properties fo:text-align="center"/>' +
+    '<style:text-properties fo:font-size="8pt" fo:color="#666666"/></style:style>' +
+    '</office:styles>' +
+    '<office:automatic-styles>' +
+    '<style:page-layout style:name="PM1"><style:page-layout-properties ' + page + ' fo:margin="2cm">' +
+    '</style:page-layout-properties><style:footer-style><style:header-footer-properties fo:min-height="1cm"/>' +
+    '</style:footer-style></style:page-layout>' +
+    '</office:automatic-styles>' +
+    '<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="PM1">' +
+    '<style:footer><text:p text:style-name="Footer">' + escapeHtml(getCopyrightFooterText()) + '</text:p></style:footer>' +
+    '</style:master-page></office:master-styles>' +
+    '</office:document-styles>';
+}
+
+// Converts one extractInlineRuns() run array into <text:span> markup, mirroring docxTextRuns for
+// ODT -- same follow-up fix, preserving bold/italic/inline-code instead of flattening to plain
+// text. \n from a rendered <br> becomes a real ODF line break, not a literal backslash-n.
+function odtInlineRunsXml(runs) {
+  return runs.map((r) => {
+    const body = escapeHtml(r.text).replace(/\n/g, "<text:line-break/>");
+    const styleName = r.code && r.bold ? "T_BoldCode" : r.code ? "T_Code" :
+      r.bold && r.italic ? "T_BoldItalic" : r.bold ? "T_Bold" : r.italic ? "T_Italic" : null;
+    return styleName ? '<text:span text:style-name="' + styleName + '">' + body + '</text:span>' : body;
+  }).join("");
+}
+
+// Builds one piece's <text:p>/<text:h>/<table:table>/<draw:frame> XML, appending any embedded
+// image's raw bytes to imageEntries as a side effect (collected once per document so
+// content.xml/manifest.xml/the zip entries can all stay in sync by construction).
+function odtXmlForPiece(piece, imageEntries, maxImageCm, extraParaStyle) {
+  const styleAttr = extraParaStyle ? ' text:style-name="' + extraParaStyle + '"' : "";
+  switch (piece.type) {
+    case "heading":
+      return '<text:h text:outline-level="' + piece.level + '" text:style-name="' +
+        ODT_HEADING_STYLE_NAMES[Math.min(Math.max(piece.level, 1), 6) - 1] + '">' + odtInlineRunsXml(piece.runs) + '</text:h>';
+    case "paragraph":
+      return '<text:p' + styleAttr + '>' + odtInlineRunsXml(piece.runs) + '</text:p>';
+    case "list":
+      return piece.items.map((itemRuns, i) =>
+        '<text:p>' + escapeHtml(piece.ordered ? (i + 1) + ". " : "• ") + odtInlineRunsXml(itemRuns) + '</text:p>').join("");
+    case "table":
+      return '<table:table><table:table-column table:number-columns-repeated="' +
+        (piece.rows[0] ? piece.rows[0].length : 1) + '"/>' +
+        piece.rows.map((row) => '<table:table-row>' +
+          row.map((cell) => '<table:table-cell office:value-type="string"><text:p>' + escapeHtml(cell) + '</text:p></table:table-cell>').join("") +
+          '</table:table-row>').join("") + '</table:table>';
+    case "chunkHeader":
+      return '<text:p' + (extraParaStyle ? styleAttr : ' text:style-name="P_ChunkHeader"') + '>' + escapeHtml(piece.text) + '</text:p>';
+    case "code":
+      return piece.text.split("\n").map((line) => '<text:p text:style-name="P_Code">' + escapeHtml(line) + '</text:p>').join("");
+    case "output":
+      return '<text:p text:style-name="P_Output">' + escapeHtml(piece.text) + '</text:p>';
+    case "image": {
+      const idx = imageEntries.length + 1;
+      const name = "image" + idx + ".png";
+      imageEntries.push({ name, bytes: dataUrlToUint8Array(piece.dataUrl) });
+      const dims = scaledImageDims(piece.width, piece.height, maxImageCm.width, maxImageCm.height);
+      return '<text:p' + styleAttr + '><draw:frame draw:style-name="Gr_Image" draw:name="' + name +
+        '" svg:width="' + dims.width + 'cm" svg:height="' + dims.height + 'cm" text:anchor-type="paragraph">' +
+        '<draw:image xlink:href="Pictures/' + name + '" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>' +
+        '</draw:frame></text:p>';
+    }
+    default:
+      return "";
+  }
+}
+
+const ODT_AUTOMATIC_STYLES =
+  '<style:style style:name="P_Code" style:family="paragraph">' +
+  '<style:text-properties style:font-name="Consolas" fo:font-size="9pt" fo:color="#1a1a1a"/></style:style>' +
+  '<style:style style:name="P_Output" style:family="paragraph">' +
+  '<style:text-properties style:font-name="Consolas" fo:font-size="9pt" fo:color="#4b4f52"/></style:style>' +
+  '<style:style style:name="P_ChunkHeader" style:family="paragraph">' +
+  '<style:text-properties fo:font-weight="bold"/></style:style>' +
+  '<style:style style:name="P_PageBreak" style:family="paragraph">' +
+  '<style:paragraph-properties fo:break-before="page"/></style:style>' +
+  '<style:style style:name="Gr_Image" style:family="graphic">' +
+  '<style:graphic-properties style:vertical-pos="top" style:horizontal-pos="center" style:wrap="none"/></style:style>' +
+  '<style:style style:name="T_Bold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>' +
+  '<style:style style:name="T_Italic" style:family="text"><style:text-properties fo:font-style="italic"/></style:style>' +
+  '<style:style style:name="T_BoldItalic" style:family="text">' +
+  '<style:text-properties fo:font-weight="bold" fo:font-style="italic"/></style:style>' +
+  '<style:style style:name="T_Code" style:family="text"><style:text-properties style:font-name="Consolas"/></style:style>' +
+  '<style:style style:name="T_BoldCode" style:family="text">' +
+  '<style:text-properties style:font-name="Consolas" fo:font-weight="bold"/></style:style>';
+
+function odtContentXml(bodyXml) {
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ' +
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ' +
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ' +
+    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ' +
+    'xmlns:xlink="http://www.w3.org/1999/xlink" ' +
+    'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.2">' +
+    '<office:automatic-styles>' + ODT_AUTOMATIC_STYLES + '</office:automatic-styles>' +
+    '<office:body><office:text>' + bodyXml + '</office:text></office:body>' +
+    '</office:document-content>';
+}
+
+function odtManifestXml(imageEntries) {
+  const imageManifestEntries = imageEntries.map((entry) =>
+    '<manifest:file-entry manifest:full-path="Pictures/' + entry.name +
+    '" manifest:media-type="image/png"/>').join("");
+  return '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">' +
+    '<manifest:file-entry manifest:full-path="/" manifest:version="1.2" ' +
+    'manifest:media-type="application/vnd.oasis.opendocument.text"/>' +
+    '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>' +
+    '<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>' +
+    imageManifestEntries + '</manifest:manifest>';
+}
+
+function buildOdtBlob(bodyXml, imageEntries, landscape) {
+  const entries = {
+    mimetype: [encodeUtf8("application/vnd.oasis.opendocument.text"), { level: 0 }],
+    "META-INF/manifest.xml": encodeUtf8(odtManifestXml(imageEntries)),
+    "content.xml": encodeUtf8(odtContentXml(bodyXml)),
+    "styles.xml": encodeUtf8(odtStylesXml(landscape))
+  };
+  for (const entry of imageEntries) entries["Pictures/" + entry.name] = entry.bytes;
+  return new Blob([fflate.zipSync(entries)], { type: "application/vnd.oasis.opendocument.text" });
+}
+
+const ODT_REPORT_MAX_IMAGE_CM = { width: 15, height: 12 };
+const ODT_PLOTS_MAX_IMAGE_CM = { width: 25, height: 14 };
+
+function buildReportOdtBlob() {
+  const pieces = extractReportBlocks(elTabReportZoomInner).flatMap((b) => b.pieces);
+  const imageEntries = [];
+  const bodyXml = pieces.length
+    ? pieces.map((p) => odtXmlForPiece(p, imageEntries, ODT_REPORT_MAX_IMAGE_CM, null)).join("")
+    : "<text:p>No report content was generated by this run.</text:p>";
+  return buildOdtBlob(bodyXml, imageEntries, false);
+}
+
+function buildPlotsOdtBlob() {
+  const images = extractPlotImages(elTabPlotsZoomInner);
+  const imageEntries = [];
+  const bodyXml = images.length
+    ? images.map((img, idx) => {
+        const heading = odtXmlForPiece(
+          { type: "heading", level: 2, text: img.heading || ("Plot " + (idx + 1)) },
+          imageEntries, ODT_PLOTS_MAX_IMAGE_CM, idx > 0 ? "P_PageBreak" : null);
+        const image = odtXmlForPiece(
+          { type: "image", dataUrl: img.dataUrl, width: img.width, height: img.height },
+          imageEntries, ODT_PLOTS_MAX_IMAGE_CM, null);
+        return heading + image;
+      }).join("")
+    : "<text:p>No plots were generated by this run.</text:p>";
+  return buildOdtBlob(bodyXml, imageEntries, true);
 }
 
 /* fflate's streaming Zip/ZipPassThrough classes (spec 10.4: "use fflate's streaming API so a
@@ -4372,6 +5452,7 @@ function clearResultsForNewRun() {
   elTabPlotsZoomInner.innerHTML = "";
   elTabFilesPanel.innerHTML = "";
   elDownloadZipButton.disabled = true;
+  setResultsExportButtonsDisabled(true);
   App.lastRunInfo = null;
   App.executionLogLines = [];
   elLog.textContent = "";
@@ -4572,6 +5653,12 @@ const elErrorModalLogButton = document.getElementById("error-modal-log-button");
 
 const elPrintResultsButton = document.getElementById("print-results-button");
 const elDownloadZipButton = document.getElementById("download-zip-button");
+const elResultsExportGroup = document.getElementById("results-export-group");
+const elExportHtmlButton = document.getElementById("export-html-button");
+const elExportDocxButton = document.getElementById("export-docx-button");
+const elExportOdtButton = document.getElementById("export-odt-button");
+const elExportPptxButton = document.getElementById("export-pptx-button");
+const elExportPdfButton = document.getElementById("export-pdf-button");
 const elConsoleToggleButton = document.getElementById("console-toggle-button");
 const elReportLoadingOverlay = document.getElementById("report-loading-overlay");
 const elReportLoadingBarFill = document.getElementById("report-loading-bar-fill");
@@ -5152,6 +6239,10 @@ function activateTab(index) {
   // wide charts, so the floating control has nothing useful to do there.
   elZoomControl.hidden = index === 2;
   elPrintResultsButton.hidden = index === 2;
+  elResultsExportGroup.hidden = index === 2;
+  // PowerPoint only makes sense for a plot gallery, not a mixed prose/code/output report -- hidden
+  // (not just disabled) outside the Plots tab, per explicit follow-up direction.
+  elExportPptxButton.hidden = index !== 1;
 }
 
 function initResultsTabs() {
@@ -5518,6 +6609,57 @@ elPrintResultsButton.addEventListener("click", () => {
   window.print();
 });
 elDownloadZipButton.addEventListener("click", downloadResultsZip);
+
+function setResultsExportButtonsDisabled(disabled) {
+  for (const btn of [elExportHtmlButton, elExportDocxButton, elExportOdtButton, elExportPptxButton, elExportPdfButton]) btn.disabled = disabled;
+}
+
+// Names an exported file after the active script plus which tab/kind it came from -- shared by
+// the toolbar's tab-driven exports and the synthetic rows' fixed-kind exports (Stage 2D.6/2D.8/9).
+function exportFilenameFor(kind, extension) {
+  const base = basenameOf(App.selectedEntryPath || "sharer-export").replace(/\.[^.]+$/, "");
+  return base + "-" + kind + "." + extension;
+}
+
+/* Shared by all five Report/Plots export buttons (Stage 2D.6): shows a transient "Building..."
+   state on the clicked button only (the others stay clickable), names the file after the active
+   script plus which tab it came from, and surfaces a build failure the same way
+   downloadResultsZip already does -- into the log, never a silent failure. */
+async function handleExportButtonClick(button, buildBlob, extension) {
+  if (button.disabled) return;
+  const labelEl = button.querySelector(".btn-text");
+  const originalLabel = labelEl.textContent;
+  button.disabled = true;
+  labelEl.textContent = "Building...";
+  try {
+    const blob = await buildBlob();
+    downloadBlob(blob, exportFilenameFor(getActiveTabIndex() === 1 ? "plots" : "report", extension));
+  } catch (err) {
+    appendLogLine("error", "Could not build the " + extension.toUpperCase() + " export: " +
+      (err && err.message ? err.message : err));
+  } finally {
+    button.disabled = false;
+    labelEl.textContent = originalLabel;
+  }
+}
+
+elExportHtmlButton.addEventListener("click", () => handleExportButtonClick(elExportHtmlButton, async () => {
+  const html = getActiveTabIndex() === 1 ? renderPlotsAsSelfContainedHtml() : await renderReportAsSelfContainedHtml();
+  return new Blob([html], { type: "text/html" });
+}, "html"));
+
+elExportDocxButton.addEventListener("click", () => handleExportButtonClick(elExportDocxButton,
+  () => (getActiveTabIndex() === 1 ? buildPlotsDocxBlob() : buildReportDocxBlob()), "docx"));
+
+elExportOdtButton.addEventListener("click", () => handleExportButtonClick(elExportOdtButton,
+  async () => (getActiveTabIndex() === 1 ? buildPlotsOdtBlob() : buildReportOdtBlob()), "odt"));
+
+// PowerPoint only ever covers Plots -- the button itself is hidden outside that tab (activateTab),
+// so no active-tab branch is needed here the way the other three export buttons have.
+elExportPptxButton.addEventListener("click", () => handleExportButtonClick(elExportPptxButton, buildPlotsPptxBlob, "pptx"));
+
+elExportPdfButton.addEventListener("click", () => handleExportButtonClick(elExportPdfButton,
+  () => (getActiveTabIndex() === 1 ? buildPlotsPdfBlob() : buildReportPdfBlob()), "pdf"));
 
 /* ### Bootstrap ### */
 
