@@ -1317,14 +1317,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" id="open-load-modal-empty-button" class="btn btn-action btn-sm">Load a script</button>
       </div>
 
-      <div id="entry-candidates" hidden>
-        <fieldset>
-          <legend>Multiple script files were found in this repository. Choose one to run:</legend>
-          <div id="entry-candidates-list"></div>
-        </fieldset>
-        <button type="button" id="choose-entry-button" class="btn btn-secondary btn-sm">Use selected file</button>
-      </div>
-
       <div id="staging-messages" class="staging-messages" role="status" aria-live="polite"></div>
 
       <div class="section">
@@ -2321,8 +2313,9 @@ async function stageDirectoryPrefix(repoInfo, tree, refUsed, prefix, staged, mes
   });
 }
 
-/* The safety net for "entry point could not be confidently determined" (multiple candidate root
-   scripts) and for a script whose own source() calls could not be statically resolved at all. */
+/* Used when the entry point was auto-detected rather than named explicitly, so every other script
+   in the repo is also staged for the script-picker popover, and as a safety net for a script whose
+   own source() calls could not be statically resolved at all. */
 async function stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, ctx) {
   const scriptEntries = tree.entries.filter((e) => /\.(r|rmd)$/i.test(e.path));
   await runWithConcurrency(scriptEntries, CONFIG.FETCH_CONCURRENCY, async (entry) => {
@@ -2447,18 +2440,22 @@ async function fetchSkippedLargeFiles(repoInfo, tree, refUsed, staged, messages,
   }
 }
 
-/* Entry-point auto-detection (spec section 5.3), used only when repo= is given and entry= is not. */
+/* Entry-point auto-detection (spec section 5.3), used only when repo= is given and entry= is not.
+   Always resolves to a single best-guess path, even when several root-level scripts exist and none
+   match the main.r/run.r convention -- the researcher can switch to a different staged script at
+   any time via the script-picker popover (TODO.md Stage 2D.2), so prompting up front before
+   anything has even run is a workspace-cluttering extra step, not a real decision point. */
 function autoDetectEntry(entries) {
   const rootByLower = new Map();
   for (const e of entries) if (!e.path.includes("/")) rootByLower.set(e.path.toLowerCase(), e.path);
   for (const name of ["main.r", "run.r", "main.rmd", "run.rmd"]) {
-    if (rootByLower.has(name)) return { path: rootByLower.get(name), candidates: null };
+    if (rootByLower.has(name)) return rootByLower.get(name);
   }
   const EXCLUDE_DIRS = ["tests/", "test/", "man/", "r/", "inst/", "vignettes/", "renv/", "packrat/"];
   const scripts = entries.filter((e) => /\.(r|rmd)$/i.test(e.path) &&
     !EXCLUDE_DIRS.some((d) => e.path.toLowerCase().startsWith(d)));
   if (scripts.length === 0) throw new ShareRError("No .R or .Rmd files were found in this repository.");
-  if (scripts.length === 1) return { path: scripts[0].path, candidates: null };
+  if (scripts.length === 1) return scripts[0].path;
   const sorted = scripts.slice().sort((a, b) => {
     const aRoot = !a.path.includes("/"), bRoot = !b.path.includes("/");
     if (aRoot !== bRoot) return aRoot ? -1 : 1;
@@ -2466,7 +2463,7 @@ function autoDetectEntry(entries) {
     if (aRmd !== bRmd) return aRmd ? -1 : 1;
     return a.path.localeCompare(b.path);
   });
-  return { path: null, candidates: sorted.map((e) => e.path) };
+  return sorted[0].path;
 }
 
 /* ### Directory resolution for data= (spec section 5.1) ### */
@@ -2579,7 +2576,7 @@ async function stageEntryFileFromUrl(url, staged, messages) {
    added before or after a Load are never lost) and reports progress/errors into `messages`. */
 async function stageFromParams(params, staged, messages, onProgress) {
   const report = (text) => { if (onProgress) onProgress(text); };
-  let repoInfo = null, refUsed = null, tree = null, explicitEntryPath = null, candidates = null;
+  let repoInfo = null, refUsed = null, tree = null, explicitEntryPath = null;
   let repoSyncCtx = null;
 
   // A github.com file-view ("blob") or "raw" link isn't fetchable directly -- github.com sends
@@ -2614,6 +2611,7 @@ async function stageFromParams(params, staged, messages, onProgress) {
   // Resolve which script is the entry point before downloading anything, so only the files
   // actually needed get fetched instead of mirroring the whole repository (spec section 0.1).
   let repoEntryPath = null;
+  let entryAutoDetected = false;
   if (effectiveEntryRaw && !/^https?:\/\//i.test(effectiveEntryRaw)) {
     if (!repoInfo) throw new ShareRError('entry="' + effectiveEntryRaw + '" looks like a repository-relative path, but no repo= parameter was given.');
     if (!RE_PATH.test(effectiveEntryRaw)) throw new ShareRError("Not a valid repository path: " + effectiveEntryRaw);
@@ -2621,8 +2619,8 @@ async function stageFromParams(params, staged, messages, onProgress) {
     if (found) repoEntryPath = found.path;
     else messages.push({ level: "error", text: "Entry file not found in repository: " + effectiveEntryRaw });
   } else if (!effectiveEntryRaw && repoInfo) {
-    const detected = autoDetectEntry(tree.entries);
-    if (detected.path) repoEntryPath = detected.path; else candidates = detected.candidates;
+    repoEntryPath = autoDetectEntry(tree.entries);
+    entryAutoDetected = true;
   }
 
   if (repoInfo) {
@@ -2631,14 +2629,14 @@ async function stageFromParams(params, staged, messages, onProgress) {
     if (repoEntryPath) {
       explicitEntryPath = repoEntryPath;
       await syncScriptDependencies(repoInfo, tree, refUsed, repoEntryPath, staged, messages, repoSyncCtx);
+      // Auto-detection picked a best guess without the researcher's confirmation (no entry= given),
+      // so also stage every other script in the repo -- otherwise the script-picker popover
+      // (Stage 2D.2) would only ever offer the one script ShareR happened to guess, with no way to
+      // switch to a sibling script that source()/child= dependency-walking never had reason to visit.
+      if (entryAutoDetected) await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
       if (params.dataValues.length === 0) {
         await autoDetectAndStageData(repoInfo, tree, refUsed, repoSyncCtx, staged, messages);
       }
-    } else if (candidates) {
-      // Entry is ambiguous; fetch every script so whichever the user picks is already staged.
-      // Data auto-detection runs once the choice is resolved (see completeCandidateSelection),
-      // since which script is authoritative is not known yet.
-      await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
     }
   }
 
@@ -2704,7 +2702,7 @@ async function stageFromParams(params, staged, messages, onProgress) {
     }
   }
 
-  return { repoInfo, refUsed, tree, explicitEntryPath, candidates, repoSyncCtx };
+  return { repoInfo, refUsed, tree, explicitEntryPath, repoSyncCtx };
 }
 
 /* ### Local file handling: real button, drop target, and paste target (spec section 7) ### */
@@ -2809,7 +2807,6 @@ const App = {
   refUsed: null,
   tree: null,
   explicitEntryPath: null,
-  candidates: null,
   selectedEntryPath: null,
   repoSyncCtx: null,       // budget + decoded-script-text cache shared across the whole repo sync
   dataValuesExplicit: false, // true when data= was given; suppresses the data auto-detection heuristic
@@ -4532,10 +4529,6 @@ const elAddFolderButton = document.getElementById("add-folder-button");
 const elFileInput = document.getElementById("file-input");
 const elFolderInput = document.getElementById("folder-input");
 
-const elEntryCandidates = document.getElementById("entry-candidates");
-const elEntryCandidatesList = document.getElementById("entry-candidates-list");
-const elChooseEntryButton = document.getElementById("choose-entry-button");
-
 const elScriptPickerPopover = document.getElementById("script-picker-popover");
 const elScriptPickerTree = document.getElementById("script-picker-tree");
 const elRunSourceLine = document.getElementById("run-source-line");
@@ -4747,31 +4740,6 @@ function renderStagedFiles() {
   }
 }
 
-function renderEntryCandidates() {
-  if (!App.candidates) {
-    elEntryCandidates.hidden = true;
-    elEntryCandidatesList.innerHTML = "";
-    return;
-  }
-  elEntryCandidates.hidden = false;
-  elEntryCandidatesList.innerHTML = "";
-  App.candidates.forEach((path, i) => {
-    const id = "entry-candidate-" + i;
-    const wrap = document.createElement("div");
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "entry-candidate";
-    radio.id = id;
-    radio.value = path;
-    if (i === 0) radio.checked = true;
-    const label = document.createElement("label");
-    label.htmlFor = id;
-    label.textContent = " " + path;
-    wrap.append(radio, label);
-    elEntryCandidatesList.appendChild(wrap);
-  });
-}
-
 /* Groups a flat staged-scripts array into a nested plain-object tree by "/"-splitting each path,
    for the script picker popover (Stage 2D.2). Folders are never real nodes with their own
    identity beyond grouping -- only leaves carry a staged-file entry. */
@@ -4858,11 +4826,11 @@ function renderRunSourceLine() {
     : "No script loaded yet.";
 }
 
-/* Shows the "no script loaded" prompt in the workspace pane whenever there is nothing to run and
-   nothing pending a choice (spec: URL parameters drive loading; researchers only see a way to add
-   a script here, never an always-on form). */
+/* Shows the "no script loaded" prompt in the workspace pane whenever there is nothing to run
+   (spec: URL parameters drive loading; researchers only see a way to add a script here, never an
+   always-on form). */
 function updateWorkspaceEmptyState() {
-  elWorkspaceEmptyState.hidden = !!(App.selectedEntryPath || App.candidates);
+  elWorkspaceEmptyState.hidden = !!App.selectedEntryPath;
 }
 
 function updateRunControls() {
@@ -5131,13 +5099,12 @@ function closeLoadModal() {
   if (elLoadModal.open) elLoadModal.close();
 }
 
-/* Auto-closes the modal once loading resolved to something actionable: a runnable entry script,
-   or an ambiguous-entry candidate list the researcher can now choose from in the workspace pane.
-   Left open on a genuine failure (nothing staged, nothing to choose from) so the error message in
-   the modal's own staging-status line stays visible instead of hiding behind a closed dialog. */
+/* Auto-closes the modal once loading resolved to a runnable entry script. Left open on a genuine
+   failure (nothing staged) so the error message in the modal's own staging-status line stays
+   visible instead of hiding behind a closed dialog. */
 function maybeCloseLoadModalAfterStaging() {
   if (!elLoadModal.open) return;
-  if (App.selectedEntryPath || App.candidates) closeLoadModal();
+  if (App.selectedEntryPath) closeLoadModal();
 }
 
 /* ### UI: run-failure error modal ###
@@ -5418,17 +5385,15 @@ async function runStagingPipeline(params) {
     App.repoInfo = result.repoInfo;
     App.refUsed = result.refUsed;
     App.tree = result.tree;
-    App.candidates = result.candidates;
     App.repoSyncCtx = result.repoSyncCtx;
     App.dataValuesExplicit = params.dataValues.length > 0;
     App.packagesExplicitList = params.packagesRaw ? params.packagesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     if (result.explicitEntryPath) App.explicitEntryPath = result.explicitEntryPath;
     renderStagingMessages(messages, false);
-    renderEntryCandidates();
     updateSelectedEntry();
     setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
-    if (params.autorun && App.selectedEntryPath && !App.candidates) await runEntry();
+    if (params.autorun && App.selectedEntryPath) await runEntry();
   } catch (err) {
     if (err instanceof ShareRRateLimitError) {
       const resetText = err.resetDate ? err.resetDate.toLocaleTimeString() : "an unknown time";
@@ -5531,47 +5496,6 @@ document.addEventListener("paste", (e) => {
   if (files && files.length) handleLocalFiles(Array.from(files).map((f) => ({ file: f, relPath: f.name })));
 });
 
-/* The initial ambiguous-entry sync only fetched every script's *text* (stageAllScriptFiles); it
-   never ran the data auto-detection, because which script is authoritative was not known yet.
-   Once the visitor picks one, resolve its own source() dependencies (almost certainly already
-   staged, but a script under an excluded directory, e.g. tests/, would not be) and then run data
-   auto-detection against the now-complete script-text cache, unless data= was given explicitly. */
-async function completeCandidateSelection(chosenPath) {
-  App.explicitEntryPath = chosenPath;
-  App.candidates = null;
-  syncUrlBar({ entry: chosenPath });
-  renderEntryCandidates();
-  updateSelectedEntry();
-
-  if (App.repoInfo && App.tree) {
-    elChooseEntryButton.disabled = true;
-    setStagingStatus("Fetching " + chosenPath + " and its dependencies...");
-    const messages = [];
-    const ctx = App.repoSyncCtx || makeRepoSyncCtx();
-    App.repoSyncCtx = ctx;
-    try {
-      await syncScriptDependencies(App.repoInfo, App.tree, App.refUsed, chosenPath, App.stagedStore, messages, ctx);
-      if (!App.dataValuesExplicit) {
-        await autoDetectAndStageData(App.repoInfo, App.tree, App.refUsed, ctx, App.stagedStore, messages);
-      }
-    } catch (err) {
-      messages.push({ level: "error", text: err.message || String(err) });
-      console.error(err);
-    } finally {
-      renderStagingMessages(messages, true);
-      setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
-      elChooseEntryButton.disabled = false;
-      updateSelectedEntry();
-    }
-  }
-}
-
-elChooseEntryButton.addEventListener("click", () => {
-  const checked = elEntryCandidatesList.querySelector('input[name="entry-candidate"]:checked');
-  if (!checked) return;
-  completeCandidateSelection(checked.value);
-});
-
 elScriptPickerPopover.addEventListener("beforetoggle", (e) => {
   if (e.newState === "open") positionScriptPickerPopover();
 });
@@ -5632,7 +5556,7 @@ function bootstrap() {
     // the URL; runStagingPipeline() itself calls updateSelectedEntry(), which is what closes the
     // modal on success, so this .then() only needs to handle the "still nothing to run" case.
     runStagingPipeline(params).then(() => {
-      if (!App.selectedEntryPath && !App.candidates) openLoadModal();
+      if (!App.selectedEntryPath) openLoadModal();
     });
   } else {
     updateSelectedEntry();
