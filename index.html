@@ -39,13 +39,18 @@ with this program. If not, see https://www.gnu.org/licenses/.
   runtime needs it to load libRblas.so/libRlapack.so) and 'connect-src https:' is what lets this
   stage fetch a script or data file from an arbitrary host (spec sections 5.1 and 5.5), call the
   GitHub API (spec section 6), and load js-yaml/marked/DOMPurify/fflate from jsDelivr (section 3.6).
+  'style-src https:' (added Stage 2D.1) mirrors script-src's existing https: allowance so
+  prism-code-editor's dynamically-injected layout.css <link> (also served from jsDelivr) isn't
+  silently dropped -- it was, before this line was added, which stripped all of that stylesheet's
+  layout rules (whitespace handling, gutter/line-number rendering, textarea-transparency) with no
+  console-visible break in the app itself, just a wrong-looking editor.
 -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
   script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https:;
   worker-src 'self' blob:;
   connect-src 'self' https: http://localhost:* http://127.0.0.1:*;
-  style-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline' https:;
   img-src 'self' data: blob: https:;
   font-src 'self' data:;
 ">
@@ -520,10 +525,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
     height: 26px;
   }
 
-  /* ---------- Source code editor: dark theme, gutter markers, safe token-based highlighting ----------
-     Every line is built from createElement()/textContent/createTextNode calls only (see
-     appendTokenizedLine()); author-controlled script text is never assigned via innerHTML
-     (spec 0.1 / AGENTS.md section 7). */
+  /* ---------- Source code editor: prism-code-editor (Stage 2D.1) ----------
+     The editor library owns line/token DOM construction; ShareR only sets its CSS custom
+     properties (theming) and hand-written .token.* colors to match this app's existing VS Code
+     Dark+ palette, and positions output-marker buttons directly into editor.lines[n] (see
+     annotateSourceViewerOutputMarkers). */
 
   /* flex:1 (not a fixed max-height) lets this claim exactly the vertical space .panel-scroll has
      left, so .editor-body's own overflow is normally the only scrollbar in the whole pane -- see
@@ -550,58 +556,90 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-bottom: 1px solid #444;
     font-family: ui-monospace, Consolas, monospace;
     word-break: break-all;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
+  .editor-header-filename {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .editor-header-actions { display: flex; gap: 0.25rem; flex: 0 0 auto; }
+  /* .ghost-icon-btn's base rule (below) is written for a single absolutely-positioned corner
+     button over a hover-card; this context-scoped override adapts the same shape/hover behavior
+     to a row of two static toolbar buttons instead. */
+  .editor-header .editor-toolbar-btn {
+    position: static;
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    border-color: transparent;
+    color: #9cdcfe;
+    opacity: 1;
+  }
+  .editor-header .editor-toolbar-btn svg { width: 15px; height: 15px; }
+  .editor-header .editor-toolbar-btn:hover { background: rgba(255, 255, 255, 0.12); }
   .editor-body {
     flex: 1;
-    overflow: auto;
+    overflow: hidden; /* .prism-code-editor itself scrolls (layout.css); this is a sizing box only,
+                          not a second scroll container -- see .prism-code-editor rule below. */
+  }
+  /* prism-code-editor theming: CSS custom properties consumed by dist/layout.css, set from this
+     app's own dark-editor palette rather than one of the library's bundled themes, for pixel
+     parity with the rest of ShareR (spec section 13 / Stage 2D.1). Deliberately unscoped to any
+     ancestor (not ".editor-body .prism-code-editor") -- Maximize (Stage 2D.1 Step 4) re-parents
+     the same editor.container into #source-maximize-body, a sibling location outside .editor-body
+     entirely; an ancestor-scoped rule would silently stop applying there; every child of
+     .prism-code-editor (theming, tokens, line/marker layout) that must survive that move belongs
+     directly on .prism-code-editor and its descendants, never gated on where it's currently mounted. */
+  .prism-code-editor {
+    --pce-bg: var(--source-bg);
+    --pce-cursor: var(--source-fg);
+    --pce-selection: rgba(38, 79, 120, 0.6);
+    --pce-line-number: var(--source-gutter);
+    --pce-bg-highlight: rgba(255, 255, 255, 0.04);
+    --pce-border-highlight: none;
+    /* --padding-inline is included on the *left* edge of the line-number gutter block (before the
+       right-aligned digits, per layout.css's --padding-left formula) -- widened here to reserve a
+       blank strip for the output-marker button placed by annotateSourceViewerOutputMarkers,
+       without needing to fight the digits' own box. Confirm spacing live once markers render. */
+    --padding-inline: 1.6em;
+    height: 100%;
+    color: var(--source-fg);
     font-family: ui-monospace, Consolas, "Courier New", monospace;
     font-size: 0.8rem;
-    line-height: 1.5;
-    padding: 0.3rem 0;
     scrollbar-width: thin;
     scrollbar-color: #9ca3af rgba(45, 45, 45, 0.35);
   }
-  .editor-body::-webkit-scrollbar {
+  .prism-code-editor::-webkit-scrollbar {
     width: 10px;
     height: 10px;
   }
-  .editor-body::-webkit-scrollbar-track {
+  .prism-code-editor::-webkit-scrollbar-track {
     background: rgba(45, 45, 45, 0.35);
     border-radius: 999px;
   }
-  .editor-body::-webkit-scrollbar-thumb {
+  .prism-code-editor::-webkit-scrollbar-thumb {
     background-color: #9ca3af;
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
     min-height: 24px;
   }
-  .code-line { display: flex; }
-  .code-line:hover { background: #2a2d2e; }
-  .gutter {
-    flex: 0 0 auto;
-    width: 54px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.2rem;
-    padding-right: 6px;
-    color: var(--source-gutter);
-    border-right: 1px solid #404040;
-    margin-right: 8px;
-    user-select: none;
-  }
-  .marker-slot {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    min-width: 0;
-    margin-left: 0.15rem;
-  }
-  .code-text { white-space: pre; padding-right: 0.75rem; }
-  .syn-comment { color: #6a9955; font-style: italic; }
-  .syn-func { color: #dcdcaa; }
-  .syn-string { color: #ce9178; }
+  /* Hand-written token colors matching the VS Code Dark+ palette this app already uses elsewhere
+     (spec 0.1 / AGENTS.md section 7 -- highlighting is CSS-only, never a source of executed code). */
+  .prism-code-editor .token.comment { color: #6a9955; font-style: italic; }
+  .prism-code-editor .token.string { color: #ce9178; }
+  .prism-code-editor .token.keyword { color: #569cd6; }
+  .prism-code-editor .token.boolean { color: #569cd6; }
+  .prism-code-editor .token.number { color: #b5cea8; }
+  .prism-code-editor .token.operator,
+  .prism-code-editor .token.percent-operator { color: #d4d4d4; }
+  .prism-code-editor .token.punctuation { color: #d4d4d4; }
+  .prism-code-editor .pce-line { position: relative; }
 
   /* ---------- Results pane ---------- */
   .results-pane { flex: 2 1 480px; min-width: 0; }
@@ -863,6 +901,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
     justify-content: center;
   }
   .output-marker:hover { transform: scale(1.15); }
+  /* Positioned into the blank strip --padding-inline reserves at the left edge of the line-number
+     gutter block (see .prism-code-editor above) -- sits over the sticky number column (layout.css
+     gives it z-index:2) rather than inside a dedicated slot element, since prism-code-editor's
+     line divs don't have one. Unscoped to .prism-code-editor (not ".editor-body .output-marker")
+     for the same reason as the theming rules above: markers must keep working if they happen to
+     be placed (or already present) while the editor is re-parented into the Maximize dialog.
+     pointer-events:auto is load-bearing, not decorative: layout.css sets pointer-events:none on
+     the whole .pce-wrapper (so mouse interaction routes through the real <textarea> layered on
+     top) and only opts the textarea itself back in -- without this override the marker inherits
+     "none" and renders visibly but can never be clicked. */
+  .prism-code-editor .output-marker {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 3;
+    font-size: 0.75rem;
+    pointer-events: auto;
+  }
+  .prism-code-editor .output-marker:hover { transform: translateY(-50%) scale(1.2); }
   @keyframes sharerHighlightFlash {
     0% { background-color: #fef08a; box-shadow: 0 0 0 3px #eab308; }
     100% { background-color: inherit; box-shadow: none; }
@@ -987,7 +1045,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     background: var(--um-dark-blue);
     color: var(--um-white);
   }
-  .modal-header h2 { margin: 0; font-size: 1.1rem; }
+  .modal-header h2 { margin: 0; font-size: 1.1rem; color: var(--um-white); }
   .modal-close {
     background: none;
     border: none;
@@ -996,8 +1054,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
     line-height: 1;
     cursor: pointer;
     padding: 0 0.25rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .modal-close:hover, .modal-close:focus-visible { color: var(--um-maize); }
+  .modal-close svg { width: 16px; height: 16px; }
   .modal-body { padding: 1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
 
   /* ---------- Error modal: replaces a bare alert() so a run failure reads as a designed part of
@@ -1019,6 +1081,47 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .error-modal-body { padding: 1.1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
   .error-modal-message { margin: 0; white-space: pre-line; line-height: 1.5; }
   .error-modal-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.25rem; }
+
+  /* ---------- "Maximize editor" modal (Stage 2D.1): near-fullscreen, unlike the two dialogs above
+     -- editor.container is re-parented into .source-maximize-body on open and back into
+     #source-code-lines on close (see openSourceMaximizeModal). The [open] qualifier on the
+     display:flex rule matters: without it, the id selector's specificity would beat the UA
+     stylesheet's dialog:not([open]){display:none}, leaving an empty flex box visible in normal
+     page flow even while the dialog is closed. ---------- */
+  dialog#source-maximize-modal[open] {
+    display: flex;
+    flex-direction: column;
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    width: min(1400px, 96vw);
+    height: 92vh;
+    max-height: 92vh;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  }
+  dialog#source-maximize-modal::backdrop { background: rgba(0, 39, 76, 0.55); }
+  /* This dialog's header uses the same .editor-toolbar-btn shape as the inline editor's own
+     header, but white icons instead of the inline header's #9cdcfe blue -- .modal-header's dark
+     blue background needs the higher-contrast color the app's other modal chrome already uses. */
+  .modal-header .editor-toolbar-btn {
+    position: static;
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--um-white);
+    opacity: 1;
+  }
+  .modal-header .editor-toolbar-btn svg { width: 15px; height: 15px; }
+  .modal-header .editor-toolbar-btn:hover,
+  .modal-header .editor-toolbar-btn:focus-visible { background: rgba(255, 255, 255, 0.15); }
+  .source-maximize-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    background: var(--source-bg);
+  }
+  .source-maximize-body .prism-code-editor { flex: 1; }
 
   /* Plain neutral-gray buttons, deliberately not U-M maize/blue: this dialog reports a problem, and
      a bright brand-colored action button reads as an inviting call-to-action, not a neutral
@@ -1186,7 +1289,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </div>
 
       <div id="source-editor" class="editor-container" hidden>
-        <div id="source-viewer-filename" class="editor-header"></div>
+        <div class="editor-header">
+          <!-- Plain text for now, not a <button> -- Stage 2D.2 converts this into the real
+               script-picker popover trigger (aria-haspopup etc.); until that behavior exists, a
+               clickable-looking control here would be a false affordance. -->
+          <div id="source-viewer-filename" class="editor-header-filename"></div>
+          <div class="editor-header-actions">
+            <button type="button" id="source-download-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Download script" title="Download script"></button>
+            <button type="button" id="source-maximize-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Maximize editor" title="Maximize"></button>
+          </div>
+        </div>
         <div id="source-code-lines" class="editor-body"></div>
       </div>
 
@@ -1342,6 +1454,17 @@ with this program. If not, see https://www.gnu.org/licenses/.
   </div>
 </dialog>
 
+<dialog id="source-maximize-modal" class="source-maximize-modal" aria-labelledby="source-maximize-title">
+  <div class="modal-header">
+    <h2 id="source-maximize-title"></h2>
+    <div class="editor-header-actions">
+      <button type="button" id="source-maximize-download-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Download script" title="Download script"></button>
+      <button type="button" id="close-source-maximize-button" class="modal-close" aria-label="Exit fullscreen" title="Exit fullscreen"></button>
+    </div>
+  </div>
+  <div id="source-maximize-body" class="source-maximize-body"></div>
+</dialog>
+
 <footer class="app-footer">
   <div class="footer-credits">
     <span>&copy; 2026 The Regents of the University of Michigan</span>
@@ -1374,6 +1497,13 @@ const CONFIG = Object.freeze({
   WEBR_VERSION:            "0.6.0",
   WEBR_BASE_URL:           "https://webr.r-wasm.org/v0.6.0/",
   WEBR_CDN_URL:            "https://cdn.jsdelivr.net/npm/webr@0.6.0/dist/webr.js",
+  // prism-code-editor: zero runtime dependencies, single published bundle (spec section 3,
+  // Stage 2D.1) -- loaded the same lazy-dynamic-import way as webR above, on first script render.
+  PRISM_CODE_EDITOR_VERSION:        "5.3.0",
+  PRISM_CODE_EDITOR_CDN_URL:        "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/index.js",
+  PRISM_CODE_EDITOR_LANG_R_CDN_URL: "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/languages/r.js",
+  PRISM_CODE_EDITOR_PRISM_R_CDN_URL:"https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/prism/languages/r.js",
+  PRISM_CODE_EDITOR_LAYOUT_CSS_URL: "https://cdn.jsdelivr.net/npm/prism-code-editor@5.3.0/dist/layout.css",
   WEBR_REPO_URL:           "https://repo.r-wasm.org",
   // Fallback only (installPackagesWithProgress), never merged into the primary install call:
   // webR's install() reads all repos as one vectorized available.packages() call, and these
@@ -2572,11 +2702,17 @@ async function writeStagedFilesToVfs(engine, list) {
   }
   const sortedDirs = Array.from(dirs).sort((a, b) => a.split("/").length - b.split("/").length);
   for (const dir of sortedDirs) {
-    try { await engine.FS.mkdir(dir); }
-    catch (err) {
-      // webR.FS throws rather than returning null (spec 3.3); ignore only "already exists".
-      if (!/exist/i.test(String(err && err.message || err))) throw err;
-    }
+    // Check first rather than mkdir-and-swallow-the-error: re-running the same script without an
+    // intervening Stop (routine now that the source editor is directly editable, Stage 2D.1) means
+    // these directories usually already exist by the second Run. The previous approach caught the
+    // mkdir failure and pattern-matched err.message for "exist" to decide whether to ignore it, but
+    // webR's underlying Emscripten FS throws a bare ErrnoError whose .message is just the numeric
+    // errno ("20", their own EEXIST -- not POSIX's) with no "exist" text to match, so every repeat
+    // Run in one session hit this as a fatal, uncaught error. lookupPath (already used by walkVfs
+    // below) gives an authoritative existence check with no error-message parsing involved.
+    let alreadyExists = false;
+    try { alreadyExists = (await engine.FS.lookupPath(dir)).isFolder; } catch { alreadyExists = false; }
+    if (!alreadyExists) await engine.FS.mkdir(dir);
   }
   for (const f of list) {
     await engine.FS.writeFile(vfsPathFor(f.path), f.bytes);
@@ -2605,6 +2741,8 @@ async function confirmWorkingDirectory(engine) {
 const App = {
   stagedStore: null,
   engine: null,
+  prismCodeEditor: null,   // cached lazy-loaded module exports (createEditor, languages, etc.)
+  sourceEditor: null,      // the live PrismEditor instance mounted in #source-code-lines, if any
   running: false,
   repoInfo: null,
   refUsed: null,
@@ -2633,6 +2771,10 @@ function decodeUtf8(bytes) {
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 
+function encodeUtf8(text) {
+  return new TextEncoder().encode(text);
+}
+
 /* Lazily initialize the R engine on first Run, then keep it warm across runs (spec section 14).
    Two console messages from webR are expected and harmless: the gzip-probe "Content-Encoding"
    warning from R.js, and the PostMessage-channel nested-REPL notice. */
@@ -2645,6 +2787,29 @@ async function getEngine() {
   App.engine = instance;
   attachLiveProgressIndicator(instance);
   return instance;
+}
+
+/* Lazily loads prism-code-editor + its R grammar on first script render, then keeps it warm
+   (mirrors getEngine() above). All three imports resolve within the one published bundle for this
+   pinned version (confirmed live: dist/index.js and dist/languages/r.js both import the same
+   hashed internal chunk) -- unlike the CodeMirror 6 attempt this replaced, there is no risk of two
+   CDN-served packages disagreeing on a shared dependency instance, since there is only one package. */
+async function getPrismCodeEditor() {
+  if (App.prismCodeEditor) return App.prismCodeEditor;
+  if (!document.getElementById("pce-layout-css")) {
+    const link = document.createElement("link");
+    link.id = "pce-layout-css";
+    link.rel = "stylesheet";
+    link.href = CONFIG.PRISM_CODE_EDITOR_LAYOUT_CSS_URL;
+    document.head.appendChild(link);
+  }
+  const core = await import(CONFIG.PRISM_CODE_EDITOR_CDN_URL);
+  // Both grammar modules register themselves as a side effect (languageMap.r / Prism languages.r)
+  // on import -- neither has anything useful to destructure out.
+  await import(CONFIG.PRISM_CODE_EDITOR_LANG_R_CDN_URL);
+  await import(CONFIG.PRISM_CODE_EDITOR_PRISM_R_CDN_URL);
+  App.prismCodeEditor = { createEditor: core.createEditor };
+  return App.prismCodeEditor;
 }
 
 /* webR.stream()'s event shape on the PostMessage channel is unverified, so it only drives a running
@@ -3325,6 +3490,26 @@ const DOWNLOAD_ICON_SVG =
   '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
   '<path d="M8 1a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V1.75A.75.75 0 0 1 8 1Z"/>' +
   '<path d="M2.75 12.5a.75.75 0 0 1 .75.75v.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-.5a.75.75 0 0 1 .75-.75Z"/>' +
+  '</svg>';
+
+// Four outward-pointing corner brackets -- a standard "expand to fullscreen" glyph, used by the
+// source editor's Maximize toolbar button (Stage 2D.1).
+const MAXIMIZE_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M1 1h5v1.5H2.5V6H1V1Z"/><path d="M15 1v5h-1.5V2.5H10V1h5Z"/>' +
+  '<path d="M1 15V10h1.5v3.5H6V15H1Z"/><path d="M15 15h-5v-1.5h3.5V10H15v5Z"/>' +
+  '</svg>';
+
+// Two overlapping square outlines -- the conventional "restore down" glyph used by desktop window
+// chrome (Windows etc.), which reads unambiguously as "shrink this back down" in a way the
+// corner-bracket icon (identical in spirit to the Maximize button, just inverted) apparently
+// didn't. The back square's path stops short of the corner the front square covers, rather than
+// drawing a full rect and relying on fill-matches-background to hide the overlap -- that would
+// break the instant the button's hover background changes. Stroke-based (unlike this file's other
+// solid-fill icons), since an outline is what makes the "two windows" shape read correctly.
+const RESTORE_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">' +
+  '<path d="M5.5 5.5V2.5H13.5V10.5H10.5"/><rect x="2.5" y="5.5" width="8" height="8"/>' +
   '</svg>';
 
 // An upload-into-tray glyph (mirrors DOWNLOAD_ICON_SVG's shape) for "replace with a local file".
@@ -4285,6 +4470,17 @@ const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empt
 const elSourceEditor = document.getElementById("source-editor");
 const elSourceViewerFilename = document.getElementById("source-viewer-filename");
 const elSourceCodeLines = document.getElementById("source-code-lines");
+const elSourceMaximizeButton = document.getElementById("source-maximize-button");
+const elSourceDownloadButton = document.getElementById("source-download-button");
+const elSourceMaximizeModal = document.getElementById("source-maximize-modal");
+const elSourceMaximizeTitle = document.getElementById("source-maximize-title");
+const elSourceMaximizeBody = document.getElementById("source-maximize-body");
+const elSourceMaximizeDownloadButton = document.getElementById("source-maximize-download-button");
+const elCloseSourceMaximizeButton = document.getElementById("close-source-maximize-button");
+elSourceMaximizeButton.innerHTML = MAXIMIZE_ICON_SVG;
+elSourceDownloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+elSourceMaximizeDownloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+elCloseSourceMaximizeButton.innerHTML = RESTORE_ICON_SVG;
 
 const elLoadModal = document.getElementById("load-script-modal");
 const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
@@ -4545,71 +4741,78 @@ function findCommentStart(line) {
   return -1;
 }
 
-/* Splits one line of R source into comment / string / bare-text segments and appends each as its
-   own DOM node -- createElement()/textContent/createTextNode only, never innerHTML, so this stays
-   safe regardless of what the script's own author wrote (spec 0.1 / AGENTS.md section 7). This is
-   a coarse, visual-only classifier (a "#" inside a string that itself contains an unmatched quote
-   can still misclassify a line), not an R parser, and is never used for anything but CSS color. */
-function appendTokenizedLine(container, line) {
-  const commentStart = findCommentStart(line);
-  const codePart = commentStart >= 0 ? line.slice(0, commentStart) : line;
-  const commentPart = commentStart >= 0 ? line.slice(commentStart) : "";
-
-  const tokenRe = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b[A-Za-z_.][A-Za-z0-9_.]*(?=\s*\()/g;
-  let last = 0, m;
-  while ((m = tokenRe.exec(codePart))) {
-    if (m.index > last) container.appendChild(document.createTextNode(codePart.slice(last, m.index)));
-    const tok = m[0];
-    const span = document.createElement("span");
-    span.className = (tok[0] === '"' || tok[0] === "'") ? "syn-string" : "syn-func";
-    span.textContent = tok;
-    container.appendChild(span);
-    last = m.index + tok.length;
-  }
-  if (last < codePart.length) container.appendChild(document.createTextNode(codePart.slice(last)));
-  if (commentPart) {
-    const span = document.createElement("span");
-    span.className = "syn-comment";
-    span.textContent = commentPart;
-    container.appendChild(span);
-  }
+/* Removes every currently-placed output-gutter marker (Stage 2D.1) -- called whenever the editor's
+   content changes, since a marker's position is only meaningful against the exact source that was
+   last actually run; editing invalidates every line offset annotateSourceViewerOutputMarkers
+   computed against the pre-edit text. */
+function clearSourceViewerOutputMarkers() {
+  elSourceCodeLines.querySelectorAll(".output-marker").forEach((el) => el.remove());
 }
 
-/* Fills the source-code editor from the selected entry's decoded bytes: one .code-line row per
-   line, each with a gutter (marker slot + line number) and a tokenized .code-text cell, matching
-   ShareR-UI-Specification.md section 3. Always shown once a script is staged -- there's nothing
-   else competing for the workspace pane's remaining vertical space, so there's no reason to make
-   viewing the code an extra click. */
-function renderSourceViewer() {
-  elSourceCodeLines.innerHTML = "";
-  elSourceViewerFilename.textContent = "";
-  const staged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+/* Fills the source-code editor from the selected entry's decoded bytes, using a real
+   prism-code-editor instance mounted once into #source-code-lines and thereafter updated in place
+   via setOptions() (Stage 2D.1, replacing the former hand-rolled read-only viewer). Always shown
+   once a script is staged -- there's nothing else competing for the workspace pane's remaining
+   vertical space, so there's no reason to make viewing the code an extra click. Editable, with
+   edits written straight back into the active entry's staged bytes (in place, never via
+   stagedStore.upsert -- that would re-render the whole file carousel on every keystroke), so
+   executeSelectedEntry/writeStagedFilesToVfs pick up live edits with no changes of their own; the
+   onUpdate handler reads App.selectedEntryPath live rather than closing over a path, since this
+   editor instance is created once and reused across every later script switch. */
+async function renderSourceViewer() {
+  const path = App.selectedEntryPath;
+  const staged = path ? App.stagedStore.get(path) : null;
   if (!staged) {
     elSourceEditor.hidden = true;
+    elSourceViewerFilename.textContent = "";
+    elSourceMaximizeTitle.textContent = "";
+    if (App.sourceEditor) { App.sourceEditor.remove(); App.sourceEditor = null; }
     return;
   }
   elSourceEditor.hidden = false;
   elSourceViewerFilename.textContent = staged.path;
+  elSourceMaximizeTitle.textContent = staged.name;
   const text = decodeUtf8(staged.bytes);
-  const frag = document.createDocumentFragment();
-  text.split(/\r\n|\r|\n/).forEach((line, idx) => {
-    const row = document.createElement("div");
-    row.className = "code-line";
-    const gutter = document.createElement("div");
-    gutter.className = "gutter";
-    const markerSlot = document.createElement("span");
-    markerSlot.className = "marker-slot";
-    const num = document.createElement("span");
-    num.className = "line-number";
-    num.textContent = String(idx + 1);
-    gutter.append(markerSlot, num);
-    const codeText = document.createElement("div");
-    codeText.className = "code-text";
-    appendTokenizedLine(codeText, line);
-    row.append(gutter, codeText);
-    frag.appendChild(row);
-  });
-  elSourceCodeLines.appendChild(frag);
+  // TODO (Stage 2D.1 follow-up): chunk-fence-aware highlighting for .Rmd, reusing parseRmdChunks
+  // so highlighting and execution can never disagree about what counts as an R chunk. Until that
+  // lands, .Rmd renders as plain text rather than mis-highlighting markdown+YAML prose as R.
+  const language = /\.rmd$/i.test(staged.path) ? "text" : "r";
+  const { createEditor } = await getPrismCodeEditor();
+  if (path !== App.selectedEntryPath) return; // selection changed while the library was loading
+  if (App.sourceEditor) {
+    App.sourceEditor.setOptions({ language, value: text });
+  } else {
+    App.sourceEditor = createEditor(elSourceCodeLines, {
+      language, value: text, lineNumbers: true, readOnly: false,
+      onUpdate: (value) => {
+        const activeStaged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+        if (!activeStaged) return;
+        activeStaged.bytes = encodeUtf8(value);
+        clearSourceViewerOutputMarkers();
+      }
+    });
+  }
+}
+
+/* Re-parents the live editor.container (a plain <div>, so no virtualized-rendering state to
+   worry about across the move) into the Maximize dialog on open, native showModal() giving a real
+   focus trap and Escape-to-close for free (Stage 2D.1, same <dialog> pattern already used by
+   load-script-modal/error-modal). The dialog's own native "close" event -- which fires for both
+   Escape and an explicit .close() -- re-parents the editor back, so there's only one place that
+   needs to remember to undo the move. */
+function openSourceMaximizeModal() {
+  if (!App.sourceEditor || elSourceMaximizeModal.open) return;
+  elSourceMaximizeBody.appendChild(App.sourceEditor.container);
+  elSourceMaximizeModal.showModal();
+}
+
+/* Downloads the active script's current (possibly edited) content under its original filename --
+   reused verbatim by the fake "Report" file row's Download Script button (TODO.md Stage 2D.8). */
+function downloadActiveScript() {
+  if (!App.sourceEditor || !App.selectedEntryPath) return;
+  const staged = App.stagedStore.get(App.selectedEntryPath);
+  if (!staged) return;
+  downloadBlob(new Blob([App.sourceEditor.value]), staged.name);
 }
 
 /* Activates a Results tab and scroll-and-flashes one of its items -- used both by the output
@@ -4651,23 +4854,41 @@ function findCandidateLines(sourceLines, re) {
   return idxs;
 }
 
+// Markers beyond this many on one source line collapse into a single "+N" overflow button
+// (clicking cycles through the collapsed targets one at a time) -- a script whose
+// PLOT_CALL_RE/FILE_WRITE_CALL_RE heuristic finds no candidates falls back to spreading outputs
+// one-per-source-line (below), but a chunk with many real matches on one line can still exceed
+// the small width annotateSourceViewerOutputMarkers's CSS reserves for markers.
+const MAX_MARKERS_PER_SOURCE_LINE = 3;
+
+function appendOutputMarkerButton(row, index, glyph, label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "output-marker";
+  btn.style.left = (2 + index * 13) + "px";
+  btn.textContent = glyph;
+  btn.setAttribute("aria-label", label);
+  btn.addEventListener("click", onClick);
+  row.appendChild(btn);
+}
+
 /* Adds a clickable marker to the source line that most likely produced each plot/file a chunk
-   generated (ShareR-UI-Specification.md section 3). captureR reports outputs per chunk, not per
-   statement, so PLOT_CALL_RE/FILE_WRITE_CALL_RE candidate lines are matched to outputs in order,
-   extras stacking on the last candidate and falling back to the chunk's first line if none match. */
+   generated (ShareR-UI-Specification.md section 3), placed directly into the editor's own
+   editor.lines[n] div (Stage 2D.1 -- prism-code-editor doesn't expose a separate gutter-slot
+   element the way the old hand-rolled viewer did). captureR reports outputs per chunk, not per
+   statement, so PLOT_CALL_RE/FILE_WRITE_CALL_RE candidate lines are matched to outputs in order;
+   when a chunk has no candidate lines at all, outputs spread one-per-source-line instead of all
+   stacking on the chunk's first line, keeping the MAX_MARKERS_PER_SOURCE_LINE cap rarely hit. */
 function annotateSourceViewerOutputMarkers(runState) {
-  const rows = elSourceCodeLines.querySelectorAll(".code-line");
-  const placeMarker = (baseLine, relativeLine, glyph, label, onClick) => {
-    const row = rows[baseLine + relativeLine];
-    const slot = row ? row.querySelector(".marker-slot") : null;
-    if (!slot) return;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "output-marker";
-    btn.textContent = glyph;
-    btn.setAttribute("aria-label", label);
-    btn.addEventListener("click", onClick);
-    slot.appendChild(btn);
+  const editor = App.sourceEditor;
+  if (!editor) return;
+  // editor.lines[0] is prism-code-editor's overlays node, not a source line -- real source line N
+  // (1-based) lives at editor.lines[N] (confirmed live in the Stage 2D.1 isolated test page).
+  const lineMarkers = new Map();
+  const queueMarker = (baseLine, relativeLine, glyph, label, onClick) => {
+    const lineIdx = baseLine + relativeLine + 1;
+    if (!lineMarkers.has(lineIdx)) lineMarkers.set(lineIdx, []);
+    lineMarkers.get(lineIdx).push({ glyph, label, onClick });
   };
   for (const node of runState.nodes) {
     if (node.type !== "chunk") continue;
@@ -4679,16 +4900,33 @@ function annotateSourceViewerOutputMarkers(runState) {
     const plotCandidates = findCandidateLines(sourceLines, PLOT_CALL_RE);
     const fileCandidates = findCandidateLines(sourceLines, FILE_WRITE_CALL_RE);
     plotIds.forEach((plotItemId, i) => {
-      const relLine = plotCandidates.length ? plotCandidates[Math.min(i, plotCandidates.length - 1)] : 0;
-      placeMarker(baseLine, relLine, "\u{1F4CA}",
+      const relLine = plotCandidates.length
+        ? plotCandidates[Math.min(i, plotCandidates.length - 1)]
+        : Math.min(i, sourceLines.length - 1);
+      queueMarker(baseLine, relLine, "\u{1F4CA}",
         "Jump to the plot produced by chunk " + (node.label || ""), () => jumpToOutput(1, plotItemId));
     });
     filePaths.forEach((filePath, i) => {
-      const relLine = fileCandidates.length ? fileCandidates[Math.min(i, fileCandidates.length - 1)] : 0;
+      const relLine = fileCandidates.length
+        ? fileCandidates[Math.min(i, fileCandidates.length - 1)]
+        : Math.min(i, sourceLines.length - 1);
       const fileId = "file-item-" + slugifyForElementId(filePath);
-      placeMarker(baseLine, relLine, "\u{1F4C4}",
+      queueMarker(baseLine, relLine, "\u{1F4C4}",
         "Jump to " + filePath + ", produced by chunk " + (node.label || ""), () => jumpToOutput(2, fileId));
     });
+  }
+  for (const [lineIdx, markers] of lineMarkers) {
+    const row = editor.lines[lineIdx];
+    if (!row) continue;
+    const visible = markers.slice(0, MAX_MARKERS_PER_SOURCE_LINE);
+    const overflow = markers.slice(MAX_MARKERS_PER_SOURCE_LINE);
+    visible.forEach((m, i) => appendOutputMarkerButton(row, i, m.glyph, m.label, m.onClick));
+    if (overflow.length) {
+      let cycle = 0;
+      appendOutputMarkerButton(row, visible.length, "+" + overflow.length,
+        overflow.length + " more output" + (overflow.length === 1 ? "" : "s") + " on this line -- click to cycle through them",
+        () => { overflow[cycle % overflow.length].onClick(); cycle++; });
+    }
   }
 }
 
@@ -5091,6 +5329,17 @@ elCloseErrorModalButton.addEventListener("click", () => closeErrorModal());
 elErrorModalOkButton.addEventListener("click", () => closeErrorModal());
 elErrorModalLogButton.addEventListener("click", () => { closeErrorModal(); expandExecutionLog(); });
 elErrorModal.addEventListener("click", (e) => { if (e.target === elErrorModal) closeErrorModal(); });
+
+elSourceMaximizeButton.addEventListener("click", openSourceMaximizeModal);
+elSourceDownloadButton.addEventListener("click", downloadActiveScript);
+elSourceMaximizeDownloadButton.addEventListener("click", downloadActiveScript);
+elCloseSourceMaximizeButton.addEventListener("click", () => elSourceMaximizeModal.close());
+elSourceMaximizeModal.addEventListener("click", (e) => { if (e.target === elSourceMaximizeModal) elSourceMaximizeModal.close(); });
+// Fires for every close path (Escape, the close button, or the backdrop click above) -- the one
+// place that moves editor.container back out of the dialog, so no close path can forget to.
+elSourceMaximizeModal.addEventListener("close", () => {
+  if (App.sourceEditor) elSourceCodeLines.appendChild(App.sourceEditor.container);
+});
 
 elSourceForm.addEventListener("submit", (e) => {
   e.preventDefault();
