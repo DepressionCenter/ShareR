@@ -1027,6 +1027,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .chunk-output-html { white-space: normal; font-family: system-ui, -apple-system, sans-serif; overflow-x: auto; }
   .chunk-output-html table { border-collapse: collapse; font-size: 0.85rem; }
   .chunk-output-html th, .chunk-output-html td { border: 1px solid var(--panel-border); padding: 0.3rem 0.5rem; }
+  /* Ghost CSV/Excel download toolbar wired onto every rendered <table> (wireInlineTableDownloads)
+     -- a row of two buttons rather than .ghost-icon-btn's usual single top-right corner slot, so
+     both formats sit side by side above the table instead of overlapping its own header cells. */
+  .report-table-wrap { position: relative; }
+  .report-table-toolbar { position: absolute; top: 0.3rem; right: 0.3rem; display: flex; gap: 0.3rem; }
+  .report-table-toolbar .ghost-icon-btn { position: static; }
   .chunk-plot {
     max-width: 100%;
     height: auto;
@@ -1060,6 +1066,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .plot-gallery-item:hover .ghost-icon-btn,
   .plot-inline-wrap:hover .ghost-icon-btn,
   .chunk-block:hover .ghost-icon-btn,
+  .report-table-wrap:hover .ghost-icon-btn,
   .ghost-icon-btn:hover,
   .ghost-icon-btn:focus-visible { opacity: 1; }
   .ghost-icon-btn:hover { background: var(--um-maize); }
@@ -1423,6 +1430,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
     .footer-github-text { display: none; }
   }
 </style>
+<!-- Known R table packages' own default CSS (table1 today) -- linked after the inline <style>
+     block above, not next to um-style.css, purely for cascade order: this file's .Rtable1
+     selectors tie in specificity with this page's own generic ".chunk-output-html th/td" grid
+     border rule above, and a package's own styling should win that tie, not ShareR's generic
+     fallback. See the file's own header for why it's a separate file from um-style.css. -->
+<link rel="stylesheet" href="styles/report-tables.css">
 </head>
 <body>
 
@@ -3000,6 +3013,14 @@ async function confirmWorkingDirectory(engine) {
     // one line of R source directly is safe; nothing here is untrusted (spec section 14 still
     // applies to params/params and repository content, which never reach evalR as source text).
     await shelter.captureR('setwd("' + CONFIG.VFS_PROJECT_DIR + '")', { withAutoprint: false });
+    // knitr::kable()'s own default format is only "html" when it detects an active HTML render
+    // (is_html_output(), which reads a pandoc target rmarkdown::render() sets up before knitting --
+    // ShareR never runs real knitr/pandoc, so that detection is never true). Forcing the option
+    // directly reproduces what a genuine `rmarkdown::render(..., output_format = "html_document")`
+    // would already do, so a bare kable(df) call renders as a real HTML table here too, instead of
+    // silently falling back to a plain-text pipe table -- consistent with spec 8.3's "faithful
+    // chunk execution" goal, not a new rendering feature of ShareR's own invention.
+    await shelter.captureR('options(knitr.table.format = "html")', { withAutoprint: false });
     const cap = await shelter.captureR("getwd()", { withAutoprint: true, captureStreams: true });
     const cwd = cap.output.filter((o) => o.type === "stdout").map((o) => o.data).join("").trim();
     if (cwd.indexOf(CONFIG.VFS_PROJECT_DIR) === -1) {
@@ -4146,6 +4167,77 @@ function appendPlotToGallery(bitmap, label, plotIdx) {
   return id;
 }
 
+/* ### Per-table CSV/Excel download toolbar (Report tab) ###
+   Wired onto every real <table> a chunk autoprints as HTML (table1's own markup,
+   knitr::kable(format="html"), or any other package's HTML output -- see the looksLikeHtmlBlock
+   branch in renderChunkResult). Deliberately does NOT attempt to export the plain-text console
+   rendering of an autoprinted data.frame/tibble (e.g. a bare `summary_df` on its own line): that
+   text is truncated by R's own print method (a default of 10 rows, and columns dropped to fit
+   console width, both noted only by a "# ... more rows/variables" line), so reconstructing a
+   complete, correct dataset from it isn't reliably possible -- an export button there would risk
+   silently handing a researcher an incomplete file with no indication anything was cut. */
+
+/* Shared by both format buttons -- disables the clicked button for the moment CSV/XLSX
+   serialization takes (XLSX in particular is async), and routes any failure to the log rather than
+   silently doing nothing, matching handleFileActionClick's build-then-download shape. */
+async function handleTableDownloadClick(btn, buildBlob, filename) {
+  btn.disabled = true;
+  try {
+    downloadBlob(await buildBlob(), filename);
+  } catch (err) {
+    appendLogLine("error", "Could not build " + filename + ": " + (err && err.message ? err.message : err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// One ghost icon button, styled and behaving like every other per-item download affordance in the
+// app (createPlotDownloadButton, createViewChunkCodeButton) -- icon-only, hover/focus revealed via
+// the shared .ghost-icon-btn CSS -- but living inside a .report-table-toolbar row instead of
+// .ghost-icon-btn's usual single absolutely-positioned corner slot, since a table needs two.
+function createTableDownloadButton(iconSvg, formatLabel, buildBlob, filename) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost-icon-btn";
+  btn.innerHTML = iconSvg;
+  btn.setAttribute("aria-label", "Download this table as " + formatLabel);
+  btn.title = "Download as " + formatLabel;
+  btn.addEventListener("click", () => handleTableDownloadClick(btn, buildBlob, filename));
+  return btn;
+}
+
+/* Wraps one rendered <table> (already attached inside a .chunk-output-html block) with a small
+   ghost toolbar offering CSV and Excel downloads of its own content, read directly from the
+   table's DOM cells via htmlTableToGrid every time a button is clicked -- never by re-parsing R's
+   printed text -- so the export always matches exactly what's on screen. stem is a slugified
+   "<chunk-label>-table-<n>" string shared by both the filename and the XLSX sheet name. */
+function wireTableDownloadToolbar(tableEl, stem) {
+  const wrap = document.createElement("div");
+  wrap.className = "report-table-wrap";
+  tableEl.replaceWith(wrap);
+  wrap.appendChild(tableEl);
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "report-table-toolbar";
+  toolbar.appendChild(createTableDownloadButton(FILE_TYPE_ICON_SVG.csv, "CSV",
+    async () => rowsToCsvBlob(htmlTableToGrid(tableEl)), stem + ".csv"));
+  toolbar.appendChild(createTableDownloadButton(FILE_TYPE_ICON_SVG.xlsx, "Excel",
+    () => buildXlsxBlobFromRows(htmlTableToGrid(tableEl), stem), stem + ".xlsx"));
+  wrap.appendChild(toolbar);
+}
+
+// Finds every <table> inside one HTML-stdout block and gives each its own download toolbar.
+// startIdx is the chunk-wide running table count renderChunkResult keeps (not reset per HTML
+// block), since one chunk can legally autoprint more than one such block (e.g. two separate print()
+// calls) -- returns the count found so the caller can keep numbering across the whole chunk.
+function wireInlineTableDownloads(containerEl, label, startIdx) {
+  const tables = Array.from(containerEl.querySelectorAll("table"));
+  tables.forEach((tableEl, i) => {
+    wireTableDownloadToolbar(tableEl, slugifyForElementId(label) + "-table-" + (startIdx + i + 1));
+  });
+  return tables.length;
+}
+
 /* ### Per-output-file button set (Stage 2D.7) ### */
 
 const TABULAR_DELIMITERS = { csv: ",", tsv: "\t" };
@@ -4213,11 +4305,13 @@ function buildPreviewElement(f, ext) {
 // since it depends on the rendering font), which is what caps this at 400px worth of width.
 const EXCEL_MAX_COLUMN_WIDTH_CHARS = 57;
 
-async function buildXlsxBlob(text, delimiter, sheetName) {
+// Shared by every XLSX export in the app (CSV/TSV file rows already split by delimiter, and now
+// the report tab's per-table grid built by htmlTableToGrid) -- the sheet-building logic only ever
+// needs a rectangular array of row arrays, never the original source text.
+async function buildXlsxBlobFromRows(rows, sheetName) {
   const ExcelJS = await getExcelJsLib();
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet((sheetName || "Sheet1").slice(0, 31));
-  const rows = splitTabularRows(text, delimiter);
   for (const row of rows) sheet.addRow(row);
   if (rows.length) {
     const headerRow = sheet.getRow(1);
@@ -4235,6 +4329,77 @@ async function buildXlsxBlob(text, delimiter, sheetName) {
   }
   const buffer = await workbook.xlsx.writeBuffer();
   return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+async function buildXlsxBlob(text, delimiter, sheetName) {
+  return buildXlsxBlobFromRows(splitTabularRows(text, delimiter), sheetName);
+}
+
+// Builds a browser-downloadable CSV Blob from a rectangular grid of cell strings (RFC 4180
+// quoting: a field is wrapped in double quotes, and any quote inside it doubled, whenever the
+// field itself contains a comma, quote, or line break). A UTF-8 BOM is prepended so Excel on
+// Windows -- which otherwise guesses the system codepage -- opens accented/non-ASCII characters
+// (e.g. a participant group label) correctly on the first double-click.
+function rowsToCsvBlob(rows) {
+  const escapeCsvField = (value) => {
+    const text = String(value == null ? "" : value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  };
+  const csvText = rows.map((row) => row.map(escapeCsvField).join(",")).join("\r\n");
+  return new Blob(["﻿" + csvText], { type: "text/csv;charset=utf-8" });
+}
+
+// A table cell's own text can carry a <br> as its only line separator (e.g. table1's stratum
+// headers, "BD<br>(N=36)") -- textContent alone would glue the two lines into "BD(N=36)" with no
+// separator, so every <br> is normalized to a single space first, on a detached clone (never the
+// live report DOM) so nothing here mutates what's actually on screen.
+function cellTextForExport(cellEl) {
+  const clone = cellEl.cloneNode(true);
+  for (const br of Array.from(clone.querySelectorAll("br"))) br.replaceWith(" ");
+  return clone.textContent.replace(/\s+/g, " ").trim();
+}
+
+// Converts a rendered <table> element into a rectangular grid of cell text, expanding colspan/
+// rowspan by repeating the spanned cell's value into every cell it visually covers -- the simplest
+// rule that keeps exported columns aligned with what a reader actually sees (e.g. a kable() grouped
+// header spanning three columns), rather than leaving spanned-over cells blank and shifting every
+// column after it out of alignment in the exported file.
+function htmlTableToGrid(tableEl) {
+  const grid = [];
+  // Cells still "owed" to a later row by an earlier row's rowspan, keyed by column index, so a
+  // row's own <td>/<th> elements slot into the next free column instead of overwriting one of
+  // these still-active spans.
+  const rowspanCarry = {};
+  let columnCount = 0;
+  Array.from(tableEl.rows).forEach((rowEl, rowIdx) => {
+    grid[rowIdx] = [];
+    let col = 0;
+    const fillCarriedColumns = () => {
+      while (rowspanCarry[col] && rowspanCarry[col].remaining > 0) {
+        grid[rowIdx][col] = rowspanCarry[col].text;
+        rowspanCarry[col].remaining--;
+        if (rowspanCarry[col].remaining === 0) delete rowspanCarry[col];
+        col++;
+      }
+    };
+    fillCarriedColumns();
+    for (const cellEl of Array.from(rowEl.cells)) {
+      const text = cellTextForExport(cellEl);
+      const colSpan = Math.max(1, cellEl.colSpan || 1);
+      const rowSpan = Math.max(1, cellEl.rowSpan || 1);
+      for (let i = 0; i < colSpan; i++) {
+        grid[rowIdx][col] = text;
+        if (rowSpan > 1) rowspanCarry[col] = { text, remaining: rowSpan - 1 };
+        col++;
+        fillCarriedColumns();
+      }
+    }
+    columnCount = Math.max(columnCount, col);
+  });
+  // Pads ragged rows (HTML tolerates an inconsistent cell count per row) to a uniform width so
+  // every downstream row/column index lines up in the CSV/XLSX output.
+  for (const row of grid) while (row.length < columnCount) row.push("");
+  return grid;
 }
 
 function addCopyrightFooterToJsPdf(doc) {
@@ -4648,6 +4813,7 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
   const outWrap = document.createElement("div");
   outWrap.className = "chunk-output";
   let hasVisibleOutput = false;
+  let tableIdx = 0; // running count of <table>s wired with a download toolbar, across the whole chunk
   const visibleOutput = capture.output.filter((o) =>
     !(o.type === "warning" && effectiveOptions.warning === false) &&
     !(o.type === "message" && effectiveOptions.message === false) &&
@@ -4682,6 +4848,7 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
       line.innerHTML = sanitizeRAsisHtml(joined);
       outWrap.appendChild(line);
       hasVisibleOutput = true;
+      tableIdx += wireInlineTableDownloads(line, label, tableIdx);
     } else {
       for (const text of lines) {
         const line = document.createElement("div");
@@ -5101,10 +5268,17 @@ function removeGhostIconButtons(rootEl) {
 async function renderReportAsSelfContainedHtml() {
   const clone = elTabReportZoomInner.cloneNode(true);
   removeGhostIconButtons(clone);
-  const reportCss = await fetchCssForExport(App.lastRunInfo && App.lastRunInfo.cssPath);
+  // reportCss is the author's own theme (front matter css:, defaulting to um-style.css);
+  // tableCss is always ShareR's own fixed styles/report-tables.css (see that file's header) --
+  // never author-controlled, so it's fetched directly rather than through fetchCssForExport's
+  // author-path security fallback, and always included regardless of what css: says.
+  const [reportCss, tableCss] = await Promise.all([
+    fetchCssForExport(App.lastRunInfo && App.lastRunInfo.cssPath),
+    fetch("styles/report-tables.css").then((res) => (res.ok ? res.text() : ""), () => "")
+  ]);
   return wrapAsStandaloneHtmlDocument(
     "ShareR report: " + basenameOf(App.selectedEntryPath || "report"),
-    clone.innerHTML, reportCss + "\n" + REPORT_EXPORT_EXTRA_CSS);
+    clone.innerHTML, reportCss + "\n" + tableCss + "\n" + REPORT_EXPORT_EXTRA_CSS);
 }
 
 // Plots-tab counterpart of renderReportAsSelfContainedHtml (Stage 2D.6) -- no author css: option

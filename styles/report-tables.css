@@ -1,0 +1,141 @@
+/*
+This file is part of ShareR
+report-tables.css: CSS for R package table output rendered into the Report tab, so it looks like
+it does in a real knitted R Markdown document instead of just ShareR's own generic table borders.
+Author(s): Gabriel Mongefranco.
+Created: 2026-08-04
+Summary: Loaded in addition to styles/um-style.css (index.html <head>, and
+         renderReportAsSelfContainedHtml for exports) -- unlike um-style.css, which is a
+         reusable, package-agnostic EFDC branding stylesheet shared across other repos via the
+         EFDC-Repo-Template, this file exists specifically to know about individual R table
+         packages' own HTML output. A real rmarkdown::render() gets this styling by collecting
+         each package's htmltools::htmlDependency and inlining it into the knitted document;
+         ShareR never runs real knitr/pandoc (AGENTS.md/spec section 0.1), so there is no
+         dependency-resolution step to do that automatically -- this file is the deliberately
+         narrow, targeted substitute: known packages' own default CSS, vendored here so their
+         output renders correctly without reimplementing rmarkdown's whole dependency system.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see https://www.gnu.org/licenses/.
+*/
+
+/* ### table1 package (https://github.com/benjaminrich/table1), CRAN, GPL-3 ###
+   Reproduced verbatim from the package's own inst/table1_defaults_1.0/table1_defaults.css
+   (v1.6.0, table1_defaults 1.0, fetched 2026-08-04) -- the stylesheet a real knitr/rmarkdown
+   render already applies to every table1() output via its own htmlDependency. Selectors are
+   the upstream package's, not ShareR's; keep this block a byte-for-byte copy (aside from this
+   header) so a future table1 update can be diffed straight against the new upstream file rather
+   than against edits mixed in here. Includes every documented style variant (topclass=
+   "Rtable1-zebra"/"-grid"/"-shade"/"-center"/"-times"), not just the default look, since a
+   report author can pass any of these to table1() and ShareR has no way to know in advance
+   which one a given .Rmd will use. */
+.Rtable1 table, table.Rtable1 {
+    font-family: "Arial", Arial, sans-serif;
+    font-size: 10pt;
+    border-collapse: collapse;
+    padding: 0px;
+    margin: 0px;
+    /* margin-bottom: 10pt; */
+}
+.Rtable1 td {
+    white-space:nowrap;
+}
+.Rtable1 th, .Rtable1 td {
+    border: 0;
+    text-align: center;
+    padding: 0.5ex 1.5ex;
+    margin: 0px;
+}
+.Rtable1 thead>tr:first-child>th {
+    border-top: 2pt solid black;
+}
+.Rtable1 thead>tr:last-child>th {
+    border-bottom: 1pt solid black;
+}
+.Rtable1 tbody>tr:last-child>td {
+    border-bottom: 2pt solid black;
+}
+.Rtable1 th.grouplabel {
+    padding-left: 0;
+    padding-right: 0;
+}
+.Rtable1 th.grouplabel>div {
+    margin-left: 1.5ex;
+    margin-right: 1.5ex;
+    border-bottom: 1pt solid black;
+}
+.Rtable1 th.grouplabel:last-child>div {
+    margin-right: 0;
+}
+.Rtable1 .rowlabel {
+    text-align: left;
+    padding-left: 2.5ex;
+}
+.Rtable1 .firstrow.rowlabel {
+    padding-left: 0.5ex;
+    font-weight: bold;
+}
+
+/* Zebra stripes */
+.Rtable1-zebra tbody tr:nth-child(odd) {
+    background-color: #eee;
+}
+
+/* Times font */
+table.Rtable1-times {
+    font-family: "Times New Roman", Times, serif;
+}
+
+/* Shade style */
+.Rtable1-shade th {
+    background-color: #ccc;
+}
+
+/* Grid style */
+.Rtable1-grid th, .Rtable1-grid td {
+    border-left: 1pt solid black;
+    border-right: 1pt solid black;
+}
+.Rtable1-grid thead>tr:first-child>th {
+    border-top: 1pt solid black;
+}
+.Rtable1-grid thead>tr:last-child>th {
+    border-bottom: 1pt solid black;
+}
+.Rtable1-grid tbody>tr:last-child>td {
+    border-bottom: 1pt solid black;
+}
+.Rtable1-grid .firstrow, .Rtable1-grid .firstrow ~ td {
+    border-top: 1pt solid black;
+}
+.Rtable1-grid th.grouplabel>div {
+    margin-left: 0;
+    margin-right: 0;
+    border-bottom: 0;
+}
+
+/* Center style */
+.Rtable1-center td.rowlabel, .Rtable1-center td.firstrow.rowlabel {
+    font-weight: bold;
+    text-align: center;
+    padding: 0.5ex 1.5ex;
+}
+
+/* Footnote */
+.Rtable1 .Rtable1-footnote {
+    font-size: smaller;
+    padding: 0px;
+    margin: 0px;
+    text-align: left;
+    white-space: normal;
+}
