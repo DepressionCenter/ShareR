@@ -306,7 +306,8 @@ Offline operation is explicitly not a goal (section 16).
 | `branch` | alias for `ref` | |
 | `packages` | `dplyr,ggplot2,table1` | added to the packages detected by scanning, section 9.1 |
 | `repos` | `https://myorg.r-universe.dev` | additional package repositories, comma separated |
-| `autorun` | `1` | `0`. When `1`, run immediately once files are staged. |
+
+**ShareR always runs immediately once a script resolves and files are staged** -- researchers open a link to see results, not to find a Run button. There is no opt-out parameter; a `run` button remains available in the UI for a manual re-run.
 
 **Every configurable thing is a URL parameter.** ShareR never reads a config file from the researcher's repository; see section 5.3 for why that rule is absolute.
 
@@ -342,7 +343,7 @@ Recurse only one level deep, take only files, and apply `CONFIG.MAX_REPO_FILE_BY
 
 **Files supplied by `data` are defaults, not fixtures.** The UI must list every staged file and let the user replace any of them with a local file of their own, or add files that were not listed. A user-supplied file always wins over a URL-supplied file of the same name, and the substitution is announced. This is the primary workflow: run the shared analysis against *my* data.
 
-**`repo` accepts** a full GitHub URL (`https://github.com/DepressionCenter/ShareR`, trailing slash optional), an `@owner/repo` form (ignore the `@`), or plain `owner/repo`.
+**`repo` accepts** a full GitHub URL (`https://github.com/DepressionCenter/ShareR`, trailing slash optional), an `@owner/repo` form (ignore the `@`), plain `owner/repo` (GitHub, for backward compatibility), a full `bitbucket.org` repository URL, or any GitLab URL (`gitlab.com` or self-hosted) that names a file or directory via its `/-/blob/`, `/-/raw/`, or `/-/tree/` marker segment (section 6.6). A bare self-hosted GitLab *project home* URL cannot be told apart from a group page by shape alone and is rejected with an actionable message; paste a link to a file into `entry=`/`data=` instead.
 
 **`script`** is an alias for `entry`. Normalize it to `entry` internally; if both are present and non-empty, `entry` wins.
 
@@ -374,7 +375,17 @@ const RE_REF  = /^[A-Za-z0-9._\/-]{1,255}$/;
 const RE_PATH = /^[A-Za-z0-9._\/-]{1,255}$/;
 ```
 
-Report every rejection with a visible, specific message naming the offending value. Do not fail silently.
+Report every rejection with a visible, specific message naming the offending value. Do not fail silently. A rejection that leaves no valid entry script at all (see below) is fatal: it aborts staging and is shown in the same designed error dialog a fatal run failure uses (`showErrorModal`), not as a soft entry in the Workspace panel's staging-messages list alongside recoverable warnings like a missing data file.
+
+**`entry`/`script`/`file` must resolve to actual R or R Markdown source, not merely a filename that looks like one.** A URL is untrusted content, not just an untrusted path: the researcher who shares a link controls what the URL string looks like, but not necessarily what bytes the far end of that URL serves on a given day, and a misconfigured or compromised host could return an HTML error page, a redirect-to-login page, or arbitrary script under a `.R`-looking name. Reject the target, without staging it, unless it passes every one of:
+
+1. **Extension.** The resolved file name ends in `.R` or `.Rmd` (case-insensitive). Checked before the fetch when the name is already known (a repo-relative path), and immediately after when it is not (a URL's basename).
+2. **Content-Type.** If the HTTP response's `Content-Type` header contains "html", "javascript", or "ecmascript", reject regardless of extension.
+3. **Content sniff.** Decode only the first ~1&nbsp;KB of the fetched body (not the whole file — a valid `.Rmd` legitimately embeds raw HTML/JS chunks later in the document, e.g. htmlwidgets output, so only the very start is diagnostic). Reject if, after trimming a byte-order mark and leading whitespace, it starts with `<` (an HTML/XML tag), or if its first line is a `#!` shebang naming a non-R interpreter (`node`, `python`, `bash`, `sh`, `perl`, `ruby`) rather than `Rscript`.
+
+Gate 3 runs even when gates 1–2 already passed: a spoofed `.R` file must still fail on content. This applies to a URL-based `entry=`; a repository-relative `entry=` (fetched through a provider's own raw-content API, a materially different trust boundary from an arbitrary attacker-controlled host) gets gate 1 only.
+
+**`.git`/`.github` are never valid `entry=`/`data=` targets, at any path depth.** These hold version-control/CI metadata, never legitimate source or research data, and `.git` in particular can contain credentials in its config or in a hook script. This is a widening of the existing GitHub whole-repository tree filter (section 6.1), which only ever checked a root-level prefix, to a single shared check (`isVcsMetadataPath`) applied everywhere a repository path or a URL's pathname is accepted: the tree listing itself, an explicit `data=`/`entry=` repository-relative path, an explicit `data=`/`entry=` URL, and a `data=<dir>/` listing (repository-relative, provider directory API, or generic autoindex scrape).
 
 ### 5.3 Entry point auto-detection
 
@@ -400,7 +411,7 @@ The control that does matter is sanitizing author-supplied HTML before it is ren
 
 **This is the limitation that will surprise users, so surface it in the UI and the README rather than letting them discover it as a broken page.** A browser can only fetch a file from another origin if that server sends an `Access-Control-Allow-Origin` header. ShareR cannot change this; it is the host's decision. ShareR retries a CORS-blocked fetch through a public CORS proxy relay before giving up (`fetchWithRetryAndCorsProxyFallback` in `index.html`), which can succeed even for a host that itself sends no CORS header — but the proxy is a best-effort third-party service outside EFDC's control, not a guarantee, and it is never used for a `localhost`/private-network address (see below).
 
-Verified by direct request during specification of this feature:
+Verified by direct request during specification of this feature (rows below the divider reflect each vendor's own published/observed CORS behavior as of writing, not a direct request made in this specification pass — reverify before relying on them for a support decision):
 
 | Host | Works? |
 | --- | --- |
@@ -413,6 +424,11 @@ Verified by direct request during specification of this feature:
 | Dropbox share links | No CORS header on the raw download host. ShareR retries through a public CORS proxy relay; this may or may not succeed depending on that relay and Dropbox's own request handling. |
 | Google Drive | No CORS header. Same proxy retry as above; Google Drive's own anti-abuse checks make success less likely than for a plain static file host. |
 | Google Sites | No CORS header, and requests redirect to a login page — a proxy relay cannot complete a login, so this one reliably still fails. |
+| GitLab `/-/raw/` (gitlab.com or self-hosted) | No CORS header (a long-standing open GitLab feature request). Relies on the proxy fallback more than GitHub does. |
+| Bitbucket `/raw/` (`bitbucket.org`) | No native CORS support. Same proxy-fallback reliance as GitLab. |
+| `dl.dropboxusercontent.com` (the host a Dropbox share link is rewritten to, section 5.6) | Sends `access-control-allow-origin: *`; typically works without the proxy fallback. |
+| `drive.google.com/uc?export=download` (the rewritten Google Drive form) | No CORS header; relies on the proxy fallback, with a large-file virus-scan interstitial the proxy cannot resolve either. |
+| OneDrive/SharePoint raw hosts (`?download=1` trick) | No CORS header; relies on the proxy fallback. Only "anyone with the link" shares can work at all — an auth-required share cannot, proxy or not. |
 
 When a fetch fails in a way consistent with CORS and the proxy fallback was also attempted, do not report a generic network error. Say what actually happened and what to do about it:
 
@@ -421,6 +437,16 @@ When a fetch fails in a way consistent with CORS and the proxy fallback was also
 Then fall back to local file selection (section 7). **`cdn.jsdelivr.net/gh/` is the recommended escape hatch** for anyone whose file lives in a public GitHub repository but who wants a direct file URL: it works, it sends CORS headers, and it is already the CDN used for the JavaScript dependencies. Document it in the quick start.
 
 **Proxy fallback is skipped entirely for `localhost` and private/link-local addresses** (`isPrivateOrLocalHost` in `index.html`, ported from datalavista's URL-validation guard). A public proxy relay is a third party outside EFDC's control; forwarding a request meant for an internal address through one would leak that address's existence — and any response — to that third party. A direct fetch to such an address is unaffected by this guard; only the proxy retry is skipped.
+
+### 5.6 Cloud storage share-link conversion (Dropbox, Google Drive, OneDrive, SharePoint)
+
+None of these four expose a public, key-free API the way GitHub/GitLab/Bitbucket do, so support is limited to a best-effort, single-file share-link rewrite (`rewriteCloudStorageUrl` in `index.html`), tried before the generic fetch for both `entry=` and a `data=` single file:
+
+- **Dropbox** (`dropbox.com`/`www.dropbox.com`): force the `dl` query parameter to `1`, which redirects to `dl.dropboxusercontent.com` (sends CORS headers, so this one typically does not need the proxy fallback).
+- **Google Drive** (`drive.google.com`): rewrite `/file/d/<id>/...` to `/uc?export=download&id=<id>`. Large files hit an interstitial virus-scan confirmation page this app cannot bypass client-side — a known limitation, not a bug to chase.
+- **OneDrive/SharePoint** (`onedrive.live.com`, `1drv.ms`, `*.sharepoint.com`): append `download=1` to the existing query string, a documented unofficial direct-download trick. Only works for "anyone with the link" shares; an auth-required ("specific people") share can never work without a Microsoft Graph OAuth app registration, which this static, backend-less page has no way to hold securely (`AGENTS.md` section 7 forbids hardcoding credentials, and there is no server here to hold one even if that were acceptable).
+
+**Whole-folder loading for any of these four is out of scope.** All four render folder views client-side via JavaScript; a plain fetch-and-scrape (the same technique that works for an Apache/nginx autoindex page, section 5.1) sees nothing meaningful. A real listing (Microsoft Graph's `/shares` endpoint, Google Drive API v3) requires an OAuth app registration or an API key this project does not have. The existing generic-URL directory branch already degrades gracefully for these hosts with no additional code — it reports "did not return a file listing" exactly as it would for any other JavaScript-rendered page.
 
 ---
 
@@ -472,9 +498,29 @@ setwd("/home/web_user/project")
 
 ### 6.5 Skipping files that are not needed
 
-Skip `.git/`, `.github/`, and files above `CONFIG.MAX_REPO_FILE_BYTES`. That is sufficient.
+Skip `.git/`, `.github/` (at any path depth, not just the root — `isVcsMetadataPath`), and files above `CONFIG.MAX_REPO_FILE_BYTES`. That is sufficient.
 
 A `.sharerignore` file with gitignore-style pattern matching was specified in an earlier draft and is dropped, both because pattern semantics are easy to get subtly wrong and, more importantly, because it would require the researcher to add a file to their repository for ShareR's benefit. See section 5.3: ShareR never asks for that. The problem it was meant to solve, a repository shipping a large rendered HTML report, is already handled by the size cap.
+
+### 6.6 GitLab and Bitbucket synchronization
+
+GitLab (gitlab.com and self-hosted) and Bitbucket Cloud (`bitbucket.org` only — Bitbucket Server/Data Center is a different product with a different URL shape and API, and is out of scope) get the same treatment as GitHub where the provider's own API makes it feasible, sharing every other stage of the pipeline (the dependency walk, auto-data-detection, and size budgets in sections 6.3–6.5 run unmodified regardless of provider).
+
+**Recognizing a link, without a hostname allowlist.** GitLab's web UI always inserts a literal `/-/` marker segment immediately before `blob`, `raw`, or `tree` (`https://HOST/<project-path>/-/blob/<ref>/<path>`), regardless of how deep the project path is (arbitrary-depth subgroups) or which host serves it. Keying recognition off that marker instead of a hostname list is what lets a self-hosted instance work identically to gitlab.com with no per-host code. Bitbucket Cloud is hostname-gated to `bitbucket.org` and uses `/src/<ref>/<path>` for both a file and a directory view (a trailing `/` disambiguates, the same convention `data=` already uses).
+
+**Raw-content URL, single file:**
+
+- GitLab: rewrite `/-/blob/` or `/-/raw/` to `/-/raw/` on the same host — `https://HOST/<project-path>/-/raw/<ref>/<path>`.
+- Bitbucket: rewrite `/src/` to `/raw/` — `https://bitbucket.org/<workspace>/<repo>/raw/<ref>/<path>`.
+
+**Whole-project tree listing.** Neither provider exposes GitHub's single self-limiting `git/trees?recursive=1` call, so both are bounded by two new safety caps, `CONFIG.MAX_REPO_TREE_ENTRIES` and `CONFIG.MAX_REPO_TREE_REQUESTS`, and set the same `truncated: true` flag GitHub's own listing uses on hitting either:
+
+- GitLab: `GET {host}/api/v4/projects/{url-encoded-project-path}/repository/tree?ref=X&recursive=true&per_page=100`, paginating via the `x-next-page` response header (empty on the last page).
+- Bitbucket: no recursive endpoint exists — Atlassian's own documentation warns that a large `max_depth` value on `/src/` can time out (HTTP 555) — so this walks one directory at a time via `GET https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/src/{ref}/{path}?pagelen=100`, following each response's own `next` URL and skipping (not recursing into) any `.git`/`.github` folder.
+
+**Default branch**, when `ref=` is omitted: GitLab via `GET {host}/api/v4/projects/{id}` → `default_branch`; Bitbucket via `GET /2.0/repositories/{workspace}/{repo}` → `mainbranch.name`. Neither gets GitHub's `main`/`master` silent-retry heuristic (section 6.3's ref resolution) — that heuristic exists because of GitHub's specific 2020 default-branch rename, not a demonstrated need elsewhere.
+
+**Not supported:** self-hosted Bitbucket Server/Data Center; a bare self-hosted GitLab *project home* URL in `repo=` (no `/-/` marker to disambiguate a project from a group page by shape alone — paste a file link into `entry=`/`data=` instead, which is unambiguous).
 
 ---
 
@@ -846,10 +892,11 @@ The build is not done until all of the following pass on current versions of Chr
 7. File overwrites by the script are not detected by the output diff (section 10.1); use the file browser.
 8. First run downloads a substantial amount of WebAssembly. Subsequent runs reuse the browser cache.
 9. The application requires a network connection on first load, and thereafter for any package not already cached. It is not an offline-first application, and there is no service worker (section 4).
-10. **A file can only be loaded from a URL if that host allows cross-origin reads.** Dropbox, Google Drive, and Google Sites do not, and no change on ShareR's side can make them. GitHub, GitHub Pages, `cdn.jsdelivr.net/gh/`, and any server you configure will work. See section 5.5, which lists what was actually tested.
-11. Directory listing by URL is best-effort outside of GitHub, because most web servers publish no index and there is no standard format for the ones that do (section 5.1).
+10. **A file can only be loaded from a URL if that host allows cross-origin reads.** Google Sites does not, and no change on ShareR's side can make that one work at all (it redirects to a login page). GitHub, GitLab, Bitbucket, Dropbox, Google Drive, OneDrive, and SharePoint all lack native CORS support on at least one of their hosts, but ShareR's CORS proxy fallback (section 5.5) can succeed for those, with no guarantee. GitHub Pages, `cdn.jsdelivr.net/gh/`, and any server you configure send the header directly and need no fallback. See section 5.5, which lists what was actually tested versus what is each vendor's documented behavior.
+11. Directory listing by URL is best-effort outside of GitHub/GitLab/Bitbucket, because most web servers publish no index and there is no standard format for the ones that do (section 5.1). Dropbox, Google Drive, OneDrive, and SharePoint cannot be listed by URL at all — their folder views are rendered client-side and there is no key-free API to ask instead (section 5.6).
 12. The Content Security Policy is deliberately permissive and is **not** a security boundary (sections 0.1 and 3.4). `'unsafe-eval'` is required by webR's Emscripten runtime and cannot be removed. The guarantee that user data is never transmitted rests on the source code containing no upload path, which is verifiable by reading it, not on the browser refusing one.
 13. Clickjacking protection cannot be enforced from the page itself, because `frame-ancestors` is ignored in a `<meta>` policy. On a deployment target that cannot set response headers, such as GitHub Pages, ShareR can be framed by another site.
+14. GitLab support requires the URL to expose its `/-/blob/`, `/-/raw/`, or `/-/tree/` marker (any host, including self-hosted); a bare self-hosted GitLab project-home URL cannot be recognized (section 5.1). Bitbucket support is `bitbucket.org` (cloud) only — Bitbucket Server/Data Center is not supported (section 6.6).
 
 
 ## Contact

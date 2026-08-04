@@ -89,12 +89,13 @@ For research teams, that means anyone on the project can run the same analysis t
 
 | Parameter | Meaning | Default |
 | --- | --- | --- |
-| `repo` | `Owner/RepoName` of a public GitHub repository | none, which starts ShareR in upload mode |
+| `repo` | `Owner/RepoName` of a public GitHub repository, or a full GitHub/GitLab/Bitbucket repository URL | none, which starts ShareR in upload mode |
 | `ref` | Branch, tag, or commit SHA. `branch` is accepted as an alias. | the repository's default branch (main) |
-| `entry` or `script` | Path to the script to run or the URL to the script (if not using GitHub) | auto-detected (when using GitHub) |
-| `autorun` | `1` to run automatically once preflight passes | `0` |
+| `entry` or `script` | Path to the script to run or the URL to the script (if not using a repository) | auto-detected (when using a repository) |
 
-**For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted on the same GitHub repo will be loaded automatically.
+ShareR always runs the script automatically once it and its files are staged; use the **Run** button to run again manually.
+
+**For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted in the same repository will be loaded automatically.
 
 **For maintainers:** all configuration lives in a single frozen `CONFIG` object at the top of `index.html`, including the pinned webR version, the package repository URL, size limits, and the trusted-owner allowlist. There are no secrets, no environment variables, and no build step. Editing `WEBR_VERSION` is the only supported way to upgrade the R engine, and doing so automatically invalidates the old cache.
 

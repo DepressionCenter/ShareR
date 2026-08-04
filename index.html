@@ -1633,9 +1633,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
   </div>
   <div class="modal-body">
     <p class="help-text">
-      Paste a link to a script and, optionally, its data, or load a GitHub repository. Every
-      field here corresponds to a URL parameter (<code>entry</code>, <code>data</code>,
-      <code>repo</code>, <code>ref</code>), so a filled-in form is always a shareable link.
+      Paste a link to a script and, optionally, its data, or load a GitHub, GitLab, or Bitbucket
+      repository. Every field here corresponds to a URL parameter (<code>entry</code>,
+      <code>data</code>, <code>repo</code>, <code>ref</code>), so a filled-in form is always a
+      shareable link.
     </p>
     <form id="source-form">
       <div class="field">
@@ -1650,8 +1651,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="repo-input">GitHub repository (optional)</label>
-          <input type="text" id="repo-input" name="repo" placeholder="owner/repo" autocomplete="off">
+          <label for="repo-input">Repository (optional)</label>
+          <input type="text" id="repo-input" name="repo"
+            placeholder="owner/repo, or a GitHub/GitLab/Bitbucket URL" autocomplete="off">
         </div>
         <div class="field">
           <label for="ref-input">Branch, tag, or commit SHA</label>
@@ -1792,9 +1794,17 @@ const CONFIG = Object.freeze({
 
   GITHUB_API:              "https://api.github.com",
   GITHUB_RAW:              "https://raw.githubusercontent.com",
+  // Bitbucket Cloud is a single fixed host (unlike GitLab, whose host is always derived from the
+  // URL being handled so a self-hosted instance works with no special-casing -- see
+  // matchGitlabBlobUrl/matchGitlabTreeUrl).
+  BITBUCKET_API:           "https://api.bitbucket.org/2.0",
   FETCH_CONCURRENCY:       6,
   MAX_REPO_FILE_BYTES:     25 * 1024 * 1024,
   MAX_REPO_TOTAL_BYTES:    100 * 1024 * 1024,
+  // Safety caps for GitLab's paginated tree API and Bitbucket's recursive per-directory walk,
+  // neither of which is a single self-limiting call the way GitHub's git/trees?recursive=1 is.
+  MAX_REPO_TREE_ENTRIES:   5000,
+  MAX_REPO_TREE_REQUESTS:  200,
 
   MAX_UPLOAD_FILE_BYTES:   250 * 1024 * 1024,
 
@@ -2002,14 +2012,46 @@ function vfsPathFor(relativePath) {
   return full;
 }
 
+/* Recognizes a bare "owner/repo" or "@owner/repo" (GitHub, unchanged for backward compatibility),
+   a github.com or bitbucket.org repository URL, or any GitLab URL (gitlab.com or self-hosted) that
+   names a file or directory via the "/-/" marker (see matchGitlabRefAndPath). A bare self-hosted
+   GitLab *project home* URL (no "/-/" segment) cannot be told apart from a group page by shape
+   alone and is deliberately rejected with an actionable message rather than guessed at -- paste a
+   link to a file into entry=/data= instead, which is unambiguous and already triggers the rewrite
+   at the top of stageFromParams. Every branch returns a uniform shape: `label` is the full
+   human-readable identity (owner/repo, or a GitLab project path) and `shortName` is just the
+   repo/project name, for the places that show only that (the script-picker root, export titles). */
 function parseRepoParam(value) {
-  let s = value.trim();
-  const m = s.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
-  if (m) s = m[1] + "/" + m[2];
-  else if (s.startsWith("@")) s = s.slice(1);
-  if (!RE_REPO.test(s)) throw new ShareRError("Not a valid GitHub repository: " + value);
-  const [owner, repo] = s.split("/");
-  return { owner, repo };
+  const s = value.trim();
+  let u = null;
+  try {
+    const parsed = new URL(s);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") u = parsed;
+  } catch { /* not a URL; falls through to the bare owner/repo form below */ }
+
+  if (u) {
+    const host = u.hostname.toLowerCase();
+    if (host === "github.com") {
+      const m = u.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+      if (m) return { providerId: "github", owner: m[1], repo: m[2], label: m[1] + "/" + m[2], shortName: m[2] };
+    } else if (host === "bitbucket.org") {
+      const m = u.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+      if (m) return { providerId: "bitbucket", workspace: m[1], repo: m[2], label: m[1] + "/" + m[2], shortName: m[2] };
+    }
+    const gl = matchGitlabTreeUrl(u) || matchGitlabBlobUrl(u);
+    if (gl) {
+      return { providerId: "gitlab", host: gl.host, projectPath: gl.projectPath,
+        label: gl.projectPath, shortName: gl.projectPath.split("/").pop() };
+    }
+    throw new ShareRError("Not a recognized GitHub, GitLab, or Bitbucket repository URL: " + value +
+      ". For a self-hosted GitLab project, paste a link to a file (a \"blob\" or \"raw\" URL) instead.");
+  }
+
+  let s2 = s;
+  if (s2.startsWith("@")) s2 = s2.slice(1);
+  if (!RE_REPO.test(s2)) throw new ShareRError("Not a valid GitHub repository: " + value);
+  const [owner, repo] = s2.split("/");
+  return { providerId: "github", owner, repo, label: owner + "/" + repo, shortName: repo };
 }
 
 function parseDataSpec(raw) {
@@ -2017,6 +2059,53 @@ function parseDataSpec(raw) {
   let target = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw).trim();
   const rename = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : null;
   return { target, rename, isDirectory: target.endsWith("/") };
+}
+
+/* Blocks any explicit entry=/data= target that names a path inside a repository's .git or
+   .github folder, at any depth -- not just at the root. These are version-control/CI metadata,
+   never legitimate source or research data, and .git in particular can contain credentials in its
+   config or in a hook script. Used both for repo-relative paths and for the pathname of a URL. */
+function isVcsMetadataPath(path) {
+  return path.split("/").some((segment) => {
+    let decoded = segment;
+    try { decoded = decodeURIComponent(segment); } catch { /* malformed %-escape; compare as-is */ }
+    return decoded.toLowerCase() === ".git" || decoded.toLowerCase() === ".github";
+  });
+}
+
+const RE_SCRIPT_FILENAME = /\.(?:r|rmd)$/i;
+
+/* entry=/script=/file= must resolve to an actual R or R Markdown file -- this is the extension
+   half of that check; see sniffEntryContentRejection for the content half, which still applies
+   even when the extension looks right. */
+function isScriptFilename(name) {
+  return RE_SCRIPT_FILENAME.test(name);
+}
+
+function looksLikeHtmlOrJsContentType(contentType) {
+  return /html|javascript|ecmascript/i.test(contentType || "");
+}
+
+const RE_NON_R_SHEBANG = /^#!.*\b(?:node|python[0-9.]*|bash|sh|perl|ruby)\b/i;
+const RE_R_SHEBANG = /^#!.*\bRscript\b/i;
+
+/* Sniffs only the first ~1KB of a fetched entry= file, not the whole body -- a valid .Rmd
+   legitimately embeds raw HTML/JS chunks later in the document (e.g. htmlwidgets output), so only
+   the very start of the file is diagnostic of "this isn't R/Rmd at all". Returns a human-readable
+   rejection reason, or null if the content looks acceptable. Runs even when isScriptFilename
+   already passed: a URL can serve any content under any name it likes. */
+function sniffEntryContentRejection(bytes) {
+  let prefix = decodeUtf8(bytes.subarray(0, 1024));
+  if (prefix.charCodeAt(0) === 0xFEFF) prefix = prefix.slice(1); // strip a leading byte-order mark
+  const trimmed = prefix.replace(/^[ \t\r\n]+/, "");
+  if (trimmed.startsWith("<")) {
+    return "it starts with what looks like an HTML or XML tag, not R or R Markdown source";
+  }
+  const firstLine = trimmed.split(/\r?\n/, 1)[0];
+  if (RE_NON_R_SHEBANG.test(firstLine) && !RE_R_SHEBANG.test(firstLine)) {
+    return "it starts with a #! line naming a non-R interpreter";
+  }
+  return null;
 }
 
 /* GitHub's newer link format spells the ref as "refs/heads/<branch>" or "refs/tags/<tag>" instead
@@ -2051,6 +2140,141 @@ function matchGithubBlobUrl(u) {
   return m && m.path ? m : null;
 }
 
+/* GitLab's web UI always inserts a literal "/-/" marker segment immediately before blob/raw/tree,
+   regardless of how deep the project path is (arbitrary-depth subgroups) or which host serves it.
+   Keying off that marker instead of a hostname allowlist is what lets a self-hosted instance be
+   recognized exactly like gitlab.com, with no per-host list to maintain. GitLab always percent-
+   encodes a "/" inside a ref (branch/tag) in its own web links, so -- unlike GitHub's separate
+   refs/heads//refs/tags convention -- a single ([^/]+) ref segment is sufficient here. */
+function matchGitlabRefAndPath(pathname, kindSegment) {
+  const m = pathname.match(new RegExp("^/(.+?)/-/(?:" + kindSegment + ")/([^/]+)/(.*)$"));
+  if (!m) return null;
+  return { projectPath: m[1], ref: decodeURIComponent(m[2]), path: decodeURIComponent(m[3]) };
+}
+
+function matchGitlabTreeUrl(u) {
+  const m = matchGitlabRefAndPath(u.pathname, "tree");
+  if (!m) return null;
+  return { host: u.origin, projectPath: m.projectPath, ref: m.ref, path: m.path.replace(/\/+$/, "") };
+}
+
+function matchGitlabBlobUrl(u) {
+  const m = matchGitlabRefAndPath(u.pathname, "blob|raw");
+  return m && m.path ? { host: u.origin, projectPath: m.projectPath, ref: m.ref, path: m.path } : null;
+}
+
+function gitlabRawUrl(host, projectPath, ref, path) {
+  return host + "/" + projectPath.split("/").map(encodeURIComponent).join("/") + "/-/raw/" +
+    encodeURIComponent(ref) + "/" + path.split("/").map(encodeURIComponent).join("/");
+}
+
+/* Bitbucket Cloud (bitbucket.org) only -- Bitbucket Server/Data Center is a different product with
+   a different URL shape and a different REST API entirely, and self-hosting it is out of scope.
+   Bitbucket Cloud uses the same "/src/<ref>/<path>" route for both a file view and a directory
+   view, disambiguated the same way data= already disambiguates a directory target: a trailing
+   "/". */
+function matchBitbucketRefAndPath(pathname, kindSegment) {
+  const m = pathname.match(new RegExp("^/([^/]+)/([^/]+)/(?:" + kindSegment + ")/([^/]+)/(.*)$"));
+  if (!m) return null;
+  return { workspace: m[1], repo: m[2], ref: decodeURIComponent(m[3]), path: decodeURIComponent(m[4]) };
+}
+
+function matchBitbucketTreeUrl(u) {
+  if (u.hostname.toLowerCase() !== "bitbucket.org") return null;
+  const m = matchBitbucketRefAndPath(u.pathname, "src");
+  if (!m || !m.path.endsWith("/")) return null;
+  return { workspace: m.workspace, repo: m.repo, ref: m.ref, path: m.path.replace(/\/+$/, "") };
+}
+
+function matchBitbucketBlobUrl(u) {
+  if (u.hostname.toLowerCase() !== "bitbucket.org") return null;
+  const m = matchBitbucketRefAndPath(u.pathname, "src|raw");
+  return m && m.path && !m.path.endsWith("/")
+    ? { workspace: m.workspace, repo: m.repo, ref: m.ref, path: m.path } : null;
+}
+
+function bitbucketRawUrl(workspace, repo, ref, path) {
+  return "https://bitbucket.org/" + workspace + "/" + repo + "/raw/" + encodeURIComponent(ref) + "/" +
+    path.split("/").map(encodeURIComponent).join("/");
+}
+
+/* Provider-dispatch wrapper for a "blob"/"raw" (single-file view) link, tried at every call site
+   that used to check GitHub alone: stageEntryFileFromUrl, the data= single-file URL branch, and
+   the entry= blob-URL rewrite at the top of stageFromParams. `raw` keeps each provider's own field
+   names (owner/repo for GitHub, projectPath for GitLab, workspace/repo for Bitbucket) so existing
+   GitHub-specific code that destructures matchGithubBlobUrl's result is unaffected; `rawUrl` and
+   `sourceLabel` are the provider-agnostic values every call site actually needs. */
+function matchGitHostBlobUrl(u) {
+  const gh = matchGithubBlobUrl(u);
+  if (gh) {
+    return { providerId: "github", raw: gh, path: gh.path,
+      rawUrl: rawContentUrl(gh.owner, gh.repo, gh.ref, gh.path), sourceLabel: gh.owner + "/" + gh.repo + "@" + gh.ref };
+  }
+  const gl = matchGitlabBlobUrl(u);
+  if (gl) {
+    return { providerId: "gitlab", raw: gl, path: gl.path,
+      rawUrl: gitlabRawUrl(gl.host, gl.projectPath, gl.ref, gl.path), sourceLabel: gl.projectPath + "@" + gl.ref };
+  }
+  const bb = matchBitbucketBlobUrl(u);
+  if (bb) {
+    return { providerId: "bitbucket", raw: bb, path: bb.path,
+      rawUrl: bitbucketRawUrl(bb.workspace, bb.repo, bb.ref, bb.path), sourceLabel: bb.workspace + "/" + bb.repo + "@" + bb.ref };
+  }
+  return null;
+}
+
+/* Same dispatch, for a "tree" (directory view) link -- used only by stageDirectoryDataSpec. */
+function matchGitHostTreeUrl(u) {
+  const gh = matchGithubTreeUrl(u);
+  if (gh) return { providerId: "github", raw: gh };
+  const gl = matchGitlabTreeUrl(u);
+  if (gl) return { providerId: "gitlab", raw: gl };
+  const bb = matchBitbucketTreeUrl(u);
+  if (bb) return { providerId: "bitbucket", raw: bb };
+  return null;
+}
+
+/* True when a matched blob URL names the same repository/project already loaded via repo=, so the
+   data= single-file branch can resolve it through the already-fetched tree (case-insensitively)
+   instead of an extra fetch -- generalizes the same-repo fast path that used to be GitHub-only. */
+function blobMatchesRepo(blobMatch, repoInfo) {
+  if (!blobMatch || !repoInfo || blobMatch.providerId !== repoInfo.providerId) return false;
+  if (repoInfo.providerId === "gitlab") {
+    return blobMatch.raw.host.toLowerCase() === repoInfo.host.toLowerCase() &&
+      blobMatch.raw.projectPath.toLowerCase() === repoInfo.projectPath.toLowerCase();
+  }
+  const blobOwner = (blobMatch.raw.owner || blobMatch.raw.workspace || "").toLowerCase();
+  const repoOwner = (repoInfo.owner || repoInfo.workspace || "").toLowerCase();
+  return blobOwner === repoOwner && blobMatch.raw.repo.toLowerCase() === repoInfo.repo.toLowerCase();
+}
+
+/* Best-effort share-link -> direct-download URL conversion for cloud storage services with no
+   public, key-free API for this (unlike GitHub/GitLab/Bitbucket, which all expose one without
+   authentication for public content). These are documented, unofficial tricks, not a stable
+   versioned API -- see docs/ShareR-Technical-Specification.md's limitations section. Returns the
+   input URL unchanged (a safe no-op) for any other host. Whole-folder listing for any of these
+   four is deliberately out of scope: it would require an OAuth app registration or an API key this
+   static, backend-less app has no way to hold securely (AGENTS.md section 7 forbids hardcoding
+   credentials, and there is no server here to hold one even if that were acceptable). */
+function rewriteCloudStorageUrl(u) {
+  const host = u.hostname.toLowerCase();
+  if (host === "www.dropbox.com" || host === "dropbox.com") {
+    const rewritten = new URL(u.href);
+    rewritten.searchParams.set("dl", "1");
+    return rewritten;
+  }
+  if (host === "drive.google.com") {
+    const m = u.pathname.match(/^\/file\/d\/([^/]+)/);
+    return m ? new URL("https://drive.google.com/uc?export=download&id=" + encodeURIComponent(m[1])) : u;
+  }
+  if (host === "onedrive.live.com" || host === "1drv.ms" || host.endsWith(".sharepoint.com")) {
+    const rewritten = new URL(u.href);
+    rewritten.searchParams.set("download", "1");
+    return rewritten;
+  }
+  return u;
+}
+
 /* ### URL parameter parsing (spec section 5.1) ### */
 
 function parseAppParams(search) {
@@ -2064,11 +2288,7 @@ function parseAppParams(search) {
   const refRaw = sanitizePastedValue(qp.get("ref") || qp.get("branch") || "");
   const packagesRaw = sanitizePastedValue(qp.get("packages") || "");
   const reposRaw = sanitizePastedValue(qp.get("repos") || "");
-  // Running immediately once a script resolves is the default -- researchers open a link to see
-  // results, not to find a Run button. autorun=0 is a documented opt-out for a link meant to be
-  // reviewed before running (e.g. teaching), not an opt-in.
-  const autorun = qp.get("autorun") !== "0";
-  return { entryRaw, dataValues, repoRaw, refRaw, packagesRaw, reposRaw, autorun };
+  return { entryRaw, dataValues, repoRaw, refRaw, packagesRaw, reposRaw };
 }
 
 function syncUrlBar(overrides) {
@@ -2279,8 +2499,7 @@ async function fetchRepoTree(owner, repo, ref) {
   checkGithubResponseForCommonErrors(res, owner, repo, ref);
   if (!res.ok) throw new ShareRError("GitHub returned an error (" + res.status + ") listing " + owner + "/" + repo);
   const json = await res.json();
-  const entries = (json.tree || []).filter((e) => e.type === "blob" &&
-    !e.path.startsWith(".git/") && !e.path.startsWith(".github/"));
+  const entries = (json.tree || []).filter((e) => e.type === "blob" && !isVcsMetadataPath(e.path));
   return { truncated: !!json.truncated, entries, sha: json.sha || null };
 }
 
@@ -2331,6 +2550,170 @@ async function resolveRefAndTree(owner, repo, refRaw, messages) {
 function rawContentUrl(owner, repo, ref, path) {
   return CONFIG.GITHUB_RAW + "/" + owner + "/" + repo + "/" + ref + "/" +
     path.split("/").map(encodeURIComponent).join("/");
+}
+
+/* ### GitLab and Bitbucket repository sync ###
+
+   The dependency-walk/auto-data-detect/size-budget pipeline below this section (starting with
+   fetchAndStageRepoEntry) was written entirely against GitHub and stays completely unchanged for
+   GitLab/Bitbucket -- it only ever touches a repository through two seams, both dispatched by
+   provider here: buildRawUrl (raw-content URL) and resolveProjectRefAndTree (ref + tree listing).
+   Neither GitLab nor Bitbucket gets GitHub's main/master silent-retry heuristic (resolveRefAndTree
+   above): that heuristic exists because of GitHub's specific 2020 default-branch rename, not a
+   demonstrated need elsewhere. */
+
+function buildRawUrl(repoInfo, ref, path) {
+  if (repoInfo.providerId === "gitlab") return gitlabRawUrl(repoInfo.host, repoInfo.projectPath, ref, path);
+  if (repoInfo.providerId === "bitbucket") return bitbucketRawUrl(repoInfo.workspace, repoInfo.repo, ref, path);
+  return rawContentUrl(repoInfo.owner, repoInfo.repo, ref, path);
+}
+
+async function resolveGitlabDefaultBranch(host, projectPath) {
+  const res = await fetch(host + "/api/v4/projects/" + encodeURIComponent(projectPath));
+  if (res.status === 404) throw new ShareRError("GitLab project not found: " + projectPath);
+  if (!res.ok) throw new ShareRError("Could not look up GitLab project " + projectPath + " (HTTP " + res.status + ")");
+  const json = await res.json();
+  if (!json.default_branch) throw new ShareRError("GitLab project " + projectPath + " has no default branch (is it empty?).");
+  return json.default_branch;
+}
+
+async function resolveBitbucketDefaultBranch(workspace, repo) {
+  const res = await fetch(CONFIG.BITBUCKET_API + "/repositories/" + workspace + "/" + repo);
+  if (res.status === 404) throw new ShareRError("Bitbucket repository not found: " + workspace + "/" + repo);
+  if (!res.ok) throw new ShareRError("Could not look up Bitbucket repository " + workspace + "/" + repo + " (HTTP " + res.status + ")");
+  const json = await res.json();
+  if (!json.mainbranch || !json.mainbranch.name) {
+    throw new ShareRError("Bitbucket repository " + workspace + "/" + repo + " has no default branch (is it empty?).");
+  }
+  return json.mainbranch.name;
+}
+
+/* GitLab's tree API paginates via classic offset pagination (an "x-next-page" response header,
+   empty on the last page) rather than GitHub's single recursive-call-does-everything shape, so
+   this loops -- bounded by CONFIG.MAX_REPO_TREE_ENTRIES/MAX_REPO_TREE_REQUESTS, since an unbounded
+   loop against a very large public project would otherwise run indefinitely. Sets truncated:true
+   on hitting either cap, reusing the same "some helper files may be missing" warning GitHub's own
+   truncated flag already triggers in stageFromParams. Works unmodified against a self-hosted
+   instance: host is whatever origin the project's URL was matched against. */
+async function fetchGitlabTree(host, projectPath, ref) {
+  const entries = [];
+  let page = 1, truncated = false, requestCount = 0;
+  for (;;) {
+    if (requestCount >= CONFIG.MAX_REPO_TREE_REQUESTS) { truncated = true; break; }
+    requestCount++;
+    const url = host + "/api/v4/projects/" + encodeURIComponent(projectPath) +
+      "/repository/tree?ref=" + encodeURIComponent(ref) + "&recursive=true&per_page=100&page=" + page;
+    const res = await fetch(url);
+    if (res.status === 404) throw new ShareRError("GitLab project or ref not found: " + projectPath + (ref ? " @ " + ref : ""));
+    if (!res.ok) throw new ShareRError("GitLab returned an error (" + res.status + ") listing " + projectPath);
+    const json = await res.json();
+    for (const item of json) {
+      if (item.type === "blob" && !isVcsMetadataPath(item.path)) entries.push({ path: item.path, type: "blob" });
+    }
+    if (entries.length >= CONFIG.MAX_REPO_TREE_ENTRIES) { truncated = true; break; }
+    const nextPage = res.headers.get("x-next-page");
+    if (!nextPage) break;
+    page = parseInt(nextPage, 10);
+  }
+  return { truncated, entries, sha: null };
+}
+
+/* Bitbucket Cloud's API v2 has no single recursive-tree call (unlike GitHub's
+   git/trees?recursive=1 or GitLab's repository/tree?recursive=true) -- Atlassian's own community
+   documentation warns that a large max_depth value on the /src/ endpoint can time out (HTTP 555)
+   -- so this walks one directory at a time instead, following each response's own "next" URL and
+   skipping (not even recursing into) any .git/.github folder. Bounded by both an entry cap and a
+   request cap, since a project with many near-empty directories burns requests independent of
+   file count. */
+async function fetchBitbucketTree(workspace, repo, ref) {
+  const entries = [];
+  let truncated = false, requestCount = 0;
+  const queue = [""];
+  while (queue.length) {
+    if (requestCount >= CONFIG.MAX_REPO_TREE_REQUESTS || entries.length >= CONFIG.MAX_REPO_TREE_ENTRIES) {
+      truncated = true;
+      break;
+    }
+    const dirPath = queue.shift();
+    let url = CONFIG.BITBUCKET_API + "/repositories/" + workspace + "/" + repo + "/src/" +
+      encodeURIComponent(ref) + (dirPath ? "/" + dirPath.split("/").map(encodeURIComponent).join("/") + "/" : "/") +
+      "?pagelen=100";
+    while (url) {
+      requestCount++;
+      const res = await fetch(url);
+      if (res.status === 404) throw new ShareRError("Bitbucket repository, ref, or path not found: " + workspace + "/" + repo);
+      if (!res.ok) throw new ShareRError("Bitbucket returned an error (" + res.status + ") listing " + workspace + "/" + repo);
+      const json = await res.json();
+      for (const item of json.values || []) {
+        if (isVcsMetadataPath(item.path)) continue;
+        if (item.type === "commit_directory") queue.push(item.path);
+        else if (item.type === "commit_file") entries.push({ path: item.path, type: "blob", size: item.size });
+      }
+      url = json.next || null;
+      if (requestCount >= CONFIG.MAX_REPO_TREE_REQUESTS) { truncated = true; break; }
+    }
+    if (truncated) break;
+  }
+  return { truncated, entries, sha: null };
+}
+
+async function resolveProjectRefAndTree(repoInfo, refRaw, messages) {
+  if (repoInfo.providerId === "github") return resolveRefAndTree(repoInfo.owner, repoInfo.repo, refRaw, messages);
+  if (repoInfo.providerId === "gitlab") {
+    const ref = refRaw || await resolveGitlabDefaultBranch(repoInfo.host, repoInfo.projectPath);
+    const tree = await fetchGitlabTree(repoInfo.host, repoInfo.projectPath, ref);
+    return { refUsed: ref, tree };
+  }
+  const ref = refRaw || await resolveBitbucketDefaultBranch(repoInfo.workspace, repoInfo.repo);
+  const tree = await fetchBitbucketTree(repoInfo.workspace, repoInfo.repo, ref);
+  return { refUsed: ref, tree };
+}
+
+/* Non-recursive single-directory listing for a data=<dir>/ target naming a specific GitLab
+   subpath -- mirrors the GitHub Contents-API branch in stageDirectoryDataSpec one level deep,
+   rather than pulling in the recursive fetchGitlabTree (which would fetch, and pay the pagination
+   cost for, the whole project just to list one folder). */
+async function stageGitlabDirectoryListing(match, target, staged, messages) {
+  const url = match.host + "/api/v4/projects/" + encodeURIComponent(match.projectPath) +
+    "/repository/tree?path=" + encodeURIComponent(match.path) + "&ref=" + encodeURIComponent(match.ref) + "&per_page=100";
+  const res = await fetch(url);
+  if (!res.ok) { messages.push({ level: "warning", text: "Could not list GitLab directory: " + target + " (HTTP " + res.status + ")" }); return; }
+  const list = await res.json();
+  const files = Array.isArray(list) ? list.filter((e) => e.type === "blob" && !isVcsMetadataPath(e.path)) : [];
+  if (files.length === 0) { messages.push({ level: "warning", text: "No files found in GitLab directory: " + target }); return; }
+  const sourceLabel = match.projectPath + "@" + match.ref;
+  for (const f of files) {
+    const rawUrl = gitlabRawUrl(match.host, match.projectPath, match.ref, f.path);
+    try {
+      const { buffer } = await fetchArrayBufferWithRetry(rawUrl);
+      stageBytes(staged, basenameOf(f.path), new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "warning", text: describeFetchFailure(rawUrl, err) });
+    }
+  }
+}
+
+/* Same shape for Bitbucket Cloud, one page of its /src/ directory listing endpoint -- no
+   recursion and no pagination loop, since a data=<dir>/ target names one specific folder, not a
+   whole project. */
+async function stageBitbucketDirectoryListing(match, target, staged, messages) {
+  const url = CONFIG.BITBUCKET_API + "/repositories/" + match.workspace + "/" + match.repo + "/src/" +
+    encodeURIComponent(match.ref) + "/" + match.path.split("/").map(encodeURIComponent).join("/") + "/?pagelen=100";
+  const res = await fetch(url);
+  if (!res.ok) { messages.push({ level: "warning", text: "Could not list Bitbucket directory: " + target + " (HTTP " + res.status + ")" }); return; }
+  const json = await res.json();
+  const files = (json.values || []).filter((e) => e.type === "commit_file" && !isVcsMetadataPath(e.path));
+  if (files.length === 0) { messages.push({ level: "warning", text: "No files found in Bitbucket directory: " + target }); return; }
+  const sourceLabel = match.workspace + "/" + match.repo + "@" + match.ref;
+  for (const f of files) {
+    const rawUrl = bitbucketRawUrl(match.workspace, match.repo, match.ref, f.path);
+    try {
+      const { buffer } = await fetchArrayBufferWithRetry(rawUrl);
+      stageBytes(staged, basenameOf(f.path), new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "warning", text: describeFetchFailure(rawUrl, err) });
+    }
+  }
 }
 
 /* ### Static analysis of R source text: which files does this script actually reference? ###
@@ -2579,7 +2962,7 @@ async function fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, mess
   }
   if (ctx.budget.exceeded) return null;
   try {
-    const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, treeEntry.path));
+    const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, treeEntry.path));
     ctx.budget.totalBytes += buffer.byteLength;
     if (ctx.budget.totalBytes > CONFIG.MAX_REPO_TOTAL_BYTES) {
       ctx.budget.exceeded = true;
@@ -2589,7 +2972,7 @@ async function fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, mess
     }
     const bytes = new Uint8Array(buffer);
     stageBytes(staged, treeEntry.path, bytes, "repository",
-      repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+      repoInfo.label + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
     return bytes;
   } catch (err) {
     messages.push({ level: "warning", text: "Could not fetch " + treeEntry.path + " from the repository: " + summarizeError(err) });
@@ -2723,7 +3106,7 @@ async function fetchSkippedLargeFiles(repoInfo, tree, refUsed, staged, messages,
     const treeEntry = findTreeEntryCaseInsensitive(tree.entries, path);
     if (!treeEntry || staged.has(treeEntry.path)) continue;
     try {
-      const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, treeEntry.path));
+      const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, treeEntry.path));
       ctx.budget.totalBytes += buffer.byteLength;
       if (ctx.budget.totalBytes > CONFIG.MAX_REPO_TOTAL_BYTES) {
         ctx.budget.exceeded = true;
@@ -2732,7 +3115,7 @@ async function fetchSkippedLargeFiles(repoInfo, tree, refUsed, staged, messages,
         break;
       }
       stageBytes(staged, treeEntry.path, new Uint8Array(buffer), "repository",
-        repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+        repoInfo.label + "@" + refUsed, messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
     } catch (err) {
       messages.push({ level: "warning", text: "Could not fetch " + treeEntry.path + " from the repository: " + summarizeError(err) });
     }
@@ -2800,15 +3183,16 @@ async function fetchDirectoryListingHtml(url) {
 async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, messages) {
   if (repoInfo && !/^https?:\/\//i.test(target)) {
     if (!RE_PATH.test(target)) throw new ShareRError("Not a valid repository path: " + target);
+    if (isVcsMetadataPath(target)) throw new ShareRError("Refusing to load files from inside a .git or .github folder: " + target);
     const prefix = target.endsWith("/") ? target : target + "/";
     const prefixLower = prefix.toLowerCase();
     const matches = tree.entries.filter((e) => e.path.toLowerCase().startsWith(prefixLower) &&
       !e.path.slice(prefix.length).includes("/"));
     if (matches.length === 0) { messages.push({ level: "warning", text: "No files found in repository directory: " + target }); return; }
-    const sourceLabel = repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed;
+    const sourceLabel = repoInfo.label + "@" + refUsed;
     for (const m of matches) {
       try {
-        const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, m.path));
+        const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, m.path));
         stageBytes(staged, basenameOf(m.path), new Uint8Array(buffer), "repository", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
       } catch (err) {
         messages.push({ level: "warning", text: "Could not fetch " + m.path + " from the repository: " + summarizeError(err) });
@@ -2818,15 +3202,18 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
   }
 
   const u = parseFileUrl(target);
-  const ghDir = matchGithubTreeUrl(u);
-  if (ghDir) {
+  if (isVcsMetadataPath(u.pathname)) throw new ShareRError("Refusing to load files from inside a .git or .github folder: " + target);
+
+  const treeMatch = matchGitHostTreeUrl(u);
+  if (treeMatch && treeMatch.providerId === "github") {
+    const ghDir = treeMatch.raw;
     const apiUrl = CONFIG.GITHUB_API + "/repos/" + ghDir.owner + "/" + ghDir.repo + "/contents/" +
       ghDir.path.split("/").map(encodeURIComponent).join("/") + "?ref=" + encodeURIComponent(ghDir.ref);
     const res = await fetch(apiUrl, { headers: { Accept: "application/vnd.github+json" } });
     checkGithubResponseForCommonErrors(res, ghDir.owner, ghDir.repo, ghDir.ref);
     if (!res.ok) { messages.push({ level: "warning", text: "Could not list GitHub directory: " + target + " (HTTP " + res.status + ")" }); return; }
     const list = await res.json();
-    const files = Array.isArray(list) ? list.filter((e) => e.type === "file") : [];
+    const files = Array.isArray(list) ? list.filter((e) => e.type === "file" && !isVcsMetadataPath(e.path)) : [];
     if (files.length === 0) { messages.push({ level: "warning", text: "No files found in GitHub directory: " + target }); return; }
     for (const f of files) {
       try {
@@ -2838,6 +3225,8 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
     }
     return;
   }
+  if (treeMatch && treeMatch.providerId === "gitlab") { await stageGitlabDirectoryListing(treeMatch.raw, target, staged, messages); return; }
+  if (treeMatch && treeMatch.providerId === "bitbucket") { await stageBitbucketDirectoryListing(treeMatch.raw, target, staged, messages); return; }
 
   let files;
   try { files = await fetchDirectoryListingHtml(u); }
@@ -2850,6 +3239,7 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
   }
   if (files.length === 0) { messages.push({ level: "warning", text: "No files found at " + target }); return; }
   for (const fileUrl of files) {
+    if (isVcsMetadataPath(fileUrl.pathname)) continue; // an autoindex link into .git/.github; skip silently, same as other auto-discovered noise
     try {
       const { buffer } = await fetchArrayBufferWithRetry(fileUrl.href);
       stageBytes(staged, decodeURIComponent(basenameOf(fileUrl.pathname)), new Uint8Array(buffer), "url", target, messages, CONFIG.MAX_REPO_FILE_BYTES);
@@ -2861,20 +3251,45 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
 
 /* ### Staging orchestration: entry + data, from URL, repo, or already-staged local files ### */
 
+/* Rejections below throw rather than push a soft staging-messages entry: with no valid entry
+   script there is nothing for the researcher to run at all, so this is fatal the same way a
+   missing repository or a YAML parse error is -- it belongs in the same "Unable to Run Script"
+   dialog those use (showErrorModal, wired up in runStagingPipeline's catch), not buried in the
+   Workspace panel's message list alongside soft, recoverable warnings like a missing data file. */
 async function stageEntryFileFromUrl(url, staged, messages) {
-  // Normally intercepted earlier (stageFromParams rewrites a github.com entry= to repo=/entry=
+  if (isVcsMetadataPath(url.pathname)) {
+    throw new ShareRError("ShareR does not load files from inside a .git or .github folder, " +
+      "since those hold repository/version-control data, not analysis code.");
+  }
+  // Normally intercepted earlier (stageFromParams rewrites a git-host entry= to repo=/entry=
   // before this ever runs), but a repo= given explicitly alongside a *different* repository's
-  // blob URL as entry= skips that rewrite; this is the safety net for that case, since github.com
-  // itself sends no CORS header and a direct fetch would otherwise fail no matter what.
-  const blobMatch = matchGithubBlobUrl(url);
-  const fetchUrl = blobMatch ? rawContentUrl(blobMatch.owner, blobMatch.repo, blobMatch.ref, blobMatch.path) : url.href;
+  // blob URL as entry= skips that rewrite; this is the safety net for that case, since GitHub's,
+  // GitLab's, and Bitbucket's own web UIs send no CORS header and a direct fetch would otherwise
+  // fail no matter what.
+  const blobMatch = matchGitHostBlobUrl(url);
+  const name = decodeURIComponent(basenameOf(url.pathname)) || "entry.R";
+  if (!isScriptFilename(name)) {
+    throw new ShareRError("ShareR only opens R and R Markdown scripts. \"" + name + "\" does not " +
+      "have an .R or .Rmd file name, so it was not loaded.");
+  }
+  const fetchUrl = blobMatch ? blobMatch.rawUrl : rewriteCloudStorageUrl(url).href;
   try {
-    const { buffer } = await fetchArrayBufferWithRetry(fetchUrl);
-    const name = decodeURIComponent(basenameOf(url.pathname)) || "entry.R";
-    const sourceLabel = blobMatch ? blobMatch.owner + "/" + blobMatch.repo + "@" + blobMatch.ref : url.hostname;
-    stageBytes(staged, name, new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    const { buffer, response } = await fetchArrayBufferWithRetry(fetchUrl);
+    if (looksLikeHtmlOrJsContentType(response.headers.get("Content-Type"))) {
+      throw new ShareRError("\"" + name + "\" looks like a web page or script file, not R code, " +
+        "so ShareR did not load it. Check that the link points directly at the .R or .Rmd file.");
+    }
+    const bytes = new Uint8Array(buffer);
+    const sniffReason = sniffEntryContentRejection(bytes);
+    if (sniffReason) {
+      throw new ShareRError("\"" + name + "\" does not look like real R or R Markdown code (" +
+        sniffReason + "), so ShareR did not load it.");
+    }
+    const sourceLabel = blobMatch ? blobMatch.sourceLabel : url.hostname;
+    stageBytes(staged, name, bytes, "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
     return name;
   } catch (err) {
+    if (err instanceof ShareRError) throw err;
     messages.push({ level: "error", text: describeFetchFailure(fetchUrl, err) });
     return null;
   }
@@ -2887,19 +3302,31 @@ async function stageFromParams(params, staged, messages, onProgress) {
   let repoInfo = null, refUsed = null, tree = null, explicitEntryPath = null;
   let repoSyncCtx = null;
 
-  // A github.com file-view ("blob") or "raw" link isn't fetchable directly -- github.com sends
-  // no CORS header, unlike raw.githubusercontent.com -- and fetching it as a single file would
-  // also miss the script's own referenced data files. Recognize it and treat it exactly as if
-  // repo=/ref=/entry= had been written out by hand, unless repo= was already given explicitly
-  // (which takes precedence; a conflicting entry= URL still falls through to the safety-net
-  // rewrite in stageEntryFileFromUrl below).
+  // A github.com/gitlab/bitbucket.org file-view ("blob") or "raw" link isn't fetchable directly --
+  // none of the three send a CORS header on that page, unlike their raw-content hosts -- and
+  // fetching it as a single file would also miss the script's own referenced data files. Recognize
+  // it and treat it exactly as if repo=/ref=/entry= had been written out by hand, unless repo= was
+  // already given explicitly (which takes precedence; a conflicting entry= URL still falls through
+  // to the safety-net rewrite in stageEntryFileFromUrl below).
   let effectiveEntryRaw = params.entryRaw, effectiveRepoRaw = params.repoRaw, effectiveRefRaw = params.refRaw;
   if (!effectiveRepoRaw && effectiveEntryRaw && /^https?:\/\//i.test(effectiveEntryRaw)) {
     let blobMatch = null;
-    try { blobMatch = matchGithubBlobUrl(parseFileUrl(effectiveEntryRaw)); } catch { /* not a valid URL; reported below as usual */ }
+    try { blobMatch = matchGitHostBlobUrl(parseFileUrl(effectiveEntryRaw)); } catch { /* not a valid URL; reported below as usual */ }
     if (blobMatch) {
-      effectiveRepoRaw = blobMatch.owner + "/" + blobMatch.repo;
-      if (!effectiveRefRaw) effectiveRefRaw = blobMatch.ref;
+      if (blobMatch.providerId === "github") {
+        effectiveRepoRaw = blobMatch.raw.owner + "/" + blobMatch.raw.repo;
+      } else if (blobMatch.providerId === "gitlab") {
+        // A bare "host/projectPath" string can't be told apart from a GitLab *group* page by
+        // shape alone (see parseRepoParam) -- round-trip through the same "/-/tree/<ref>/" URL
+        // shape a pasted GitLab link would use instead, so a reload of the resulting shareable
+        // link is unambiguous. This is a deliberate, small wrinkle: the ref ends up written into
+        // both repo= and ref=, which is redundant but harmless.
+        effectiveRepoRaw = blobMatch.raw.host + "/" + blobMatch.raw.projectPath +
+          "/-/tree/" + encodeURIComponent(blobMatch.raw.ref) + "/";
+      } else {
+        effectiveRepoRaw = "https://bitbucket.org/" + blobMatch.raw.workspace + "/" + blobMatch.raw.repo;
+      }
+      if (!effectiveRefRaw) effectiveRefRaw = blobMatch.raw.ref;
       effectiveEntryRaw = blobMatch.path;
       syncUrlBar({ repo: effectiveRepoRaw, ref: effectiveRefRaw, entry: effectiveEntryRaw });
     }
@@ -2908,12 +3335,12 @@ async function stageFromParams(params, staged, messages, onProgress) {
   if (effectiveRepoRaw) {
     repoInfo = parseRepoParam(effectiveRepoRaw);
     if (effectiveRefRaw && !RE_REF.test(effectiveRefRaw)) throw new ShareRError("Not a valid branch, tag, or commit: " + effectiveRefRaw);
-    report("Resolving " + repoInfo.owner + "/" + repoInfo.repo + "...");
-    const resolved = await resolveRefAndTree(repoInfo.owner, repoInfo.repo, effectiveRefRaw, messages);
+    report("Resolving " + repoInfo.label + "...");
+    const resolved = await resolveProjectRefAndTree(repoInfo, effectiveRefRaw, messages);
     refUsed = resolved.refUsed;
     tree = resolved.tree;
-    if (tree.truncated) messages.push({ level: "warning", text: "GitHub truncated the file listing for this " +
-      "repository (it is very large); some helper files may be missing." });
+    if (tree.truncated) messages.push({ level: "warning", text: "The file listing for this repository was " +
+      "truncated (it is very large, or ShareR reached a safety limit); some helper files may be missing." });
   }
 
   // Resolve which script is the entry point before downloading anything, so only the files
@@ -2922,6 +3349,10 @@ async function stageFromParams(params, staged, messages, onProgress) {
   if (effectiveEntryRaw && !/^https?:\/\//i.test(effectiveEntryRaw)) {
     if (!repoInfo) throw new ShareRError('entry="' + effectiveEntryRaw + '" looks like a repository-relative path, but no repo= parameter was given.');
     if (!RE_PATH.test(effectiveEntryRaw)) throw new ShareRError("Not a valid repository path: " + effectiveEntryRaw);
+    if (isVcsMetadataPath(effectiveEntryRaw)) throw new ShareRError("ShareR does not load files from inside a " +
+      ".git or .github folder, since those hold repository/version-control data, not analysis code.");
+    if (!isScriptFilename(effectiveEntryRaw)) throw new ShareRError("ShareR only opens R and R Markdown scripts. \"" +
+      effectiveEntryRaw + "\" does not have an .R or .Rmd file name, so it was not loaded.");
     const found = findTreeEntryCaseInsensitive(tree.entries, effectiveEntryRaw.replace(/^\/+/, ""));
     if (found) repoEntryPath = found.path;
     else messages.push({ level: "error", text: "Entry file not found in repository: " + effectiveEntryRaw });
@@ -2959,30 +3390,31 @@ async function stageFromParams(params, staged, messages, onProgress) {
         await stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, messages);
       } else if (/^https?:\/\//i.test(target)) {
         const url = parseFileUrl(target);
-        // A github.com blob/raw link for data=, same as for entry=, sends no CORS header and
-        // cannot be fetched directly. Resolve it through the repository tree when it names the
-        // same repo already in use (gets the benefit of case-insensitive matching too); otherwise
-        // rewrite it to the equivalent raw.githubusercontent.com URL.
-        const blobMatch = matchGithubBlobUrl(url);
-        if (blobMatch && repoInfo && blobMatch.owner.toLowerCase() === repoInfo.owner.toLowerCase() &&
-            blobMatch.repo.toLowerCase() === repoInfo.repo.toLowerCase()) {
+        if (isVcsMetadataPath(url.pathname)) throw new ShareRError("Refusing to load a file from inside a .git or .github folder: " + target);
+        // A git-host blob/raw link for data=, same as for entry=, sends no CORS header and cannot
+        // be fetched directly. Resolve it through the repository tree when it names the same
+        // repo/project already in use (gets the benefit of case-insensitive matching too);
+        // otherwise rewrite it to the provider's raw-content URL, or (for a recognized
+        // cloud-storage share link) its direct-download form.
+        const blobMatch = matchGitHostBlobUrl(url);
+        if (blobMatch && blobMatchesRepo(blobMatch, repoInfo)) {
           const found = findTreeEntryCaseInsensitive(tree.entries, blobMatch.path);
           if (!found) { messages.push({ level: "error", text: "Data file not found in repository: " + target }); }
           else {
             try {
-              const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, found.path));
+              const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, found.path));
               stageBytes(staged, rename || basenameOf(found.path), new Uint8Array(buffer), "repository",
-                repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+                repoInfo.label + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
             } catch (err) {
               messages.push({ level: "error", text: "Could not fetch " + target + " from the repository: " + summarizeError(err) });
             }
           }
         } else {
-          const fetchUrl = blobMatch ? rawContentUrl(blobMatch.owner, blobMatch.repo, blobMatch.ref, blobMatch.path) : url.href;
+          const fetchUrl = blobMatch ? blobMatch.rawUrl : rewriteCloudStorageUrl(url).href;
           try {
             const { buffer } = await fetchArrayBufferWithRetry(fetchUrl);
             const base = decodeURIComponent(basenameOf(url.pathname)) || "data";
-            const sourceLabel = blobMatch ? blobMatch.owner + "/" + blobMatch.repo + "@" + blobMatch.ref : url.hostname;
+            const sourceLabel = blobMatch ? blobMatch.sourceLabel : url.hostname;
             stageBytes(staged, rename || base, new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
           } catch (err) {
             messages.push({ level: "error", text: describeFetchFailure(fetchUrl, err) });
@@ -2991,13 +3423,14 @@ async function stageFromParams(params, staged, messages, onProgress) {
       } else {
         if (!repoInfo) throw new ShareRError('data="' + target + '" is a repository-relative path but no repo= parameter was given.');
         if (!RE_PATH.test(target)) throw new ShareRError("Not a valid repository path: " + target);
+        if (isVcsMetadataPath(target)) throw new ShareRError("Refusing to load a file from inside a .git or .github folder: " + target);
         const found = findTreeEntryCaseInsensitive(tree.entries, target);
         if (!found) { messages.push({ level: "error", text: "Data file not found in repository: " + target }); }
         else {
           try {
-            const { buffer } = await fetchArrayBufferWithRetry(rawContentUrl(repoInfo.owner, repoInfo.repo, refUsed, found.path));
+            const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, found.path));
             stageBytes(staged, rename || basenameOf(found.path), new Uint8Array(buffer), "repository",
-              repoInfo.owner + "/" + repoInfo.repo + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
+              repoInfo.label + "@" + refUsed, messages, CONFIG.MAX_REPO_FILE_BYTES);
           } catch (err) {
             messages.push({ level: "error", text: "Could not fetch " + target + " from the repository: " + summarizeError(err) });
           }
@@ -5258,7 +5691,7 @@ function buildRunManifest(info) {
     r_version: info.rVersion,
     channel: CONFIG.CHANNEL_TYPE,
     repository: info.repoInfo ? {
-      owner: info.repoInfo.owner, repo: info.repoInfo.repo,
+      provider: info.repoInfo.providerId, label: info.repoInfo.label,
       ref_resolved: info.refUsed, tree_sha: info.treeSha || null
     } : null,
     entry_file: info.entryPath,
@@ -5635,7 +6068,7 @@ function definePptxCopyrightMaster(pptx) {
 // script came from one) or just the file, plus when the deck was generated.
 function addPptxTitleSlide(pptx) {
   const slide = pptx.addSlide({ masterName: PPTX_MASTER_NAME });
-  const title = App.repoInfo ? App.repoInfo.repo : basenameOf(App.selectedEntryPath || "ShareR export");
+  const title = App.repoInfo ? App.repoInfo.shortName : basenameOf(App.selectedEntryPath || "ShareR export");
   const subtitle = App.repoInfo ? basenameOf(App.selectedEntryPath || "") : "";
   let y = PPTX_SLIDE_H_IN / 2 - (subtitle ? 1.1 : 0.75);
   slide.addText(title, { x: 0.6, y, w: PPTX_SLIDE_W_IN - 1.2, h: 0.9, fontSize: 32, bold: true, align: "center" });
@@ -6597,13 +7030,13 @@ function renderScriptPickerNode(node, chosenPath) {
 function renderScriptPicker(scripts, chosen) {
   elScriptPickerTree.innerHTML = "";
   if (scripts.length === 0) return;
-  // Repo name only (no owner) as the tree's top level when the scripts came from GitHub -- a
-  // plain URL or local-only entry has no repo to name, so the tree's own top-level folders (from
-  // the staged paths themselves) are left as the de facto root, unlabeled.
+  // Repo/project name only (no owner) as the tree's top level when the scripts came from a git
+  // host -- a plain URL or local-only entry has no repo to name, so the tree's own top-level
+  // folders (from the staged paths themselves) are left as the de facto root, unlabeled.
   if (App.repoInfo) {
     const rootLabel = document.createElement("div");
     rootLabel.className = "script-picker-root";
-    rootLabel.textContent = App.repoInfo.repo;
+    rootLabel.textContent = App.repoInfo.shortName;
     elScriptPickerTree.appendChild(rootLabel);
   }
   elScriptPickerTree.appendChild(renderScriptPickerNode(buildScriptPickerTree(scripts), chosen));
@@ -7047,12 +7480,12 @@ function annotateSourceViewerOutputMarkers(runState) {
   }
 }
 
-/* The repo name (e.g. DepressionCenter/EMA-CleanR) if viewing a GitHub repository, or the file
-   name if viewing a script loaded from a non-GitHub URL; null if neither (e.g. a locally-uploaded
-   script with no URL parameters), matching AGENTS.md section 15's "no placeholder" spirit -- there
-   is nothing truthful to show. */
+/* The repo/project identity (e.g. DepressionCenter/EMA-CleanR, or a GitLab project path) if
+   viewing a GitHub/GitLab/Bitbucket repository, or the file name if viewing a script loaded from
+   some other URL; null if neither (e.g. a locally-uploaded script with no URL parameters),
+   matching AGENTS.md section 15's "no placeholder" spirit -- there is nothing truthful to show. */
 function currentViewingLabel() {
-  if (App.repoInfo) return App.repoInfo.owner + "/" + App.repoInfo.repo;
+  if (App.repoInfo) return App.repoInfo.label;
   if (App.selectedEntryPath) {
     const staged = App.stagedStore.get(App.selectedEntryPath);
     if (staged && staged.source === "url") return staged.name;
@@ -7410,7 +7843,9 @@ async function runStagingPipeline(params) {
     updateSelectedEntry();
     snapshotOriginalFileBytes();
     setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
-    if (params.autorun && App.selectedEntryPath) await runEntry();
+    // Running immediately once a script resolves is the whole point -- researchers open a link
+    // to see results, not to find a Run button.
+    if (App.selectedEntryPath) await runEntry();
   } catch (err) {
     if (err instanceof ShareRRateLimitError) {
       const resetText = err.resetDate ? err.resetDate.toLocaleTimeString() : "an unknown time";
@@ -7418,7 +7853,14 @@ async function runStagingPipeline(params) {
         resetText + ". You can still run your analysis now by opening the script and your data " +
         "files from your computer.");
     } else {
-      setStagingStatus(err.message || String(err));
+      // A fatal staging failure (no repository/ref found, no valid entry script at all) leaves
+      // nothing to run, so it gets the same designed dialog a fatal run failure does
+      // (showErrorModal) instead of a status line easy to miss -- closing the Load-a-script dialog
+      // first so the error modal replaces it rather than stacking on top of it.
+      const message = err.message || String(err);
+      setStagingStatus(message);
+      closeLoadModal();
+      showErrorModal(message);
     }
     console.error(err);
   } finally {
