@@ -1808,6 +1808,10 @@ const CONFIG = Object.freeze({
   FIG_DPI:                 144,
   INSTALL_TIMEOUT_MS:      600000,
   STALL_WARNING_MS:        120000,
+  // A public CORS proxy relay is a best-effort third-party service, not infrastructure ShareR
+  // controls -- give it a generous but bounded timeout rather than letting a hung relay stall
+  // a data= / entry= load indefinitely (spec section 5.5, GitHub issue #10).
+  PROXY_TIMEOUT_MS:        12000,
 
   APP_VERSION:             "0.9-beta1",
   CSV_PREVIEW_MAX_ROWS:    20,
@@ -1944,7 +1948,13 @@ function describeFetchFailure(url, err) {
   let host = url;
   try { host = new URL(url).hostname; } catch { /* leave host as the raw url */ }
   if (isLikelyCorsFailure(err)) {
-    return host + " did not allow this page to read that file. This is a setting on that " +
+    // Set by fetchWithRetryAndCorsProxyFallback once it actually tries a public proxy relay,
+    // so this message stays honest about whether that fallback ran and still failed, versus
+    // never having been attempted (private/local host, or GitHub's rate limit reached instead).
+    const proxyNote = (err && err.proxyFallbackAttempted)
+      ? " ShareR also tried reaching it through a public CORS proxy relay, without success."
+      : "";
+    return host + " did not allow this page to read that file." + proxyNote + " This is a setting on that " +
       "server, not something ShareR can change. Files hosted on GitHub, on GitHub Pages, or on " +
       "a server configured to allow cross-origin reads will work. You can also open the file " +
       "from your computer using the button below.";
@@ -2142,7 +2152,46 @@ function stageBytes(staged, relPath, bytes, source, sourceLabel, messages, maxBy
   }
 }
 
-async function fetchArrayBufferWithRetry(url, { retries = 2, headers } = {}) {
+/* ### CORS proxy fallback (spec section 5.5, GitHub issue #10) ### */
+
+// Public CORS proxy relays, tried in this order only after a direct cross-origin fetch has
+// failed for CORS-like reasons. Ported from datalavista (src/25-data-sources.js), minus its
+// "Credentials" and "JSONP" strategies: ShareR only ever fetches public files anonymously (so
+// forwarding cookies cross-origin would be pointless and a needless privacy exposure), and JSONP
+// only works against a JSON API with callback support, not an arbitrary binary file download.
+const CORS_PROXY_URL_BUILDERS = Object.freeze([
+  (url) => "https://corsproxy.io/?url=" + encodeURIComponent(url),
+  (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+  (url) => "https://thingproxy.freeboard.io/fetch/" + url,
+]);
+
+/* Ported from datalavista's validateURL blocklist. A public CORS proxy relay is a third-party
+   service outside EFDC's control; forwarding a request meant for a private/internal address
+   through one would leak that address's existence (and any response) to that third party. This
+   only gates the proxy fallback below -- a direct fetch to a private address is unaffected. */
+function isPrivateOrLocalHost(hostname) {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0") return true;
+  if (/^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return true;
+  if (host.startsWith("fc") || host.startsWith("fd")) return true; // IPv6 unique local addresses
+  return false;
+}
+
+/* AbortController-backed timeout, used only for proxy attempts below -- a hung public relay must
+   not stall a data=/entry= load indefinitely. The existing direct-fetch retry loop is untouched. */
+async function fetchWithTimeout(url, opts, ms) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/* Returns a Response (like fetch() itself), so both binary (fetchArrayBufferWithRetry) and text
+   (fetchDirectoryListingHtml) callers can share one retry-then-proxy-fallback implementation. */
+async function fetchWithRetryAndCorsProxyFallback(url, { retries = 2, headers } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -2153,15 +2202,35 @@ async function fetchArrayBufferWithRetry(url, { retries = 2, headers } = {}) {
         err.response = res;
         throw err;
       }
-      const buffer = await res.arrayBuffer();
-      return { buffer, response: res };
+      return res;
     } catch (err) {
       lastErr = err;
       if (err && typeof err.httpStatus === "number") break; // do not retry a definitive HTTP error
       if (attempt < retries) await sleep(2 ** attempt * 300 + Math.random() * 200);
     }
   }
-  throw lastErr;
+
+  // Only a CORS-style network failure is worth retrying through a public proxy, and only for a
+  // public host -- never one that looks internal/private (see isPrivateOrLocalHost above).
+  if (!isLikelyCorsFailure(lastErr)) throw lastErr;
+  let hostname;
+  try { hostname = new URL(url).hostname; } catch { throw lastErr; }
+  if (isPrivateOrLocalHost(hostname)) throw lastErr;
+
+  lastErr.proxyFallbackAttempted = true;
+  for (const buildProxyUrl of CORS_PROXY_URL_BUILDERS) {
+    try {
+      const res = await fetchWithTimeout(buildProxyUrl(url), { headers }, CONFIG.PROXY_TIMEOUT_MS);
+      if (res.ok) return res;
+    } catch { /* try the next proxy */ }
+  }
+  throw lastErr; // report the original CORS failure -- it's the actionable one for the user
+}
+
+async function fetchArrayBufferWithRetry(url, opts = {}) {
+  const res = await fetchWithRetryAndCorsProxyFallback(url, opts);
+  const buffer = await res.arrayBuffer();
+  return { buffer, response: res };
 }
 
 async function runWithConcurrency(items, limit, worker) {
@@ -2699,8 +2768,17 @@ function autoDetectEntry(entries) {
 /* ### Directory resolution for data= (spec section 5.1) ### */
 
 async function fetchDirectoryListingHtml(url) {
-  const res = await fetch(url.href);
-  if (!res.ok) throw new ShareRError("Could not list directory: " + url.href + " (HTTP " + res.status + ")");
+  let res;
+  try {
+    // retries: 0 preserves the single-attempt behavior this had before the CORS proxy fallback
+    // existed; only the fallback itself and the improved CORS error text below are new.
+    res = await fetchWithRetryAndCorsProxyFallback(url.href, { retries: 0 });
+  } catch (err) {
+    if (err && typeof err.httpStatus === "number") {
+      throw new ShareRError("Could not list directory: " + url.href + " (HTTP " + err.httpStatus + ")");
+    }
+    throw new ShareRError(describeFetchFailure(url.href, err));
+  }
   const contentType = res.headers.get("Content-Type") || "";
   const text = await res.text();
   if (!/html/i.test(contentType) && !/^\s*<!doctype html|<html/i.test(text)) return null;

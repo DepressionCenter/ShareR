@@ -398,7 +398,7 @@ The control that does matter is sanitizing author-supplied HTML before it is ren
 
 ### 5.5 CORS: the real constraint on "any URL"
 
-**This is the limitation that will surprise users, so surface it in the UI and the README rather than letting them discover it as a broken page.** A browser can only fetch a file from another origin if that server sends an `Access-Control-Allow-Origin` header. ShareR cannot change this; it is the host's decision, and no CSP or code change on our side affects it.
+**This is the limitation that will surprise users, so surface it in the UI and the README rather than letting them discover it as a broken page.** A browser can only fetch a file from another origin if that server sends an `Access-Control-Allow-Origin` header. ShareR cannot change this; it is the host's decision. ShareR retries a CORS-blocked fetch through a public CORS proxy relay before giving up (`fetchWithRetryAndCorsProxyFallback` in `index.html`), which can succeed even for a host that itself sends no CORS header — but the proxy is a best-effort third-party service outside EFDC's control, not a guarantee, and it is never used for a `localhost`/private-network address (see below).
 
 Verified by direct request during specification of this feature:
 
@@ -410,15 +410,17 @@ Verified by direct request during specification of this feature:
 | `cdn.jsdelivr.net/gh/<owner>/<repo>@<ref>/<path>` | Yes, and it serves any file from any public GitHub repository |
 | A web server you control, configured to send the header | Yes |
 | `http://localhost:PORT` during local testing | Yes, when ShareR itself is served over `http://localhost` |
-| Dropbox share links | **No.** No CORS header on the raw download host |
-| Google Drive | **No.** No CORS header |
-| Google Sites | **No.** No CORS header, and requests redirect to a login page |
+| Dropbox share links | No CORS header on the raw download host. ShareR retries through a public CORS proxy relay; this may or may not succeed depending on that relay and Dropbox's own request handling. |
+| Google Drive | No CORS header. Same proxy retry as above; Google Drive's own anti-abuse checks make success less likely than for a plain static file host. |
+| Google Sites | No CORS header, and requests redirect to a login page — a proxy relay cannot complete a login, so this one reliably still fails. |
 
-When a fetch fails in a way consistent with CORS, do not report a generic network error. Say what actually happened and what to do about it:
+When a fetch fails in a way consistent with CORS and the proxy fallback was also attempted, do not report a generic network error. Say what actually happened and what to do about it:
 
-> `example.com` did not allow this page to read that file. This is a setting on that server, not something ShareR can change. Files hosted on GitHub, on GitHub Pages, or on a server configured to allow cross-origin reads will work. You can also open the file from your computer using the button below.
+> `example.com` did not allow this page to read that file. ShareR also tried reaching it through a public CORS proxy relay, without success. This is a setting on that server, not something ShareR can change. Files hosted on GitHub, on GitHub Pages, or on a server configured to allow cross-origin reads will work. You can also open the file from your computer using the button below.
 
 Then fall back to local file selection (section 7). **`cdn.jsdelivr.net/gh/` is the recommended escape hatch** for anyone whose file lives in a public GitHub repository but who wants a direct file URL: it works, it sends CORS headers, and it is already the CDN used for the JavaScript dependencies. Document it in the quick start.
+
+**Proxy fallback is skipped entirely for `localhost` and private/link-local addresses** (`isPrivateOrLocalHost` in `index.html`, ported from datalavista's URL-validation guard). A public proxy relay is a third party outside EFDC's control; forwarding a request meant for an internal address through one would leak that address's existence — and any response — to that third party. A direct fetch to such an address is unaffected by this guard; only the proxy retry is skipped.
 
 ---
 
