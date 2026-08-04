@@ -164,7 +164,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
     .zoom-control,
     .console-wrapper,
     .footer-credits,
-    .skip-link {
+    .skip-link,
+    /* Live-view-only action buttons (per-plot PNG download, per-chunk "View code") -- normally
+       hover-revealed on screen, but explicit here rather than relying on their default opacity:0
+       to stay hidden, since print doesn't simulate hover and a leftover :focus-visible state could
+       otherwise make one render solid. */
+    .ghost-icon-btn {
       display: none !important;
     }
     main#main-content {
@@ -726,14 +731,68 @@ with this program. If not, see https://www.gnu.org/licenses/.
     gap: 0.35rem;
     flex-wrap: wrap;
   }
-  .results-export-group {
+  /* Download menu (Stage 2D toolbar redesign): a WAI-ARIA "Menu Button" pattern
+     (https://www.w3.org/WAI/ARIA/apg/patterns/menu-button/) replacing the previous row of six
+     separate emoji-icon buttons. .download-menu-wrap is the positioning context for the
+     absolutely-placed panel. The panel itself reuses this app's own established hover language
+     (white surface, dark-blue text, maize highlight on hover/focus -- the same combination
+     .ghost-icon-btn/.workspace-collapse-btn/.zoom-control already use) rather than a solid blue
+     fill, which reads as an ordinary elevated popover instead of a second brand-colored button. */
+  .download-menu-wrap { position: relative; }
+  .download-menu {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    z-index: 20;
+    min-width: 230px;
+    background: var(--um-white);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    padding: 0.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  /* Equal-specificity tie-break: a plain .download-menu[hidden] selector is needed because the
+     base .download-menu rule above also sets display, and author rules of equal specificity beat
+     the UA stylesheet's own [hidden]{display:none} regardless of source order between the two. */
+  .download-menu[hidden] { display: none; }
+  .download-menu-item {
     display: flex;
     align-items: center;
-    gap: 0.35rem;
-    flex-wrap: wrap;
-    padding-right: 0.35rem;
-    border-right: 1px solid var(--panel-border);
-    margin-right: 0.15rem;
+    gap: 0.55rem;
+    width: 100%;
+    background: transparent;
+    color: var(--um-dark-blue);
+    border: none;
+    border-radius: 4px;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+  }
+  /* Same equal-specificity tie-break as .download-menu[hidden] above, needed here too: without it,
+     updateDownloadMenuItemVisibility's per-item item.hidden = true/false has no visible effect at
+     all -- every item stays "display: flex" regardless of which tab is active. */
+  .download-menu-item[hidden] { display: none; }
+  .download-menu-item:hover, .download-menu-item:focus-visible {
+    background: var(--um-maize);
+  }
+  .download-menu-item:focus-visible {
+    outline: 3px solid var(--um-medium-blue);
+    outline-offset: -3px;
+  }
+  .download-menu-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .download-menu-item .download-menu-icon svg { display: block; }
+  .download-menu-separator {
+    height: 1px;
+    background: var(--panel-border);
+    margin: 0.25rem 0.2rem;
   }
   .results-tabs {
     display: flex;
@@ -851,8 +910,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     width: 1.6rem;
     height: 1.6rem;
     padding: 0;
-    line-height: 1;
-    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 50%;
     background: var(--panel-header-bg);
     color: var(--um-dark-blue);
@@ -883,13 +943,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .section-number { color: var(--text-muted); font-weight: normal; }
 
   .chunk-block {
+    position: relative;
     border: 1px solid var(--panel-border);
     border-radius: 6px;
     padding: 0.6rem 0.8rem;
     margin: 0 0 1rem 0;
   }
-  .chunk-block > summary { font-weight: bold; cursor: pointer; }
-  .chunk-block-header { font-weight: bold; margin-bottom: 0.2rem; }
+  /* Room for the "View code" ghost button (top-right, same corner as the plot gallery's own ghost
+     download button) so it never overlaps the header's own chunk-label/timing text. */
+  .chunk-block-header { font-weight: bold; margin-bottom: 0.2rem; padding-right: 2.2rem; }
   .chunk-block-error { border-color: #c0392b; background-color: #fdecea; }
   .chunk-block-skipped { background-color: var(--panel-header-bg); }
   /* Code folding (output.html_document.code_folding) only folds the source, never the results --
@@ -957,6 +1019,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .ghost-icon-btn svg { width: 18px; height: 18px; }
   .plot-gallery-item:hover .ghost-icon-btn,
   .plot-inline-wrap:hover .ghost-icon-btn,
+  .chunk-block:hover .ghost-icon-btn,
   .ghost-icon-btn:hover,
   .ghost-icon-btn:focus-visible { opacity: 1; }
   .ghost-icon-btn:hover { background: var(--um-maize); }
@@ -966,6 +1029,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .output-marker {
     background: none;
     border: none;
+    /* <button> does not inherit text color from ancestors like ordinary elements do (UA
+       stylesheets give form controls their own default, usually black) -- the marker's SVG icons
+       use fill="currentColor", so without this they render black regardless of the dark editor
+       background behind them. Maize matches this app's existing "actionable/highlighted" accent
+       (see ghost-icon-btn/workspace-collapse-btn hover), reading clearly as a clickable affordance
+       against --source-bg. */
+    color: var(--um-maize);
     cursor: pointer;
     font-size: 0.85rem;
     padding: 0;
@@ -1275,12 +1345,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
     .slogan, .header-center-label { display: none; }
 
     /* Icon-only buttons: the visible label is dropped, but each button still carries an
-       aria-label (kept in sync with any dynamic state, e.g. downloadResultsZip's "Building
-       ZIP..." text) so its accessible name survives the text being hidden here. */
+       aria-label so its accessible name survives the text being hidden here. Only the two
+       top-level toolbar triggers are affected -- items inside the open Download menu
+       (#download-zip-button among them) keep their text, since a vertical dropdown list has
+       plenty of room and an icon-only menu item would be much harder to scan. */
     #run-button .btn-text,
     #stop-button .btn-text,
     #print-results-button .btn-text,
-    #download-zip-button .btn-text {
+    #download-menu-button .btn-text {
       display: none;
     }
     /* Shrinks the button box around each icon (padding only -- the play/stop glyphs themselves
@@ -1311,11 +1383,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
   <div id="header-center-label" class="header-center-label" aria-hidden="true"></div>
   <div class="header-right">
     <button id="run-button" type="button" class="btn btn-primary" disabled aria-label="Run" title="Run">
-      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="M4.5 2.5v11l9-5.5-9-5.5z"></path></svg></span>
+      <!-- bi-play-fill -->
+      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="m11.596 8.697-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393"></path></svg></span>
       <span class="btn-text">Run</span>
     </button>
     <button id="stop-button" type="button" class="btn btn-secondary" disabled aria-label="Stop and reset R" title="Stop and reset R">
-      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><rect x="3" y="3" width="10" height="10" rx="1"></rect></svg></span>
+      <!-- bi-stop-fill -->
+      <span class="btn-icon" aria-hidden="true"><svg height="14" viewBox="0 0 16 16" width="14" fill="currentColor" aria-hidden="true" focusable="false"><path d="M5 3.5h6A1.5 1.5 0 0 1 12.5 5v6a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 11V5A1.5 1.5 0 0 1 5 3.5"></path></svg></span>
       <span class="btn-text">Stop</span>
     </button>
     <a class="github-link" href="https://github.com/DepressionCenter/ShareR" target="_blank" rel="noopener"
@@ -1361,10 +1435,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
           <button type="button" id="source-viewer-filename" class="editor-header-filename"
             popovertarget="script-picker-popover" aria-haspopup="true" aria-expanded="false">
             <span id="source-viewer-filename-text" class="editor-header-filename-text"></span>
+            <!-- bi-chevron-down -->
             <svg class="editor-header-filename-chevron" viewBox="0 0 16 16" width="12" height="12"
-              fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
-              stroke-linejoin="round" aria-hidden="true" focusable="false">
-              <path d="M4.5 6 8 9.5 11.5 6"></path>
+              fill="currentColor" aria-hidden="true" focusable="false">
+              <path fill-rule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"></path>
             </svg>
           </button>
           <div class="editor-header-actions">
@@ -1382,8 +1456,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     </div>
     <button type="button" id="workspace-collapse-toggle" class="workspace-collapse-btn"
       aria-expanded="true" aria-label="Collapse workspace panel" title="Collapse panel">
+      <!-- bi-chevron-left -->
       <svg height="12" viewBox="0 0 16 16" width="12" fill="currentColor" aria-hidden="true" focusable="false">
-        <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"></path>
+        <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0"></path>
       </svg>
     </button>
   </section>
@@ -1392,14 +1467,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     role="separator" aria-orientation="vertical" tabindex="0"
     aria-controls="workspace-pane" aria-label="Resize workspace panel" aria-valuemin="260">
     <div class="grip-pill">
-      <svg height="40" viewBox="0 0 6 42" width="6" fill="currentColor" aria-hidden="true" focusable="false">
-        <circle cx="1.5" cy="3" r="1"></circle><circle cx="4.5" cy="3" r="1"></circle>
-        <circle cx="1.5" cy="9" r="1"></circle><circle cx="4.5" cy="9" r="1"></circle>
-        <circle cx="1.5" cy="15" r="1"></circle><circle cx="4.5" cy="15" r="1"></circle>
-        <circle cx="1.5" cy="21" r="1"></circle><circle cx="4.5" cy="21" r="1"></circle>
-        <circle cx="1.5" cy="27" r="1"></circle><circle cx="4.5" cy="27" r="1"></circle>
-        <circle cx="1.5" cy="33" r="1"></circle><circle cx="4.5" cy="33" r="1"></circle>
-        <circle cx="1.5" cy="39" r="1"></circle><circle cx="4.5" cy="39" r="1"></circle>
+      <!-- bi-grip-vertical -->
+      <svg height="8" viewBox="0 0 16 16" width="8" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M7 2a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0M7 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0m-3 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0m3 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0"></path>
       </svg>
     </div>
   </div>
@@ -1412,28 +1482,35 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" role="tab" id="tab-files-btn" aria-selected="false" aria-controls="tab-files-panel" tabindex="-1">Files</button>
       </div>
       <div class="results-actions">
-        <div class="results-export-group" id="results-export-group">
-          <button type="button" id="export-html-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a web page" title="Web page (.html)">
-            <span class="btn-icon" aria-hidden="true">🌐</span><span class="btn-text">Web page</span>
+        <div class="download-menu-wrap" id="download-menu-wrap">
+          <button type="button" id="download-menu-button" class="btn btn-secondary btn-sm"
+            aria-haspopup="menu" aria-expanded="false" aria-controls="download-menu" aria-label="Download">
+            <span class="btn-icon" aria-hidden="true"></span><span class="btn-text">Download</span>
           </button>
-          <button type="button" id="export-docx-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a Word document" title="Word (.docx)">
-            <span class="btn-icon" aria-hidden="true">📝</span><span class="btn-text">Word</span>
-          </button>
-          <button type="button" id="export-odt-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as an Open Document" title="Open Document (.odt)">
-            <span class="btn-icon" aria-hidden="true">📄</span><span class="btn-text">Open Document</span>
-          </button>
-          <button type="button" id="export-pptx-button" class="btn btn-secondary btn-sm" disabled hidden aria-label="Export the Plots tab as a PowerPoint presentation" title="PowerPoint (.pptx)">
-            <span class="btn-icon" aria-hidden="true">📊</span><span class="btn-text">PowerPoint</span>
-          </button>
-          <button type="button" id="export-pdf-button" class="btn btn-secondary btn-sm" disabled aria-label="Export the current tab as a PDF" title="PDF (.pdf)">
-            <span class="btn-icon" aria-hidden="true">📕</span><span class="btn-text">PDF</span>
-          </button>
+          <div class="download-menu" id="download-menu" role="menu" aria-label="Download options" hidden>
+            <button type="button" id="export-odt-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled data-tabs="0,1" title="Open Document (.odt)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">Open Document (.odt)</span>
+            </button>
+            <button type="button" id="export-pdf-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled data-tabs="0,1" title="PDF (.pdf)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">PDF</span>
+            </button>
+            <button type="button" id="export-pptx-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled hidden data-tabs="1" title="PowerPoint (.pptx)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">PowerPoint (.pptx)</span>
+            </button>
+            <button type="button" id="export-html-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled data-tabs="0,1" title="Web Page (.html)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">Web Page (HTML)</span>
+            </button>
+            <button type="button" id="export-docx-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled data-tabs="0,1" title="Word (.docx)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">Word (.docx)</span>
+            </button>
+            <div class="download-menu-separator" role="separator"></div>
+            <button type="button" id="download-zip-button" class="download-menu-item" role="menuitem" tabindex="-1" disabled data-tabs="0,1,2" title="Download all (.zip)">
+              <span class="download-menu-icon" aria-hidden="true"></span><span class="btn-text">Download all (.zip)</span>
+            </button>
+          </div>
         </div>
         <button type="button" id="print-results-button" class="btn btn-secondary btn-sm" aria-label="Print" title="Print">
-          <span class="btn-icon" aria-hidden="true">🖨️</span><span class="btn-text">Print</span>
-        </button>
-        <button type="button" id="download-zip-button" class="btn btn-action btn-sm" disabled aria-label="Download all as ZIP" title="Download all as ZIP">
-          <span class="btn-icon" aria-hidden="true">⤓</span><span class="btn-text">Download all (.zip)</span>
+          <span class="btn-icon" aria-hidden="true"></span><span class="btn-text">Print</span>
         </button>
       </div>
     </div>
@@ -1463,9 +1540,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
         </div>
       </div>
       <div class="zoom-control" id="zoom-control" role="group" aria-label="Zoom report and plots">
-        <button type="button" id="zoom-out-button" aria-label="Zoom out">&minus;</button>
+        <button type="button" id="zoom-out-button" aria-label="Zoom out"></button>
         <span id="zoom-level-readout" aria-live="polite">100%</span>
-        <button type="button" id="zoom-in-button" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-in-button" aria-label="Zoom in"></button>
       </div>
     </div>
 
@@ -1482,7 +1559,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <dialog id="load-script-modal" class="load-modal" aria-labelledby="load-modal-title">
   <div class="modal-header">
     <h2 id="load-modal-title">Load a script</h2>
-    <button type="button" id="close-load-modal-button" class="modal-close" aria-label="Close">&times;</button>
+    <button type="button" id="close-load-modal-button" class="modal-close" aria-label="Close"></button>
   </div>
   <div class="modal-body">
     <p class="help-text">
@@ -1538,7 +1615,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
 <dialog id="error-modal" class="error-modal" aria-labelledby="error-modal-title" role="alertdialog">
   <div class="modal-header">
     <h2 id="error-modal-title">Unable to Run Script</h2>
-    <button type="button" id="close-error-modal-button" class="modal-close" aria-label="Close">&times;</button>
+    <button type="button" id="close-error-modal-button" class="modal-close" aria-label="Close"></button>
   </div>
   <div class="modal-body error-modal-body">
     <p id="error-modal-message" class="error-modal-message"></p>
@@ -3707,44 +3784,148 @@ function dataUrlToUint8Array(dataUrl) {
   return bytes;
 }
 
-const DOWNLOAD_ICON_SVG =
+/* Every icon in this file, below and inline in the markup, is plain path data copied in from
+   Bootstrap Icons (MIT, https://icons.getbootstrap.com/, github.com/twbs/icons) -- no icon font,
+   no external request at runtime, so the app stays self-contained in this one file exactly like
+   its other dynamic dependencies (docx/jsPDF/etc. are lazy-loaded scripts; icons are just inline
+   markup and never touch the network at all). Each constant/helper below notes which upstream
+   icon it's built from. */
+
+const DOWNLOAD_ICON_SVG = // bi-download
   '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
-  '<path d="M8 1a.75.75 0 0 1 .75.75v6.19l2.22-2.22a.75.75 0 1 1 1.06 1.06l-3.5 3.5a.75.75 0 0 1-1.06 0l-3.5-3.5a.75.75 0 1 1 1.06-1.06l2.22 2.22V1.75A.75.75 0 0 1 8 1Z"/>' +
-  '<path d="M2.75 12.5a.75.75 0 0 1 .75.75v.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-.5a.75.75 0 0 1 1.5 0v.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25v-.5a.75.75 0 0 1 .75-.75Z"/>' +
+  '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
+  '<path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>' +
   '</svg>';
 
-// Four outward-pointing corner brackets -- a standard "expand to fullscreen" glyph, used by the
-// source editor's Maximize toolbar button (Stage 2D.1).
-const MAXIMIZE_ICON_SVG =
+// Same bi-download glyph as DOWNLOAD_ICON_SVG, rendered larger for the toolbar's Download menu
+// trigger (Stage 2D toolbar redesign) -- reusing the exact icon a user already recognizes from the
+// per-plot ghost download button, at a size that reads clearly as this row's primary action.
+const DOWNLOAD_ICON_SVG_LG = // bi-download
+  '<svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true">' +
+  '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
+  '<path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>' +
+  '</svg>';
+
+const PRINT_ICON_SVG = // bi-printer
   '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
-  '<path d="M1 1h5v1.5H2.5V6H1V1Z"/><path d="M15 1v5h-1.5V2.5H10V1h5Z"/>' +
-  '<path d="M1 15V10h1.5v3.5H6V15H1Z"/><path d="M15 15h-5v-1.5h3.5V10H15v5Z"/>' +
+  '<path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1"/>' +
+  '<path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1"/>' +
   '</svg>';
 
-// Two overlapping square outlines -- the conventional "restore down" glyph used by desktop window
-// chrome (Windows etc.), which reads unambiguously as "shrink this back down" in a way the
-// corner-bracket icon (identical in spirit to the Maximize button, just inverted) apparently
-// didn't. The back square's path stops short of the corner the front square covers, rather than
-// drawing a full rect and relying on fill-matches-background to hide the overlap -- that would
-// break the instant the button's hover background changes. Stroke-based (unlike this file's other
-// solid-fill icons), since an outline is what makes the "two windows" shape read correctly.
-const RESTORE_ICON_SVG =
-  '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">' +
-  '<path d="M5.5 5.5V2.5H13.5V10.5H10.5"/><rect x="2.5" y="5.5" width="8" height="8"/>' +
+const X_ICON_SVG = // bi-x-lg
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>' +
   '</svg>';
 
-// An upload-into-tray glyph (mirrors DOWNLOAD_ICON_SVG's shape) for "replace with a local file".
-const REPLACE_ICON_SVG =
+const PLUS_ICON_SVG = // bi-plus-lg
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
-  '<path d="M8 2 11.5 6.5 9 6.5 9 10.5 7 10.5 7 6.5 4.5 6.5Z"/>' +
-  '<rect x="3" y="12.5" width="10" height="1.5" rx="0.5"/>' +
+  '<path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>' +
   '</svg>';
 
-const REMOVE_ICON_SVG =
+const MINUS_ICON_SVG = // bi-dash-lg
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
-  '<rect x="6" y="1.5" width="4" height="1.5" rx="0.5"/>' +
-  '<rect x="3" y="4" width="10" height="1.5" rx="0.5"/>' +
-  '<path d="M4.3 6 11.7 6 10.9 14 5.1 14Z"/>' +
+  '<path fill-rule="evenodd" d="M2 8a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 8"/>' +
+  '</svg>';
+
+// Composites one of Bootstrap Icons' "filetype-*"/"file-earmark-*" glyphs with a small maize
+// "you can download this" badge in the lower-right corner (Stage 2D toolbar redesign) -- reuses
+// this app's existing maize-accent convention (see the ghost-icon-btn/workspace-collapse-btn hover
+// states) rather than inventing a new indicator color. innerPathsMarkup is that icon's own <path>
+// markup verbatim, in its native 0-16 coordinate system; scaled down and inset into a shared 18x18
+// canvas alongside a fixed badge circle + arrow (bi-download, scaled further to fit the badge).
+function fileTypeDownloadIconSvg(innerPathsMarkup) {
+  return '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">' +
+    '<g transform="scale(0.82)">' + innerPathsMarkup + '</g>' +
+    '<circle cx="14.1" cy="14.1" r="4.2" fill="var(--um-maize)" stroke="var(--um-white)" stroke-width="1.4"/>' +
+    '<g transform="translate(10.6,10.6) scale(0.44)" fill="var(--um-dark-blue)">' +
+    '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
+    '<path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>' +
+    '</g></svg>';
+}
+
+const FILETYPE_HTML_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-html
+  '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zm-9.736 7.35v3.999h-.791v-1.714H1.79v1.714H1V11.85h.791v1.626h1.682V11.85h.79Zm2.251.662v3.337h-.794v-3.337H4.588v-.662h3.064v.662zm2.176 3.337v-2.66h.038l.952 2.159h.516l.946-2.16h.038v2.661h.715V11.85h-.8l-1.14 2.596H9.93L8.79 11.85h-.805v3.999zm4.71-.674h1.696v.674H12.61V11.85h.79v3.325Z"/>');
+
+const FILETYPE_DOCX_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-docx
+  '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zm-6.839 9.688v-.522a1.5 1.5 0 0 0-.117-.641.86.86 0 0 0-.322-.387.86.86 0 0 0-.469-.129.87.87 0 0 0-.471.13.87.87 0 0 0-.32.386 1.5 1.5 0 0 0-.117.641v.522q0 .384.117.641a.87.87 0 0 0 .32.387.9.9 0 0 0 .471.126.9.9 0 0 0 .469-.126.86.86 0 0 0 .322-.386 1.55 1.55 0 0 0 .117-.642m.803-.516v.513q0 .563-.205.973a1.47 1.47 0 0 1-.589.627q-.381.216-.917.216a1.86 1.86 0 0 1-.92-.216 1.46 1.46 0 0 1-.589-.627 2.15 2.15 0 0 1-.205-.973v-.513q0-.569.205-.975.205-.411.59-.627.386-.22.92-.22.535 0 .916.22.383.219.59.63.204.406.204.972M1 15.925v-3.999h1.459q.609 0 1.005.235.396.233.589.68.196.445.196 1.074 0 .634-.196 1.084-.197.451-.595.689-.396.237-.999.237zm1.354-3.354H1.79v2.707h.563q.277 0 .483-.082a.8.8 0 0 0 .334-.252q.132-.17.196-.422a2.3 2.3 0 0 0 .068-.592q0-.45-.118-.753a.9.9 0 0 0-.354-.454q-.237-.152-.61-.152Zm6.756 1.116q0-.373.103-.633a.87.87 0 0 1 .301-.398.8.8 0 0 1 .475-.138q.225 0 .398.097a.7.7 0 0 1 .273.26.85.85 0 0 1 .12.381h.765v-.073a1.33 1.33 0 0 0-.466-.964 1.4 1.4 0 0 0-.49-.272 1.8 1.8 0 0 0-.606-.097q-.534 0-.911.223-.375.222-.571.633-.197.41-.197.978v.498q0 .568.194.976.195.406.571.627.375.216.914.216.44 0 .785-.164t.551-.454a1.27 1.27 0 0 0 .226-.674v-.076h-.765a.8.8 0 0 1-.117.364.7.7 0 0 1-.273.248.9.9 0 0 1-.401.088.85.85 0 0 1-.478-.131.83.83 0 0 1-.298-.393 1.7 1.7 0 0 1-.103-.627zm5.092-1.76h.894l-1.275 2.006 1.254 1.992h-.908l-.85-1.415h-.035l-.852 1.415h-.862l1.24-2.015-1.228-1.984h.932l.832 1.439h.035z"/>');
+
+// No dedicated OpenDocument icon exists in Bootstrap Icons (it targets Microsoft-format
+// extensions); file-earmark-richtext (a document with text lines + an embedded image glyph) is
+// the closest generic "rich text document" match, and the adjacent menu text already says
+// "Open Document (.odt)" so the icon only needs to read as "a formatted document."
+const FILETYPE_ODT_ICON_SVG = fileTypeDownloadIconSvg( // bi-file-earmark-richtext
+  '<path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/>' +
+  '<path d="M4.5 12.5A.5.5 0 0 1 5 12h3a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5m0-2A.5.5 0 0 1 5 10h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5m1.639-3.708 1.33.886 1.854-1.855a.25.25 0 0 1 .289-.047l1.888.974V8.5a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5V8s1.54-1.274 1.639-1.208M6.25 6a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5"/>');
+
+const FILETYPE_PPTX_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-pptx
+  '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM1.5 11.85h1.6q.434 0 .732.179.302.175.46.477t.158.677-.16.677q-.159.299-.464.474a1.45 1.45 0 0 1-.732.173H2.29v1.342H1.5zm2.06 1.714a.8.8 0 0 0 .085-.381q0-.34-.185-.521-.185-.182-.513-.182h-.659v1.406h.66a.8.8 0 0 0 .374-.082.57.57 0 0 0 .238-.24m1.302-1.714h1.6q.434 0 .732.179.302.175.46.477t.158.677-.16.677q-.158.299-.464.474a1.45 1.45 0 0 1-.732.173h-.803v1.342h-.79zm2.06 1.714a.8.8 0 0 0 .085-.381q0-.34-.185-.521-.184-.182-.513-.182H5.65v1.406h.66a.8.8 0 0 0 .374-.082.57.57 0 0 0 .238-.24m2.852 2.285v-3.337h1.137v-.662H7.846v.662H8.98v3.337zm3.796-3.999h.893l-1.274 2.007 1.254 1.992h-.908l-.85-1.415h-.035l-.853 1.415h-.861l1.24-2.016-1.228-1.983h.931l.832 1.439h.035z"/>');
+
+const FILETYPE_PDF_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-pdf
+  '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM1.6 11.85H0v3.999h.791v-1.342h.803q.43 0 .732-.173.305-.175.463-.474a1.4 1.4 0 0 0 .161-.677q0-.375-.158-.677a1.2 1.2 0 0 0-.46-.477q-.3-.18-.732-.179m.545 1.333a.8.8 0 0 1-.085.38.57.57 0 0 1-.238.241.8.8 0 0 1-.375.082H.788V12.48h.66q.327 0 .512.181.185.183.185.522m1.217-1.333v3.999h1.46q.602 0 .998-.237a1.45 1.45 0 0 0 .595-.689q.196-.45.196-1.084 0-.63-.196-1.075a1.43 1.43 0 0 0-.589-.68q-.396-.234-1.005-.234zm.791.645h.563q.371 0 .609.152a.9.9 0 0 1 .354.454q.118.302.118.753a2.3 2.3 0 0 1-.068.592 1.1 1.1 0 0 1-.196.422.8.8 0 0 1-.334.252 1.3 1.3 0 0 1-.483.082h-.563zm3.743 1.763v1.591h-.79V11.85h2.548v.653H7.896v1.117h1.606v.638z"/>');
+
+const FILETYPE_ZIP_ICON_SVG = fileTypeDownloadIconSvg( // bi-file-earmark-zip
+  '<path d="M5 7.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v.938l.4 1.599a1 1 0 0 1-.416 1.074l-.93.62a1 1 0 0 1-1.11 0l-.929-.62a1 1 0 0 1-.415-1.074L5 8.438zm2 0H6v.938a1 1 0 0 1-.03.243l-.4 1.598.93.62.929-.62-.4-1.598A1 1 0 0 1 7 8.438z"/>' +
+  '<path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1h-2v1h-1v1h1v1h-1v1h1v1H6V5H5V4h1V3H5V2h1V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/>');
+
+const MAXIMIZE_ICON_SVG = // bi-arrows-fullscreen
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path fill-rule="evenodd" d="M5.828 10.172a.5.5 0 0 0-.707 0l-4.096 4.096V11.5a.5.5 0 0 0-1 0v3.975a.5.5 0 0 0 .5.5H4.5a.5.5 0 0 0 0-1H1.732l4.096-4.096a.5.5 0 0 0 0-.707m4.344 0a.5.5 0 0 1 .707 0l4.096 4.096V11.5a.5.5 0 1 1 1 0v3.975a.5.5 0 0 1-.5.5H11.5a.5.5 0 0 1 0-1h2.768l-4.096-4.096a.5.5 0 0 1 0-.707m0-4.344a.5.5 0 0 0 .707 0l4.096-4.096V4.5a.5.5 0 1 0 1 0V.525a.5.5 0 0 0-.5-.5H11.5a.5.5 0 0 0 0 1h2.768l-4.096 4.096a.5.5 0 0 0 0 .707m-4.344 0a.5.5 0 0 1-.707 0L1.025 1.732V4.5a.5.5 0 0 1-1 0V.525a.5.5 0 0 1 .5-.5H4.5a.5.5 0 0 1 0 1H1.732l4.096 4.096a.5.5 0 0 1 0 .707"/>' +
+  '</svg>';
+
+const RESTORE_ICON_SVG = // bi-fullscreen-exit
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M5.5 0a.5.5 0 0 1 .5.5v4A1.5 1.5 0 0 1 4.5 6h-4a.5.5 0 0 1 0-1h4a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 1 .5-.5m5 0a.5.5 0 0 1 .5.5v4a.5.5 0 0 0 .5.5h4a.5.5 0 0 1 0 1h-4A1.5 1.5 0 0 1 10 4.5v-4a.5.5 0 0 1 .5-.5M0 10.5a.5.5 0 0 1 .5-.5h4A1.5 1.5 0 0 1 6 11.5v4a.5.5 0 0 1-1 0v-4a.5.5 0 0 0-.5-.5h-4a.5.5 0 0 1-.5-.5m10 1a1.5 1.5 0 0 1 1.5-1.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 0-.5.5v4a.5.5 0 0 1-1 0z"/>' +
+  '</svg>';
+
+const REPLACE_ICON_SVG = // bi-upload
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
+  '<path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/>' +
+  '</svg>';
+
+const REMOVE_ICON_SVG = // bi-trash
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>' +
+  '<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>' +
+  '</svg>';
+
+// Raw path data (no outer <svg>) for the two output-marker glyphs, shared by the plain
+// single-output icon and the grouped-multiple-outputs badge composite below.
+const BAR_CHART_MARKER_PATH = // bi-bar-chart-fill
+  'M1 11a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1zm5-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zm5-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1z';
+const FILE_EARMARK_MARKER_PATH = // bi-file-earmark-fill
+  'M4 0h5.293A1 1 0 0 1 10 .293L13.707 4a1 1 0 0 1 .293.707V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2m5.5 1.5v2a1 1 0 0 0 1 1h2z';
+
+const BAR_CHART_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="' +
+  BAR_CHART_MARKER_PATH + '"/></svg>';
+
+const FILE_EARMARK_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="' +
+  FILE_EARMARK_MARKER_PATH + '"/></svg>';
+
+// A small maize count badge over a base output-marker icon (same maize-badge visual language as
+// the Download menu's filetype icons, fileTypeDownloadIconSvg), used when a chunk's plots/files
+// can't be tied to individual source lines -- e.g. print(plot_list[[i]]) inside a loop isn't a
+// call PLOT_CALL_RE recognizes -- and get grouped into one gutter marker instead of being spread
+// one-per-line onto lines that never actually produced anything (annotateSourceViewerOutputMarkers
+// below). The base icon uses a burnt orange-brown (not .output-marker's own inherited maize
+// `color`, and not medium blue -- too low-contrast against --source-bg's near-black) so a grouped
+// marker reads as a *deeper*, richer relative of the plain maize marker/badge, distinct at a
+// glance without looking like an unrelated color.
+function groupedOutputMarkerIconSvg(basePathData, count) {
+  const badge = count > 9 ? "9+" : String(count);
+  return '<svg viewBox="0 0 18 18" width="14" height="14" aria-hidden="true">' +
+    '<g transform="scale(0.72)" fill="#c8760a"><path d="' + basePathData + '"/></g>' +
+    '<circle cx="14" cy="4.3" r="4.3" fill="var(--um-maize)" stroke="var(--source-bg)" stroke-width="1.2"/>' +
+    '<text x="14" y="6.1" font-size="' + (badge.length > 1 ? 4.4 : 5.6) + '" font-weight="700" ' +
+      'text-anchor="middle" fill="var(--um-dark-blue)" stroke="none">' + badge + '</text>' +
+    '</svg>';
+}
+
+const CODE_ICON_SVG = // bi-code-slash ("View code" chunk-jump ghost button)
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0m6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0"/>' +
   '</svg>';
 
 /* Shared by every "download this plot as PNG" affordance (Plots tab gallery card, inline plot in
@@ -3760,6 +3941,23 @@ function createPlotDownloadButton(bitmap, label, plotIdx) {
     const blob = await plotBitmapToPngBlob(bitmap);
     downloadBlob(blob, "plot-" + slugifyForElementId(label) + "-" + plotIdx + ".png");
   });
+  return btn;
+}
+
+// A ghost button on each report chunk (Stage 2D toolbar/UX polish) that opens the source editor's
+// Maximize view scrolled to and flashing that whole chunk. startLine/endLine are already absolute
+// editor.lines indices, computed once at render time by renderChunkResult's caller rather than
+// re-derived here. Excluded from every export format (see the .ghost-icon-btn removal in
+// renderReportAsSelfContainedHtml/renderPlotsAsSelfContainedHtml and the @media print rule) --
+// it's a live-view navigation aid, not part of the report's actual content.
+function createViewChunkCodeButton(startLine, endLine) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost-icon-btn";
+  btn.innerHTML = CODE_ICON_SVG;
+  btn.setAttribute("aria-label", "View this chunk's code in the full-screen source editor");
+  btn.title = "View code";
+  btn.addEventListener("click", () => openSourceMaximizeModal(startLine, endLine));
   return btn;
 }
 
@@ -4232,7 +4430,7 @@ function renderNotRunChunk(node, label, container) {
    Plots tab gallery (one ImageBitmap can be drawn into two canvases without being consumed).
    codeFolding only folds the *source* (in its own nested <details>), never the results, matching
    rmarkdown's three-way meaning: "show"/"hide" toggle the source, "none" always shows it unfolded. */
-function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure, codeFolding) {
+function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, container, isFailure, codeFolding, lineOffset) {
   if (effectiveOptions.include === false && !isFailure) return null;
   const wrap = document.createElement("div");
   wrap.className = "chunk-block" + (isFailure ? " chunk-block-error" : "");
@@ -4246,6 +4444,20 @@ function renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, co
   header.className = "chunk-block-header";
   header.textContent = (isFailure ? "FAILED: " : "") + "Chunk: " + label + " (" + elapsedMs + " ms)";
   wrap.appendChild(header);
+  // Same absolute-line math annotateSourceViewerOutputMarkers uses (runState.lineOffset +
+  // node.startLine, converted from 0-based to editor.lines' 1-based indexing) -- only when a
+  // source editor actually exists to jump into (e.g. a run against a bundled example script with
+  // no staged/editable source has nothing to jump to). parseRmdChunks sets node.startLine to the
+  // opening fence's own line (see its "const startLine = i" at the matched "```{r...}" line), so
+  // chunkStartLine here lands on that fence, not the first line of code -- highlighting through
+  // chunkEndLine (fence + every body line + the closing fence, from node.source's own line count)
+  // covers the whole visual chunk block rather than just that one fence line.
+  if (App.sourceEditor && typeof node.startLine === "number") {
+    const chunkStartLine = lineOffset + node.startLine + 1;
+    const chunkBodyLineCount = node.source ? node.source.split(/\r\n|\r|\n/).length : 0;
+    const chunkEndLine = chunkStartLine + chunkBodyLineCount + 1;
+    wrap.appendChild(createViewChunkCodeButton(chunkStartLine, chunkEndLine));
+  }
 
   if (effectiveOptions.echo !== false) {
     if (codeFolding === "none") {
@@ -4415,7 +4627,7 @@ async function runChunksFrom(runState, startIndex) {
 
     const missingFileMessage = detectMissingFileError(capture.output);
     if (missingFileMessage) {
-      renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
+      renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding, runState.lineOffset);
       runState.manifestChunks.push({ label, engine: "r", status: "error", elapsedMs });
       runState.missingFileMessage = missingFileMessage;
       runState.failed = true;
@@ -4460,12 +4672,12 @@ async function runChunksFrom(runState, startIndex) {
         // run: the reason is already explained above (describeMissingPackage), so the remaining
         // chunks run automatically instead of waiting on a manual "Continue" click. Still rendered
         // with the failed styling (isFailure=true) so the problem stays visible in the report.
-        renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
+        renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding, runState.lineOffset);
         runState.manifestChunks.push({ label, engine: "r", status: "error-package-skipped", elapsedMs });
         continue;
       }
 
-      const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding);
+      const details = renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, true, runState.outputOptions.code_folding, runState.lineOffset);
       const continueBtn = document.createElement("button");
       continueBtn.type = "button";
       continueBtn.className = "btn btn-secondary btn-sm";
@@ -4487,7 +4699,7 @@ async function runChunksFrom(runState, startIndex) {
       return;
     }
 
-    renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, false, runState.outputOptions.code_folding);
+    renderChunkResult(node, label, effectiveOptions, capture, elapsedMs, elTabReportZoomInner, false, runState.outputOptions.code_folding, runState.lineOffset);
     runState.manifestChunks.push({ label, engine: "r", status: hasError ? "error-continued" : "ok", elapsedMs });
   }
   runState.failed = false;
@@ -4706,12 +4918,21 @@ const REPORT_EXPORT_EXTRA_CSS =
   "details{border:1px solid #c7ccd1;border-radius:6px;padding:0.6rem 0.8rem;margin:0 0 1rem;} " +
   "img{max-width:100%;height:auto;border:1px solid #c7ccd1;}";
 
+// Ghost buttons (the per-plot PNG download, the per-chunk "View code" jump) are live-view
+// navigation/action affordances, not report content -- an HTML export is a static file with none
+// of the app's own JS behind those buttons, so left in place they'd render as inert, unstyled
+// (this export's CSS knows nothing about .ghost-icon-btn) raw buttons sitting on the page.
+function removeGhostIconButtons(rootEl) {
+  for (const btn of rootEl.querySelectorAll(".ghost-icon-btn")) btn.remove();
+}
+
 /* Plots are already <img src="data:..."> elements (bitmapToPlotImage), not live <canvas>, so
    cloning the report's content is enough to serialize them into a static report.html -- no
    canvas-to-image conversion needed here. Clones .zoom-inner specifically (the actual content),
    not the outer tabpanel, so the export never carries the live view's zoom transform/sizing. */
 async function renderReportAsSelfContainedHtml() {
   const clone = elTabReportZoomInner.cloneNode(true);
+  removeGhostIconButtons(clone);
   const reportCss = await fetchCssForExport(App.lastRunInfo && App.lastRunInfo.cssPath);
   return wrapAsStandaloneHtmlDocument(
     "ShareR report: " + basenameOf(App.selectedEntryPath || "report"),
@@ -4724,6 +4945,7 @@ async function renderReportAsSelfContainedHtml() {
 // nothing in it to style.
 function renderPlotsAsSelfContainedHtml() {
   const clone = elTabPlotsZoomInner.cloneNode(true);
+  removeGhostIconButtons(clone);
   // :not(:last-child) so the final plot doesn't force out a trailing blank page -- same
   // one-page-per-plot intent as the DOCX/ODT exporters' pageBreakBefore-on-the-next-item approach,
   // just expressed as CSS since this is a print-facing standalone HTML document.
@@ -5453,6 +5675,7 @@ function clearResultsForNewRun() {
   elTabFilesPanel.innerHTML = "";
   elDownloadZipButton.disabled = true;
   setResultsExportButtonsDisabled(true);
+  setDownloadMenuOpen(false);
   App.lastRunInfo = null;
   App.executionLogLines = [];
   elLog.textContent = "";
@@ -5644,21 +5867,34 @@ const elLoadModal = document.getElementById("load-script-modal");
 const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
 const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
 const elAddMoreFilesButton = document.getElementById("add-more-files-button");
+elCloseLoadModalButton.innerHTML = X_ICON_SVG;
 
 const elErrorModal = document.getElementById("error-modal");
 const elErrorModalMessage = document.getElementById("error-modal-message");
 const elCloseErrorModalButton = document.getElementById("close-error-modal-button");
 const elErrorModalOkButton = document.getElementById("error-modal-ok-button");
 const elErrorModalLogButton = document.getElementById("error-modal-log-button");
+elCloseErrorModalButton.innerHTML = X_ICON_SVG;
 
 const elPrintResultsButton = document.getElementById("print-results-button");
 const elDownloadZipButton = document.getElementById("download-zip-button");
-const elResultsExportGroup = document.getElementById("results-export-group");
+const elDownloadMenuWrap = document.getElementById("download-menu-wrap");
+const elDownloadMenuButton = document.getElementById("download-menu-button");
+const elDownloadMenu = document.getElementById("download-menu");
 const elExportHtmlButton = document.getElementById("export-html-button");
 const elExportDocxButton = document.getElementById("export-docx-button");
 const elExportOdtButton = document.getElementById("export-odt-button");
 const elExportPptxButton = document.getElementById("export-pptx-button");
 const elExportPdfButton = document.getElementById("export-pdf-button");
+
+elPrintResultsButton.querySelector(".btn-icon").innerHTML = PRINT_ICON_SVG;
+elDownloadMenuButton.querySelector(".btn-icon").innerHTML = DOWNLOAD_ICON_SVG_LG;
+elExportHtmlButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_HTML_ICON_SVG;
+elExportDocxButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_DOCX_ICON_SVG;
+elExportOdtButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_ODT_ICON_SVG;
+elExportPptxButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_PPTX_ICON_SVG;
+elExportPdfButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_PDF_ICON_SVG;
+elDownloadZipButton.querySelector(".download-menu-icon").innerHTML = FILETYPE_ZIP_ICON_SVG;
 const elConsoleToggleButton = document.getElementById("console-toggle-button");
 const elReportLoadingOverlay = document.getElementById("report-loading-overlay");
 const elReportLoadingBarFill = document.getElementById("report-loading-bar-fill");
@@ -5682,6 +5918,8 @@ const elZoomControl = document.getElementById("zoom-control");
 const elZoomOutButton = document.getElementById("zoom-out-button");
 const elZoomInButton = document.getElementById("zoom-in-button");
 const elZoomLevelReadout = document.getElementById("zoom-level-readout");
+elZoomOutButton.innerHTML = MINUS_ICON_SVG;
+elZoomInButton.innerHTML = PLUS_ICON_SVG;
 
 /* ### UI: rendering ### */
 
@@ -5755,6 +5993,12 @@ function replaceStagedFile(path) {
   const input = document.createElement("input");
   input.type = "file";
   input.hidden = true;
+  // Pre-filters the native file picker to the replaced file's own extension -- a researcher
+  // replacing data.csv almost always means "a newer data.csv," not an arbitrary file, and the OS
+  // picker's extension filter is the standard way to guide that choice. accept is advisory only
+  // (most OS pickers let a user override it via an "All Files" option), so this never blocks a
+  // deliberate cross-extension replacement, it just defaults the picker sensibly.
+  if (path.includes(".")) input.accept = "." + extensionOf(path);
   input.addEventListener("change", async () => {
     const file = input.files[0];
     document.body.removeChild(input);
@@ -6001,10 +6245,65 @@ async function renderSourceViewer() {
    load-script-modal/error-modal). The dialog's own native "close" event -- which fires for both
    Escape and an explicit .close() -- re-parents the editor back, so there's only one place that
    needs to remember to undo the move. */
-function openSourceMaximizeModal() {
+// editor.lines[0] is prism-code-editor's overlays node, not a source line -- real source lines are
+// editor.lines[1..length-1] (see the indexing note on annotateSourceViewerOutputMarkers below).
+// Finds the topmost line currently visible in editor.container's scrolled viewport, by comparing
+// each line's live position against the container's own top edge.
+function editorTopVisibleLine(editor) {
+  const containerTop = editor.container.getBoundingClientRect().top;
+  let topLine = 1;
+  for (let i = 1; i < editor.lines.length; i++) {
+    const line = editor.lines[i];
+    if (!line || line.getBoundingClientRect().top - containerTop > 0) break;
+    topLine = i;
+  }
+  return topLine;
+}
+
+// Scrolls editor.container so the given source line sits at the top of the visible area. Used to
+// carry scroll position across the inline box <-> Maximize dialog move (Stage 2D toolbar/UX
+// polish): re-parenting the same editor.container into a very differently sized box does not
+// reliably preserve raw pixel scrollTop (word-wrap reflows the same content at different visual
+// row heights when the container width changes), so this tracks a *line number* instead and
+// re-measures the line's live position after the move, in whichever direction it happened.
+function scrollEditorToLine(editor, lineIdx) {
+  const line = editor.lines[lineIdx];
+  if (!line) return;
+  const container = editor.container;
+  container.scrollTop += line.getBoundingClientRect().top - container.getBoundingClientRect().top;
+}
+
+// Clears any leftover .highlight-flash from a previous jump before a new one is applied -- without
+// this, clicking "View code" on several different chunks in a row about the length of one
+// animation apart left more than one line/chunk visibly flashed at once.
+function clearEditorHighlightFlash(editor) {
+  for (const el of editor.container.querySelectorAll(".highlight-flash")) el.classList.remove("highlight-flash");
+}
+
+// targetLine (1-based, an editor.lines index) is optional: omitted, the Maximize toolbar button
+// just carries over whatever line was already at the top of the small inline box, no highlight.
+// Passed alongside endLine, a report chunk's "View code" ghost button (createViewChunkCodeButton)
+// uses it to jump to and flash that whole chunk -- every line from targetLine through endLine
+// (inclusive), covering the opening/closing fence and body for an .Rmd chunk, not just its first
+// line: a single-line flash turned out to be hard to distinguish from every *other* chunk's own
+// opening fence line, which reads identically ("```{r ...}") for an unnamed or duplicate-named
+// chunk. Highlighting the full block removes that ambiguity regardless of chunk naming.
+function openSourceMaximizeModal(targetLine, endLine) {
   if (!App.sourceEditor || elSourceMaximizeModal.open) return;
+  const topLine = targetLine || editorTopVisibleLine(App.sourceEditor);
   elSourceMaximizeBody.appendChild(App.sourceEditor.container);
   elSourceMaximizeModal.showModal();
+  scrollEditorToLine(App.sourceEditor, topLine);
+  if (targetLine) {
+    clearEditorHighlightFlash(App.sourceEditor);
+    for (let i = targetLine; i <= (endLine || targetLine); i++) {
+      const line = App.sourceEditor.lines[i];
+      if (!line) continue;
+      line.classList.remove("highlight-flash");
+      void line.offsetWidth; // force reflow so re-adding the class restarts the animation
+      line.classList.add("highlight-flash");
+    }
+  }
 }
 
 /* Downloads the active script's current (possibly edited) content under its original filename --
@@ -6016,6 +6315,24 @@ function downloadActiveScript() {
   downloadBlob(new Blob([App.sourceEditor.value]), staged.name);
 }
 
+// bitmapToPlotImage's <img> elements carry no explicit width/height attribute, so a freshly
+// inserted plot (or several at once -- a chunk that plots inside a loop can drop many new <img>s
+// into the Plots tab within the same run) has an unknown/zero layout size until the browser
+// actually decodes its data: URL, which is asynchronous even though there's no network fetch
+// involved. Measuring scrollHeight (refreshZoomFrameHeight) or computing a scrollIntoView target
+// before that decode finishes uses a still-too-small layout; the persistent ResizeObserver
+// (initZoomControl) eventually corrects the frame height once decoding catches up, but by then an
+// already-in-flight smooth scroll has nothing recomputing its target against the new size, leaving
+// the panel's scrollbar and its real content out of sync. Waiting for every image already in the
+// panel to finish decoding first (near-instant, already-resolved promises, once a run has been
+// sitting rendered for a while) makes sure that never happens.
+async function waitForImagesToDecode(containerEl) {
+  const decodes = Array.from(containerEl.querySelectorAll("img")).map((img) =>
+    (img.decode ? img.decode() : Promise.resolve()).catch(() => {}) // a broken image shouldn't block the jump
+  );
+  await Promise.all(decodes);
+}
+
 /* Activates a Results tab and scroll-and-flashes one of its items -- used both by the output
    gutter markers below and available generally. Honors prefers-reduced-motion via the
    .highlight-flash CSS rule itself (spec section 11.2). Report/Plots panels size themselves via a
@@ -6023,11 +6340,15 @@ function downloadActiveScript() {
    it was the hidden tab can carry a stale (often too-small) explicit height -- refreshing it here,
    synchronously right after activateTab reveals the panel, avoids scrollIntoView computing against
    that stale size and landing somewhere else in the document entirely. */
-function jumpToOutput(tabIndex, elementId) {
+async function performOutputJump(tabIndex, elementId) {
   activateTab(tabIndex);
   TAB_BUTTONS[tabIndex].focus();
-  if (tabIndex === 0) refreshZoomFrameHeight(elTabReportPanel, elTabReportZoomInner);
-  else if (tabIndex === 1) refreshZoomFrameHeight(elTabPlotsPanel, elTabPlotsZoomInner);
+  const zoomPanel = tabIndex === 0 ? elTabReportPanel : tabIndex === 1 ? elTabPlotsPanel : null;
+  const zoomInner = tabIndex === 0 ? elTabReportZoomInner : tabIndex === 1 ? elTabPlotsZoomInner : null;
+  if (zoomPanel && zoomInner) {
+    await waitForImagesToDecode(zoomInner);
+    refreshZoomFrameHeight(zoomPanel, zoomInner);
+  }
   const target = document.getElementById(elementId);
   if (!target) return;
   target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -6035,6 +6356,27 @@ function jumpToOutput(tabIndex, elementId) {
   target.classList.remove("highlight-flash");
   void target.offsetWidth; // force reflow so re-adding the class restarts the animation
   target.classList.add("highlight-flash");
+}
+
+function jumpToOutput(tabIndex, elementId) {
+  // A gutter marker can be clicked while the source editor is maximized (its <dialog> sits in the
+  // top layer, covering the whole viewport). Closing it re-parents editor.container back out (see
+  // the dialog's own "close" listener) -- but that happens in the dialog's "close" EVENT, which per
+  // spec fires as a queued task, not synchronously inside close(). Running performOutputJump
+  // immediately after requesting the close used to compute Report/Plots panel heights and
+  // scrollIntoView against a page layout with the Workspace pane transiently missing its editor,
+  // right before that editor came back and shifted the layout again -- the panel's explicit
+  // zoom-outer height (refreshZoomFrameHeight) ended up stale relative to its real content, so its
+  // scrollbar and its actual scroll position silently disagreed (exactly the bug
+  // refreshZoomFrameHeight's own comment above was written to prevent, via a different path).
+  // Waiting for "close" first guarantees the re-parent -- and the layout settling it causes -- has
+  // already happened before any of that runs.
+  if (elSourceMaximizeModal.open) {
+    requestCloseSourceMaximizeModal();
+    elSourceMaximizeModal.addEventListener("close", () => performOutputJump(tabIndex, elementId), { once: true });
+    return;
+  }
+  performOutputJump(tabIndex, elementId);
 }
 
 // Best-effort static recognizers for "this line probably produces a plot / writes a file",
@@ -6062,12 +6404,14 @@ function findCandidateLines(sourceLines, re) {
 // the small width annotateSourceViewerOutputMarkers's CSS reserves for markers.
 const MAX_MARKERS_PER_SOURCE_LINE = 3;
 
-function appendOutputMarkerButton(row, index, glyph, label, onClick) {
+// iconHtml is either an icon SVG constant or a plain "+N" overflow label -- both are always this
+// file's own strings (never user/script-controlled text), so innerHTML is safe here.
+function appendOutputMarkerButton(row, index, iconHtml, label, onClick) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "output-marker";
   btn.style.left = (2 + index * 13) + "px";
-  btn.textContent = glyph;
+  btn.innerHTML = iconHtml;
   btn.setAttribute("aria-label", label);
   btn.addEventListener("click", onClick);
   row.appendChild(btn);
@@ -6078,8 +6422,10 @@ function appendOutputMarkerButton(row, index, glyph, label, onClick) {
    editor.lines[n] div (Stage 2D.1 -- prism-code-editor doesn't expose a separate gutter-slot
    element the way the old hand-rolled viewer did). captureR reports outputs per chunk, not per
    statement, so PLOT_CALL_RE/FILE_WRITE_CALL_RE candidate lines are matched to outputs in order;
-   when a chunk has no candidate lines at all, outputs spread one-per-source-line instead of all
-   stacking on the chunk's first line, keeping the MAX_MARKERS_PER_SOURCE_LINE cap rarely hit. */
+   when a chunk has exactly one candidate line (or none, but only one output), every output lands
+   there via MAX_MARKERS_PER_SOURCE_LINE's same-line "+N" overflow; when there's no candidate line
+   at all *and* more than one output, they're grouped into a single distinct marker instead (see
+   the plotCandidates/fileCandidates branches below) rather than guessed onto separate lines. */
 function annotateSourceViewerOutputMarkers(runState) {
   const editor = App.sourceEditor;
   if (!editor) return;
@@ -6100,21 +6446,47 @@ function annotateSourceViewerOutputMarkers(runState) {
     const sourceLines = node.source.split(/\r\n|\r|\n/);
     const plotCandidates = findCandidateLines(sourceLines, PLOT_CALL_RE);
     const fileCandidates = findCandidateLines(sourceLines, FILE_WRITE_CALL_RE);
-    plotIds.forEach((plotItemId, i) => {
-      const relLine = plotCandidates.length
-        ? plotCandidates[Math.min(i, plotCandidates.length - 1)]
-        : Math.min(i, sourceLines.length - 1);
-      queueMarker(baseLine, relLine, "\u{1F4CA}",
-        "Jump to the plot produced by chunk " + (node.label || ""), () => jumpToOutput(1, plotItemId));
-    });
-    filePaths.forEach((filePath, i) => {
-      const relLine = fileCandidates.length
-        ? fileCandidates[Math.min(i, fileCandidates.length - 1)]
-        : Math.min(i, sourceLines.length - 1);
-      const fileId = "file-item-" + slugifyForElementId(filePath);
-      queueMarker(baseLine, relLine, "\u{1F4C4}",
-        "Jump to " + filePath + ", produced by chunk " + (node.label || ""), () => jumpToOutput(2, fileId));
-    });
+
+    if (plotCandidates.length === 0 && plotIds.length > 1) {
+      // No recognizable plotting call anywhere in this chunk at all -- group rather than the old
+      // "spread one-per-source-line" fallback, which stacked a separate marker onto each of the
+      // chunk's first N lines (none of which necessarily produced anything) and, for a chunk that
+      // plots inside a loop, could add up to enough freshly-inserted markers/plots to throw off
+      // the Plots tab's own scroll-height measurement (see waitForImagesToDecode). Cycles through
+      // its targets on repeated clicks, same as the same-line "+N" overflow marker below.
+      let cycle = 0;
+      queueMarker(baseLine, 0, groupedOutputMarkerIconSvg(BAR_CHART_MARKER_PATH, plotIds.length),
+        plotIds.length + " plots produced by chunk " + (node.label || "") + " (source line unknown) -- click to cycle through them",
+        () => { jumpToOutput(1, plotIds[cycle % plotIds.length]); cycle++; });
+    } else {
+      plotIds.forEach((plotItemId, i) => {
+        const relLine = plotCandidates.length
+          ? plotCandidates[Math.min(i, plotCandidates.length - 1)]
+          : Math.min(i, sourceLines.length - 1);
+        queueMarker(baseLine, relLine, BAR_CHART_ICON_SVG,
+          "Jump to the plot produced by chunk " + (node.label || ""), () => jumpToOutput(1, plotItemId));
+      });
+    }
+
+    if (fileCandidates.length === 0 && filePaths.length > 1) {
+      let cycle = 0;
+      queueMarker(baseLine, 0, groupedOutputMarkerIconSvg(FILE_EARMARK_MARKER_PATH, filePaths.length),
+        filePaths.length + " files produced by chunk " + (node.label || "") + " (source line unknown) -- click to cycle through them",
+        () => {
+          const fileId = "file-item-" + slugifyForElementId(filePaths[cycle % filePaths.length]);
+          jumpToOutput(2, fileId);
+          cycle++;
+        });
+    } else {
+      filePaths.forEach((filePath, i) => {
+        const relLine = fileCandidates.length
+          ? fileCandidates[Math.min(i, fileCandidates.length - 1)]
+          : Math.min(i, sourceLines.length - 1);
+        const fileId = "file-item-" + slugifyForElementId(filePath);
+        queueMarker(baseLine, relLine, FILE_EARMARK_ICON_SVG,
+          "Jump to " + filePath + ", produced by chunk " + (node.label || ""), () => jumpToOutput(2, fileId));
+      });
+    }
   }
   for (const [lineIdx, markers] of lineMarkers) {
     const row = editor.lines[lineIdx];
@@ -6238,11 +6610,22 @@ function activateTab(index) {
   // Zoom only makes sense for Report/Plots (index 0/1) -- Files is a list of download rows, not
   // wide charts, so the floating control has nothing useful to do there.
   elZoomControl.hidden = index === 2;
+  // Print has no meaning for the Files tab (it's a list of download rows, not printable content);
+  // the Download menu stays visible there since "Download all (.zip)" still applies.
   elPrintResultsButton.hidden = index === 2;
-  elResultsExportGroup.hidden = index === 2;
-  // PowerPoint only makes sense for a plot gallery, not a mixed prose/code/output report -- hidden
-  // (not just disabled) outside the Plots tab, per explicit follow-up direction.
-  elExportPptxButton.hidden = index !== 1;
+  updateDownloadMenuItemVisibility(index);
+}
+
+// Each Download menu item declares which tabs it applies to via data-tabs (comma-separated tab
+// indices: 0=Report, 1=Plots, 2=Files) -- e.g. PowerPoint only makes sense for a plot gallery, not
+// a mixed prose/code/output report, while "Download all (.zip)" applies everywhere. Replaces the
+// old per-button .hidden assignments in activateTab with one rule read from the markup.
+function updateDownloadMenuItemVisibility(tabIndex) {
+  for (const item of elDownloadMenu.querySelectorAll(".download-menu-item")) {
+    const tabs = (item.dataset.tabs || "").split(",");
+    item.hidden = !tabs.includes(String(tabIndex));
+  }
+  setDownloadMenuOpen(false);
 }
 
 function initResultsTabs() {
@@ -6532,15 +6915,50 @@ elErrorModalOkButton.addEventListener("click", () => closeErrorModal());
 elErrorModalLogButton.addEventListener("click", () => { closeErrorModal(); expandExecutionLog(); });
 elErrorModal.addEventListener("click", (e) => { if (e.target === elErrorModal) closeErrorModal(); });
 
-elSourceMaximizeButton.addEventListener("click", openSourceMaximizeModal);
+// Not a bare `addEventListener("click", openSourceMaximizeModal)` -- that would pass the
+// MouseEvent itself through as openSourceMaximizeModal's targetLine parameter (truthy, so the
+// `targetLine || editorTopVisibleLine(...)` fallback never runs), silently breaking the small
+// box -> fullscreen scroll-preservation this button relies on.
+elSourceMaximizeButton.addEventListener("click", () => openSourceMaximizeModal());
 elSourceDownloadButton.addEventListener("click", downloadActiveScript);
 elSourceMaximizeDownloadButton.addEventListener("click", downloadActiveScript);
-elCloseSourceMaximizeButton.addEventListener("click", () => elSourceMaximizeModal.close());
-elSourceMaximizeModal.addEventListener("click", (e) => { if (e.target === elSourceMaximizeModal) elSourceMaximizeModal.close(); });
+// By the time the dialog's own "close" event fires, the [open] attribute is already gone and the
+// whole subtree (including the still-reparented editor.container) is unrendered -- every element
+// in it reports a zero-size, zero-position getBoundingClientRect(), which made
+// editorTopVisibleLine() measured there always fall through to the *last* line (every line's rect
+// top - container's rect top comes out as 0 - 0, never > 0) -- hence "always scrolls to the
+// bottom." The line must be captured while the dialog is still open and rendered, so each close
+// path captures it up front and stashes it for the "close" handler to consume once the move
+// actually happens. "cancel" (Escape only) fires before the dialog closes, same as a normal click.
+let pendingSourceMaximizeCloseLine = null;
+function requestCloseSourceMaximizeModal() {
+  if (!elSourceMaximizeModal.open) return;
+  pendingSourceMaximizeCloseLine = App.sourceEditor ? editorTopVisibleLine(App.sourceEditor) : null;
+  elSourceMaximizeModal.close();
+}
+elCloseSourceMaximizeButton.addEventListener("click", requestCloseSourceMaximizeModal);
+elSourceMaximizeModal.addEventListener("click", (e) => { if (e.target === elSourceMaximizeModal) requestCloseSourceMaximizeModal(); });
+elSourceMaximizeModal.addEventListener("cancel", () => {
+  pendingSourceMaximizeCloseLine = App.sourceEditor ? editorTopVisibleLine(App.sourceEditor) : null;
+});
 // Fires for every close path (Escape, the close button, or the backdrop click above) -- the one
 // place that moves editor.container back out of the dialog, so no close path can forget to.
 elSourceMaximizeModal.addEventListener("close", () => {
-  if (App.sourceEditor) elSourceCodeLines.appendChild(App.sourceEditor.container);
+  if (App.sourceEditor) {
+    const topLine = pendingSourceMaximizeCloseLine || 1;
+    elSourceCodeLines.appendChild(App.sourceEditor.container);
+    scrollEditorToLine(App.sourceEditor, topLine);
+  }
+  pendingSourceMaximizeCloseLine = null;
+  // A native <dialog> restores focus to whatever opened it as part of close()'s own synchronous
+  // steps (already done by the time this "close" listener runs) -- fine for the toolbar Maximize
+  // button (always visible, meant to hold focus), but a report chunk's ghost "View code" button
+  // only ever shows on hover/:focus-visible, so a programmatic refocus here leaves it stuck
+  // visibly "on" with no further action to hide it again -- including if the page were printed
+  // right after. Blurring it in that one case reverts it to its normal hover-only visibility.
+  if (document.activeElement instanceof HTMLElement && document.activeElement.classList.contains("ghost-icon-btn")) {
+    document.activeElement.blur();
+  }
 });
 
 elSourceForm.addEventListener("submit", (e) => {
@@ -6609,6 +7027,83 @@ elPrintResultsButton.addEventListener("click", () => {
   window.print();
 });
 elDownloadZipButton.addEventListener("click", downloadResultsZip);
+
+/* ### Download menu (Stage 2D toolbar redesign) ###
+   WAI-ARIA "Menu Button" pattern (https://www.w3.org/WAI/ARIA/apg/patterns/menu-button/): one
+   trigger button toggles a role="menu" panel of role="menuitem" buttons. Items use tabindex="-1"
+   (set in the markup) rather than the normal tab order -- arrow keys move focus among them once the
+   menu is open, matching how native OS/application menus behave, while Tab/Shift+Tab still leaves
+   the menu and continues through the page's normal focus order instead of getting trapped inside. */
+function downloadMenuItems() {
+  return Array.from(elDownloadMenu.querySelectorAll(".download-menu-item"))
+    .filter((item) => !item.hidden && !item.disabled);
+}
+
+function isDownloadMenuOpen() {
+  return !elDownloadMenu.hidden;
+}
+
+function setDownloadMenuOpen(open) {
+  elDownloadMenu.hidden = !open;
+  elDownloadMenuButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+// offset > 0 moves forward (wrapping to the first item); offset < 0 moves backward (wrapping to the
+// last). Called with no currently-focused item (e.g. right after opening) it lands on the first
+// item for a forward move or the last item for a backward move, matching native menu behavior.
+function focusDownloadMenuItem(offset) {
+  const items = downloadMenuItems();
+  if (items.length === 0) return;
+  const current = items.indexOf(document.activeElement);
+  const next = current === -1
+    ? (offset > 0 ? 0 : items.length - 1)
+    : (current + offset + items.length) % items.length;
+  items[next].focus();
+}
+
+elDownloadMenuButton.addEventListener("click", () => {
+  const willOpen = !isDownloadMenuOpen();
+  setDownloadMenuOpen(willOpen);
+  if (willOpen) focusDownloadMenuItem(1);
+});
+
+elDownloadMenuButton.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    setDownloadMenuOpen(true);
+    focusDownloadMenuItem(1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    setDownloadMenuOpen(true);
+    focusDownloadMenuItem(-1);
+  }
+});
+
+elDownloadMenu.addEventListener("keydown", (e) => {
+  const items = downloadMenuItems();
+  if (e.key === "ArrowDown") { e.preventDefault(); focusDownloadMenuItem(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); focusDownloadMenuItem(-1); }
+  else if (e.key === "Home") { e.preventDefault(); if (items.length) items[0].focus(); }
+  else if (e.key === "End") { e.preventDefault(); if (items.length) items[items.length - 1].focus(); }
+  else if (e.key === "Escape") { e.preventDefault(); setDownloadMenuOpen(false); elDownloadMenuButton.focus(); }
+  else if (e.key === "Tab") { setDownloadMenuOpen(false); }
+});
+
+// Delegated rather than added to each export/zip button individually (declared further below,
+// alongside their own click handlers) -- closes the menu and returns focus to a known, stable
+// element after any format is chosen, since a fire-and-forget download has nowhere better to send
+// focus. Runs after the target item's own click handler (this listener is on the ancestor menu, so
+// it fires during the later bubble phase).
+elDownloadMenu.addEventListener("click", (e) => {
+  const item = e.target.closest(".download-menu-item");
+  if (!item || item.disabled) return;
+  setDownloadMenuOpen(false);
+  elDownloadMenuButton.focus();
+});
+
+document.addEventListener("click", (e) => {
+  if (isDownloadMenuOpen() && !elDownloadMenuWrap.contains(e.target)) setDownloadMenuOpen(false);
+});
 
 function setResultsExportButtonsDisabled(disabled) {
   for (const btn of [elExportHtmlButton, elExportDocxButton, elExportOdtButton, elExportPptxButton, elExportPdfButton]) btn.disabled = disabled;
