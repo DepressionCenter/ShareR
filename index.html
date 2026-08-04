@@ -1815,7 +1815,12 @@ const CONFIG = Object.freeze({
   WORKSPACE_PANE_MIN_WIDTH_PX:       260,
   WORKSPACE_PANE_MAX_WIDTH_PCT:      0.7,
   WORKSPACE_PANE_COLLAPSED_THICKNESS_PX: 32,
-  WORKSPACE_PANE_KEY_STEP_PX:        20
+  WORKSPACE_PANE_KEY_STEP_PX:        20,
+
+  // A large plot (FIG_DPI=144 against a generous fig.height/fig.width can exceed 10 megapixels)
+  // can legitimately take real time to decode -- long enough to matter, never long enough that a
+  // researcher should be blocked waiting on a single slow/stuck image (waitForImagesToDecode).
+  IMAGE_DECODE_TIMEOUT_MS:           4000
 });
 
 /* ### Errors ### */
@@ -6577,12 +6582,28 @@ function downloadActiveScript() {
 // already-in-flight smooth scroll has nothing recomputing its target against the new size, leaving
 // the panel's scrollbar and its real content out of sync. Waiting for every image already in the
 // panel to finish decoding first (near-instant, already-resolved promises, once a run has been
-// sitting rendered for a while) makes sure that never happens.
+// sitting rendered for a while) makes sure that never happens. A large plot (e.g. a wide/tall
+// fig.height/fig.width chunk producing a multi-megapixel PNG) can decode noticeably slower than the
+// rest, and on rare occasions decode() itself has been observed to never settle for one image --
+// racing it against a timeout means one slow/stuck image can never block the whole jump forever.
 async function waitForImagesToDecode(containerEl) {
-  const decodes = Array.from(containerEl.querySelectorAll("img")).map((img) =>
-    (img.decode ? img.decode() : Promise.resolve()).catch(() => {}) // a broken image shouldn't block the jump
-  );
+  const decodes = Array.from(containerEl.querySelectorAll("img")).map((img) => {
+    const decodePromise = img.decode ? img.decode() : Promise.resolve();
+    return Promise.race([
+      decodePromise,
+      new Promise((resolve) => setTimeout(resolve, CONFIG.IMAGE_DECODE_TIMEOUT_MS))
+    ]).catch(() => {}); // a broken image shouldn't block the jump
+  });
   await Promise.all(decodes);
+}
+
+// Two nested requestAnimationFrame calls, not one: the first only guarantees "before the next
+// paint," which can still land before the browser has actually laid out content that just became
+// visible (e.g. a whole tab panel's `hidden` attribute was just cleared) or finished sizing a
+// newly-decoded image's box -- the second rAF is guaranteed to run only after that layout/paint has
+// completed, so a scrollHeight read afterward reflects real, settled geometry.
+function waitForNextPaint() {
+  return new Promise((resolve) => { requestAnimationFrame(() => requestAnimationFrame(resolve)); });
 }
 
 /* Activates a Results tab and scroll-and-flashes one of its items -- used both by the output
@@ -6591,7 +6612,13 @@ async function waitForImagesToDecode(containerEl) {
    ResizeObserver that only fires for a *visible* element, so a panel whose content changed while
    it was the hidden tab can carry a stale (often too-small) explicit height -- refreshing it here,
    synchronously right after activateTab reveals the panel, avoids scrollIntoView computing against
-   that stale size and landing somewhere else in the document entirely. */
+   that stale size and landing somewhere else in the document entirely. A large plot's decode/layout
+   can still settle after that first refresh+scroll (confirmed in practice with a single very large,
+   e.g. fig.height=20/fig.width=35, chunk at the end of a long report: the panel's explicit height
+   froze short of the real content, capping how far the surrounding scroll container could ever
+   scroll and permanently clipping everything past it) -- a second refresh+scroll pass, deferred
+   until the browser has actually painted once, catches and self-corrects that instead of trusting
+   a single measurement taken the instant the tab became visible. */
 async function performOutputJump(tabIndex, elementId) {
   activateTab(tabIndex);
   TAB_BUTTONS[tabIndex].focus();
@@ -6599,6 +6626,7 @@ async function performOutputJump(tabIndex, elementId) {
   const zoomInner = tabIndex === 0 ? elTabReportZoomInner : tabIndex === 1 ? elTabPlotsZoomInner : null;
   if (zoomPanel && zoomInner) {
     await waitForImagesToDecode(zoomInner);
+    await waitForNextPaint();
     refreshZoomFrameHeight(zoomPanel, zoomInner);
   }
   const target = document.getElementById(elementId);
@@ -6608,6 +6636,18 @@ async function performOutputJump(tabIndex, elementId) {
   target.classList.remove("highlight-flash");
   void target.offsetWidth; // force reflow so re-adding the class restarts the animation
   target.classList.add("highlight-flash");
+  if (zoomPanel && zoomInner) {
+    // Only re-scrolls if the height measurement actually changed between the two passes -- the
+    // ordinary case (content already fully settled before the first measurement) leaves
+    // zoomPanel.style.height identical here, so the smooth scroll above finishes its animation
+    // uninterrupted rather than being cut short by a redundant instant re-scroll to the same spot.
+    const heightBefore = zoomPanel.style.height;
+    await waitForNextPaint();
+    refreshZoomFrameHeight(zoomPanel, zoomInner);
+    if (zoomPanel.style.height !== heightBefore) {
+      target.scrollIntoView({ behavior: "auto", block: "center" });
+    }
+  }
 }
 
 function jumpToOutput(tabIndex, elementId) {
