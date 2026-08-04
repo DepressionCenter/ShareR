@@ -310,6 +310,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
        tabbable but invisible, a worse regression than a missed announcement. */
     display: none;
   }
+  /* Same gray as .panel-header/.results-tabs-row, so the collapsed rail reads as an intentional
+     thin panel rather than a bare white box with just a toggle button floating on it. */
+  .workspace-pane.collapsed { background: var(--panel-header-bg); }
+  /* Purely a visual echo of the real (now-hidden) #workspace-heading -- aria-hidden, since the
+     heading itself remains the one accessible name for this region. Hidden while expanded, since
+     .panel-header's own visible heading already covers that state. */
+  .workspace-collapse-label {
+    display: none;
+    position: absolute;
+    top: 40px;
+    left: 50%;
+    transform: translateX(-50%) rotate(180deg);
+    writing-mode: vertical-rl;
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: var(--um-dark-blue);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .workspace-pane.collapsed .workspace-collapse-label { display: block; }
   /* A real flex item sitting between .workspace-pane and .results-pane (not an absolutely-
      positioned overlay on the workspace pane's own edge), so the drag strip -- and its scrollbar
      clearance -- sit in the actual seam between the two panes rather than over either pane's
@@ -444,6 +464,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .btn { display: inline-flex; align-items: center; gap: 0.35rem; }
   .btn-sm { padding: 4px 10px; font-size: 0.85rem; }
   .btn-icon { font-size: 0.9rem; line-height: 1; }
+  /* fill: currentColor here (not on the icon constants themselves) so a bare glyph always matches
+     its button's text color, while the maize download-badge composited on top by
+     fileTypeDownloadIconSvg keeps its own explicit fill -- that badge sets fill on its own
+     <circle>/<path>, which wins over this inherited value for just those elements. A thin matching
+     stroke (paint-order draws it under the fill, so it only thickens each shape's outline rather
+     than shrinking its interior) fakes a bolder glyph weight than these single-width Bootstrap
+     Icons paths draw natively, without needing a second, heavier icon set. The badge's own circle/
+     path each set stroke="none" so this inherited stroke never traces their cutout-arrow edges. */
+  .btn-icon svg { display: block; width: 14px; height: 14px; fill: currentColor; stroke: currentColor; stroke-width: 0.6px; paint-order: stroke fill; }
   .btn-text { line-height: 1.2; }
   .help-text {
     font-size: 0.8rem;
@@ -618,6 +647,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-weight: 600;
     opacity: 0.85;
   }
+  /* The tree's synthetic root label (the GitHub repo name, when known) -- not a real tree node, so
+     it's styled distinctly from .script-picker-folder rather than looking like a real subfolder. */
+  .script-picker-root {
+    padding: 0.2rem 0.4rem 0.4rem;
+    color: var(--um-white);
+    font-weight: 700;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    margin-bottom: 0.3rem;
+  }
   .script-picker-item {
     display: block;
     width: 100%;
@@ -650,6 +688,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
   .editor-header .editor-toolbar-btn svg { width: 15px; height: 15px; }
   .editor-header .editor-toolbar-btn:hover { background: rgba(255, 255, 255, 0.12); }
+  .editor-toolbar-btn:disabled { opacity: 0.35; cursor: default; }
+  .editor-toolbar-btn:disabled:hover { background: transparent; }
   .editor-body {
     flex: 1;
     overflow: hidden; /* .prism-code-editor itself scrolls (layout.css); this is a sizing box only,
@@ -1093,6 +1133,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-size: 1rem;
     line-height: 1;
   }
+  .file-row-icon svg { display: inline-block; width: 16px; height: 16px; vertical-align: middle; }
   .file-row-icon-link {
     background: none;
     border: 1px solid transparent;
@@ -1101,6 +1142,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
     padding: 0.1rem;
   }
   .file-row-icon-link:hover, .file-row-icon-link:focus-visible { border-color: var(--panel-border); }
+  /* Overrides um-style.css's global "every button is bold" rule for just this row's action
+     buttons -- their labels are short (Preview/CSV/Excel/PDF/Zip/Code/Print) and read fine at
+     normal weight, closer to the row's own file name/size text. .file-row-synthetic rows carry
+     both classes, so this covers them too. */
+  .file-row .btn-text { font-weight: normal; }
   .file-row-name { font-weight: 600; font-size: 0.9rem; word-break: break-all; }
   .file-row-size { font-size: 0.8rem; color: var(--text-muted); }
   .file-row-image-preview { max-width: 6rem; max-height: 4rem; border: 1px solid var(--panel-border); }
@@ -1210,7 +1256,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     background: var(--um-dark-blue);
     color: var(--um-white);
   }
-  .modal-header h2 { margin: 0; font-size: 1.1rem; color: var(--um-white); }
+  .modal-header h2 { margin: 0; font-size: 1.1rem; color: var(--um-white); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .modal-close {
     background: none;
     border: none;
@@ -1336,6 +1382,15 @@ with this program. If not, see https://www.gnu.org/licenses/.
        declaration ever applies). */
     .workspace-collapse-btn svg { transform: rotate(90deg); }
     .workspace-collapse-btn svg.icon-flipped { transform: rotate(270deg); }
+    /* Collapsing shrinks height, not width, here -- the desktop vertical-rl/rotate treatment would
+       read sideways in a short horizontal rail, so the label goes back to plain horizontal text,
+       vertically centered in the short strip instead of pinned below the (still top-right) toggle. */
+    .workspace-collapse-label {
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      writing-mode: horizontal-tb;
+    }
 
     /* Header: drop the tagline and the repo-name label entirely -- there's no room for branding
        plus the action buttons at this width otherwise. */
@@ -1442,6 +1497,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
             </svg>
           </button>
           <div class="editor-header-actions">
+            <button type="button" id="source-restore-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Restore original file contents" title="Restore original file contents" disabled></button>
             <button type="button" id="source-download-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Download script" title="Download script"></button>
             <button type="button" id="source-maximize-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Maximize editor" title="Maximize"></button>
           </div>
@@ -1461,6 +1517,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <path fill-rule="evenodd" d="M11.354 1.646a.5.5 0 0 1 0 .708L5.707 8l5.647 5.646a.5.5 0 0 1-.708.708l-6-6a.5.5 0 0 1 0-.708l6-6a.5.5 0 0 1 .708 0"></path>
       </svg>
     </button>
+    <div class="workspace-collapse-label" aria-hidden="true">Workspace</div>
   </section>
 
   <div class="workspace-resize-handle" id="workspace-resize-handle"
@@ -1630,6 +1687,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   <div class="modal-header">
     <h2 id="source-maximize-title"></h2>
     <div class="editor-header-actions">
+      <button type="button" id="source-maximize-restore-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Restore original file contents" title="Restore original file contents" disabled></button>
       <button type="button" id="source-maximize-download-button" class="ghost-icon-btn editor-toolbar-btn" aria-label="Download script" title="Download script"></button>
       <button type="button" id="close-source-maximize-button" class="modal-close" aria-label="Exit fullscreen" title="Exit fullscreen"></button>
     </div>
@@ -1788,6 +1846,18 @@ function formatBytes(n) {
 function basenameOf(path) {
   const parts = path.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
+}
+
+// Abbreviates a long filename to fit the cramped editor-header title bar: keeps the extension
+// intact and, when the base name (extension excluded) exceeds 24 characters, shows only its first
+// 16 and last 4 characters. The full path is never shown here -- only the script-picker tree does.
+function truncateFilenameForHeader(name) {
+  const dotIndex = name.lastIndexOf(".");
+  const hasExt = dotIndex > 0 && dotIndex < name.length - 1;
+  const base = hasExt ? name.slice(0, dotIndex) : name;
+  const ext = hasExt ? name.slice(dotIndex) : "";
+  if (base.length <= 24) return base + ext;
+  return base.slice(0, 16) + "..." + base.slice(-4) + ext;
 }
 
 /* The directory portion of a relative path, or "" for a file at the root (spec: workspace file
@@ -2939,6 +3009,11 @@ async function confirmWorkingDirectory(engine) {
 
 const App = {
   stagedStore: null,
+  // Snapshot of each staged file as first resolved (winning source-priority entry), captured once
+  // after initial staging settles -- { bytes, source, sourceLabel } keyed by path.toLowerCase(),
+  // matching StagedFileStore's own key. See snapshotOriginalFileBytes/isFileModified/
+  // restoreStagedFile.
+  originalFileBytes: new Map(),
   engine: null,
   prismCodeEditor: null,   // cached lazy-loaded module exports (createEditor, languages, etc.)
   sourceEditor: null,      // the live PrismEditor instance mounted in #source-code-lines, if any
@@ -3832,15 +3907,19 @@ const MINUS_ICON_SVG = // bi-dash-lg
 // this app's existing maize-accent convention (see the ghost-icon-btn/workspace-collapse-btn hover
 // states) rather than inventing a new indicator color. innerPathsMarkup is that icon's own <path>
 // markup verbatim, in its native 0-16 coordinate system; scaled down and inset into a shared 18x18
-// canvas alongside a fixed badge circle + arrow (bi-download, scaled further to fit the badge).
+// canvas alongside the badge. The badge itself is bi-arrow-down-circle-fill (a single filled path
+// whose downward-arrow area is a true cutout via its own opposite-winding subpath, not a second
+// shape) layered in maize directly on top of a same-size, same-position plain dark-blue <circle> --
+// the maize path's solid disc hides the circle everywhere except through that cutout, so the arrow
+// reads as dark-blue against the maize disc without needing a second, separately-positioned arrow
+// glyph. A bolder, more visible replacement for the previous thin two-path bi-download arrow.
 function fileTypeDownloadIconSvg(innerPathsMarkup) {
   return '<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">' +
     '<g transform="scale(0.82)">' + innerPathsMarkup + '</g>' +
-    '<circle cx="14.1" cy="14.1" r="4.2" fill="var(--um-maize)" stroke="var(--um-white)" stroke-width="1.4"/>' +
-    '<g transform="translate(10.6,10.6) scale(0.44)" fill="var(--um-dark-blue)">' +
-    '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
-    '<path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/>' +
-    '</g></svg>';
+    '<circle cx="14.3" cy="14.3" r="4.6" fill="var(--um-dark-blue)" stroke="var(--um-white)" stroke-width="1.4"/>' +
+    '<path fill="var(--um-maize)" stroke="none" transform="translate(9.7,9.7) scale(0.575)" ' +
+    'd="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M8.5 4.5a.5.5 0 0 0-1 0v5.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293z"/>' +
+    '</svg>';
 }
 
 const FILETYPE_HTML_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-html
@@ -3928,6 +4007,91 @@ const CODE_ICON_SVG = // bi-code-slash ("View code" chunk-jump ghost button)
   '<path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0m6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0"/>' +
   '</svg>';
 
+const EYE_ICON_SVG = // bi-eye (Files tab Preview buttons -- never gets the download badge below)
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z"/>' +
+  '<path d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0"/>' +
+  '</svg>';
+
+// "Restore original file contents" -- distinct from RESTORE_ICON_SVG above (bi-fullscreen-exit,
+// used only to close the maximize dialog); this is a different concept and must stay a separate
+// constant so the two are never confused at a call site.
+const REVERT_ICON_SVG = // bi-arrow-counterclockwise
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path fill-rule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2z"/>' +
+  '<path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466"/>' +
+  '</svg>';
+
+const REPORT_ROW_ICON_SVG = // bi-file-earmark-text (synthetic "Report" row icon, Files tab)
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M5.5 7a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5m0 2a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 0 1h-2a.5.5 0 0 1-.5-.5"/>' +
+  '<path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>' +
+  '</svg>';
+
+const PLOTS_ROW_ICON_SVG = // bi-images (synthetic "Plots" row icon, Files tab)
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M4.502 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/>' +
+  '<path d="M14.002 13a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2V5A2 2 0 0 1 2 3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-1.998 2M14 2H4a1 1 0 0 0-1 1h9.002a2 2 0 0 1 2 2v7A1 1 0 0 0 15 11V3a1 1 0 0 0-1-1M2.002 4a1 1 0 0 0-1 1v8l2.646-2.354a.5.5 0 0 1 .63-.062l2.66 1.773 3.71-3.71a.5.5 0 0 1 .577-.094l1.777 1.947V5a1 1 0 0 0-1-1z"/>' +
+  '</svg>';
+
+const FILETYPE_XLSX_ICON_SVG = fileTypeDownloadIconSvg( // bi-filetype-xlsx
+  '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM7.86 14.841a1.13 1.13 0 0 0 .401.823q.195.162.479.252.284.091.665.091.507 0 .858-.158.355-.158.54-.44a1.17 1.17 0 0 0 .187-.656q0-.336-.135-.56a1 1 0 0 0-.375-.357 2 2 0 0 0-.565-.21l-.621-.144a1 1 0 0 1-.405-.176.37.37 0 0 1-.143-.299q0-.234.184-.384.188-.152.513-.152.214 0 .37.068a.6.6 0 0 1 .245.181.56.56 0 0 1 .12.258h.75a1.1 1.1 0 0 0-.199-.566 1.2 1.2 0 0 0-.5-.41 1.8 1.8 0 0 0-.78-.152q-.44 0-.777.15-.336.149-.527.421-.19.273-.19.639 0 .302.123.524t.351.367q.229.143.54.213l.618.144q.31.073.462.193a.39.39 0 0 1 .153.326.5.5 0 0 1-.085.29.56.56 0 0 1-.255.193q-.168.07-.413.07-.176 0-.32-.04a.8.8 0 0 1-.249-.115.58.58 0 0 1-.255-.384zm-3.726-2.909h.893l-1.274 2.007 1.254 1.992h-.908l-.85-1.415h-.035l-.853 1.415H1.5l1.24-2.016-1.228-1.983h.931l.832 1.438h.036zm1.923 3.325h1.697v.674H5.266v-3.999h.791zm7.636-3.325h.893l-1.274 2.007 1.254 1.992h-.908l-.85-1.415h-.035l-.853 1.415h-.861l1.24-2.016-1.228-1.983h.931l.832 1.438h.036z"/>');
+
+const CODE_DOWNLOAD_ICON_SVG = fileTypeDownloadIconSvg( // bi-code-slash (no R-language glyph exists in Bootstrap Icons)
+  '<path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0m6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0"/>');
+
+// Wraps a Bootstrap Icons filetype/file-earmark glyph's raw <path> markup in a plain (unbadged)
+// 16x16 icon -- for the Files tab's per-row file-type indicator, which only ever identifies or
+// (when chunk attribution exists) jumps to source, and never itself performs a download, so it
+// never gets fileTypeDownloadIconSvg's maize badge.
+function plainFileTypeIconSvg(innerPathsMarkup) {
+  return '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+    innerPathsMarkup + '</svg>';
+}
+
+/* Raw Bootstrap Icons "filetype-*"/"file-earmark-*" path markup (native 16x16 coordinate space),
+   one entry per output-file extension the Files tab's fileTypeIcons map recognizes -- shared by the
+   plain per-row file-type icon (plainFileTypeIconSvg) and the badged "Download <EXT>" button icon
+   (fileTypeDownloadIconSvg) below, so the two read as visually related. Extensions with no
+   dedicated Bootstrap Icons glyph reuse the closest sibling format (tsv/csv, jsonl/json, gz+tar/zip,
+   jpeg/jpg) or a generic file-earmark shape (webp -- Bootstrap Icons ships no filetype-webp);
+   r/rmd reuse bi-code-slash, since Bootstrap Icons has no R-language glyph. */
+const FILE_TYPE_ICON_PATHS = {
+  csv: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM3.517 14.841a1.13 1.13 0 0 0 .401.823q.195.162.478.252.284.091.665.091.507 0 .859-.158.354-.158.539-.44.187-.284.187-.656 0-.336-.134-.56a1 1 0 0 0-.375-.357 2 2 0 0 0-.566-.21l-.621-.144a1 1 0 0 1-.404-.176.37.37 0 0 1-.144-.299q0-.234.185-.384.188-.152.512-.152.214 0 .37.068a.6.6 0 0 1 .246.181.56.56 0 0 1 .12.258h.75a1.1 1.1 0 0 0-.2-.566 1.2 1.2 0 0 0-.5-.41 1.8 1.8 0 0 0-.78-.152q-.439 0-.776.15-.337.149-.527.421-.19.273-.19.639 0 .302.122.524.124.223.352.367.228.143.539.213l.618.144q.31.073.463.193a.39.39 0 0 1 .152.326.5.5 0 0 1-.085.29.56.56 0 0 1-.255.193q-.167.07-.413.07-.175 0-.32-.04a.8.8 0 0 1-.248-.115.58.58 0 0 1-.255-.384zM.806 13.693q0-.373.102-.633a.87.87 0 0 1 .302-.399.8.8 0 0 1 .475-.137q.225 0 .398.097a.7.7 0 0 1 .272.26.85.85 0 0 1 .12.381h.765v-.072a1.33 1.33 0 0 0-.466-.964 1.4 1.4 0 0 0-.489-.272 1.8 1.8 0 0 0-.606-.097q-.534 0-.911.223-.375.222-.572.632-.195.41-.196.979v.498q0 .568.193.976.197.407.572.626.375.217.914.217.439 0 .785-.164t.55-.454a1.27 1.27 0 0 0 .226-.674v-.076h-.764a.8.8 0 0 1-.118.363.7.7 0 0 1-.272.25.9.9 0 0 1-.401.087.85.85 0 0 1-.478-.132.83.83 0 0 1-.299-.392 1.7 1.7 0 0 1-.102-.627zm8.239 2.238h-.953l-1.338-3.999h.917l.896 3.138h.038l.888-3.138h.879z"/>',
+  json: '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM4.151 15.29a1.2 1.2 0 0 1-.111-.449h.764a.58.58 0 0 0 .255.384q.105.073.25.114.142.041.319.041.245 0 .413-.07a.56.56 0 0 0 .255-.193.5.5 0 0 0 .084-.29.39.39 0 0 0-.152-.326q-.152-.12-.463-.193l-.618-.143a1.7 1.7 0 0 1-.539-.214 1 1 0 0 1-.352-.367 1.1 1.1 0 0 1-.123-.524q0-.366.19-.639.192-.272.528-.422.337-.15.777-.149.456 0 .779.152.326.153.5.41.18.255.2.566h-.75a.56.56 0 0 0-.12-.258.6.6 0 0 0-.246-.181.9.9 0 0 0-.37-.068q-.324 0-.512.152a.47.47 0 0 0-.185.384q0 .18.144.3a1 1 0 0 0 .404.175l.621.143q.326.075.566.211a1 1 0 0 1 .375.358q.135.222.135.56 0 .37-.188.656a1.2 1.2 0 0 1-.539.439q-.351.158-.858.158-.381 0-.665-.09a1.4 1.4 0 0 1-.478-.252 1.1 1.1 0 0 1-.29-.375m-3.104-.033a1.3 1.3 0 0 1-.082-.466h.764a.6.6 0 0 0 .074.27.5.5 0 0 0 .454.246q.285 0 .422-.164.137-.165.137-.466v-2.745h.791v2.725q0 .66-.357 1.005-.355.345-.985.345a1.6 1.6 0 0 1-.568-.094 1.15 1.15 0 0 1-.407-.266 1.1 1.1 0 0 1-.243-.39m9.091-1.585v.522q0 .384-.117.641a.86.86 0 0 1-.322.387.9.9 0 0 1-.47.126.9.9 0 0 1-.47-.126.87.87 0 0 1-.32-.387 1.55 1.55 0 0 1-.117-.641v-.522q0-.386.117-.641a.87.87 0 0 1 .32-.387.87.87 0 0 1 .47-.129q.265 0 .47.129a.86.86 0 0 1 .322.387q.117.255.117.641m.803.519v-.513q0-.565-.205-.973a1.46 1.46 0 0 0-.59-.63q-.38-.22-.916-.22-.534 0-.92.22a1.44 1.44 0 0 0-.589.628q-.205.407-.205.975v.513q0 .562.205.973.205.407.589.626.386.217.92.217.536 0 .917-.217.384-.22.589-.626.204-.41.205-.973m1.29-.935v2.675h-.746v-3.999h.662l1.752 2.66h.032v-2.66h.75v4h-.656l-1.761-2.676z"/>',
+  xls: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM6.472 15.29a1.2 1.2 0 0 1-.111-.449h.765a.58.58 0 0 0 .254.384q.106.073.25.114.143.041.319.041.246 0 .413-.07a.56.56 0 0 0 .255-.193.5.5 0 0 0 .085-.29.39.39 0 0 0-.153-.326q-.152-.12-.462-.193l-.619-.143a1.7 1.7 0 0 1-.539-.214 1 1 0 0 1-.351-.367 1.1 1.1 0 0 1-.123-.524q0-.366.19-.639.19-.272.527-.422.338-.15.777-.149.457 0 .78.152.324.153.5.41.18.255.2.566h-.75a.56.56 0 0 0-.12-.258.6.6 0 0 0-.247-.181.9.9 0 0 0-.369-.068q-.325 0-.513.152a.47.47 0 0 0-.184.384q0 .18.143.3a1 1 0 0 0 .405.175l.62.143q.326.075.566.211a1 1 0 0 1 .375.358q.135.222.135.56 0 .37-.188.656a1.2 1.2 0 0 1-.539.439q-.351.158-.858.158-.381 0-.665-.09a1.4 1.4 0 0 1-.478-.252 1.1 1.1 0 0 1-.29-.375m-2.945-3.358h-.893L1.81 13.37h-.036l-.832-1.438h-.93l1.227 1.983L0 15.931h.861l.853-1.415h.035l.85 1.415h.908L2.253 13.94zm2.727 3.325H4.557v-3.325h-.79v4h2.487z"/>',
+  xlsx: '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM7.86 14.841a1.13 1.13 0 0 0 .401.823q.195.162.479.252.284.091.665.091.507 0 .858-.158.355-.158.54-.44a1.17 1.17 0 0 0 .187-.656q0-.336-.135-.56a1 1 0 0 0-.375-.357 2 2 0 0 0-.565-.21l-.621-.144a1 1 0 0 1-.405-.176.37.37 0 0 1-.143-.299q0-.234.184-.384.188-.152.513-.152.214 0 .37.068a.6.6 0 0 1 .245.181.56.56 0 0 1 .12.258h.75a1.1 1.1 0 0 0-.199-.566 1.2 1.2 0 0 0-.5-.41 1.8 1.8 0 0 0-.78-.152q-.44 0-.777.15-.336.149-.527.421-.19.273-.19.639 0 .302.123.524t.351.367q.229.143.54.213l.618.144q.31.073.462.193a.39.39 0 0 1 .153.326.5.5 0 0 1-.085.29.56.56 0 0 1-.255.193q-.168.07-.413.07-.176 0-.32-.04a.8.8 0 0 1-.249-.115.58.58 0 0 1-.255-.384zm-3.726-2.909h.893l-1.274 2.007 1.254 1.992h-.908l-.85-1.415h-.035l-.853 1.415H1.5l1.24-2.016-1.228-1.983h.931l.832 1.438h.036zm1.923 3.325h1.697v.674H5.266v-3.999h.791zm7.636-3.325h.893l-1.274 2.007 1.254 1.992h-.908l-.85-1.415h-.035l-.853 1.415h-.861l1.24-2.016-1.228-1.983h.931l.832 1.438h.036z"/>',
+  html: '<path fill-rule="evenodd" d="M14 4.5V11h-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zm-9.736 7.35v3.999h-.791v-1.714H1.79v1.714H1V11.85h.791v1.626h1.682V11.85h.79Zm2.251.662v3.337h-.794v-3.337H4.588v-.662h3.064v.662zm2.176 3.337v-2.66h.038l.952 2.159h.516l.946-2.16h.038v2.661h.715V11.85h-.8l-1.14 2.596H9.93L8.79 11.85h-.805v3.999zm4.71-.674h1.696v.674H12.61V11.85h.79v3.325Z"/>',
+  xml: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2v-1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM3.527 11.85h-.893l-.823 1.439h-.036L.943 11.85H.012l1.227 1.983L0 15.85h.861l.853-1.415h.035l.85 1.415h.908l-1.254-1.992zm.954 3.999v-2.66h.038l.952 2.159h.516l.946-2.16h.038v2.661h.715V11.85h-.8l-1.14 2.596h-.025L4.58 11.85h-.806v3.999zm4.71-.674h1.696v.674H8.4V11.85h.791z"/>',
+  txt: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-2v-1h2a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM1.928 15.849v-3.337h1.136v-.662H0v.662h1.134v3.337zm4.689-3.999h-.894L4.9 13.289h-.035l-.832-1.439h-.932l1.228 1.983-1.24 2.016h.862l.853-1.415h.035l.85 1.415h.907l-1.253-1.992zm1.93.662v3.337h-.794v-3.337H6.619v-.662h3.064v.662H8.546Z"/>',
+  md: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2H9v-1h3a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM.706 13.189v2.66H0V11.85h.806l1.14 2.596h.026l1.14-2.596h.8v3.999h-.716v-2.66h-.038l-.946 2.159h-.516l-.952-2.16H.706Zm3.919 2.66V11.85h1.459q.609 0 1.005.234t.589.68q.195.445.196 1.075 0 .634-.196 1.084-.197.451-.595.689-.396.237-1 .237H4.626Zm1.353-3.354h-.562v2.707h.562q.279 0 .484-.082a.8.8 0 0 0 .334-.252 1.1 1.1 0 0 0 .196-.422q.067-.252.067-.592a2.1 2.1 0 0 0-.117-.753.9.9 0 0 0-.354-.454q-.238-.152-.61-.152"/>',
+  pdf: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM1.6 11.85H0v3.999h.791v-1.342h.803q.43 0 .732-.173.305-.175.463-.474a1.4 1.4 0 0 0 .161-.677q0-.375-.158-.677a1.2 1.2 0 0 0-.46-.477q-.3-.18-.732-.179m.545 1.333a.8.8 0 0 1-.085.38.57.57 0 0 1-.238.241.8.8 0 0 1-.375.082H.788V12.48h.66q.327 0 .512.181.185.183.185.522m1.217-1.333v3.999h1.46q.602 0 .998-.237a1.45 1.45 0 0 0 .595-.689q.196-.45.196-1.084 0-.63-.196-1.075a1.43 1.43 0 0 0-.589-.68q-.396-.234-1.005-.234zm.791.645h.563q.371 0 .609.152a.9.9 0 0 1 .354.454q.118.302.118.753a2.3 2.3 0 0 1-.068.592 1.1 1.1 0 0 1-.196.422.8.8 0 0 1-.334.252 1.3 1.3 0 0 1-.483.082h-.563zm3.743 1.763v1.591h-.79V11.85h2.548v.653H7.896v1.117h1.606v.638z"/>',
+  zip: '<path d="M5 7.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v.938l.4 1.599a1 1 0 0 1-.416 1.074l-.93.62a1 1 0 0 1-1.11 0l-.929-.62a1 1 0 0 1-.415-1.074L5 8.438zm2 0H6v.938a1 1 0 0 1-.03.243l-.4 1.598.93.62.929-.62-.4-1.598A1 1 0 0 1 7 8.438z"/><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1h-2v1h-1v1h1v1h-1v1h1v1H6V5H5V4h1V3H5V2h1V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/>',
+  png: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2v-1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zm-3.76 8.132q.114.23.14.492h-.776a.8.8 0 0 0-.097-.249.7.7 0 0 0-.17-.19.7.7 0 0 0-.237-.126 1 1 0 0 0-.299-.044q-.427 0-.665.302-.234.301-.234.85v.498q0 .351.097.615a.9.9 0 0 0 .304.413.87.87 0 0 0 .519.146 1 1 0 0 0 .457-.096.67.67 0 0 0 .272-.264q.09-.164.091-.363v-.255H8.82v-.59h1.576v.798q0 .29-.097.55a1.3 1.3 0 0 1-.293.458 1.4 1.4 0 0 1-.495.313q-.296.111-.697.111a2 2 0 0 1-.753-.132 1.45 1.45 0 0 1-.533-.377 1.6 1.6 0 0 1-.32-.58 2.5 2.5 0 0 1-.105-.745v-.506q0-.543.2-.95.201-.406.582-.633.384-.228.926-.228.357 0 .636.1.281.1.48.275.2.176.314.407Zm-8.64-.706H0v4h.791v-1.343h.803q.43 0 .732-.172.305-.177.463-.475a1.4 1.4 0 0 0 .161-.677q0-.374-.158-.677a1.2 1.2 0 0 0-.46-.477q-.3-.18-.732-.179m.545 1.333a.8.8 0 0 1-.085.381.57.57 0 0 1-.238.24.8.8 0 0 1-.375.082H.788v-1.406h.66q.327 0 .512.182.185.181.185.521m1.964 2.666V13.25h.032l1.761 2.675h.656v-3.999h-.75v2.66h-.032l-1.752-2.66h-.662v4z"/>',
+  jpg: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zm-4.34 8.132q.114.23.14.492h-.776a.8.8 0 0 0-.097-.249.7.7 0 0 0-.17-.19.7.7 0 0 0-.237-.126 1 1 0 0 0-.299-.044q-.428 0-.665.302-.234.301-.234.85v.498q0 .351.097.615a.9.9 0 0 0 .304.413.87.87 0 0 0 .519.146 1 1 0 0 0 .457-.096.67.67 0 0 0 .272-.264q.09-.164.091-.363v-.255H8.24v-.59h1.576v.798q0 .29-.097.55a1.3 1.3 0 0 1-.293.458 1.4 1.4 0 0 1-.495.313q-.296.111-.697.111a2 2 0 0 1-.753-.132 1.45 1.45 0 0 1-.533-.377 1.6 1.6 0 0 1-.32-.58 2.5 2.5 0 0 1-.105-.745v-.506q0-.543.2-.95.201-.406.582-.633.384-.228.926-.228.357 0 .636.1.28.1.48.275t.314.407ZM0 14.786q0 .246.082.465.083.22.243.39.165.17.407.267.246.093.569.093.63 0 .984-.345.357-.346.358-1.005v-2.725h-.791v2.745q0 .303-.138.466t-.422.164a.5.5 0 0 1-.454-.246.6.6 0 0 1-.073-.27H0Zm4.92-2.86H3.322v4h.791v-1.343h.803q.43 0 .732-.172.305-.177.463-.475.162-.302.161-.677 0-.374-.158-.677a1.2 1.2 0 0 0-.46-.477q-.3-.18-.732-.179Zm.546 1.333a.8.8 0 0 1-.085.381.57.57 0 0 1-.238.24.8.8 0 0 1-.375.082H4.11v-1.406h.66q.327 0 .512.182.185.181.185.521Z"/>',
+  gif: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2H9v-1h3a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM3.278 13.124a1.4 1.4 0 0 0-.14-.492 1.3 1.3 0 0 0-.314-.407 1.5 1.5 0 0 0-.48-.275 1.9 1.9 0 0 0-.636-.1q-.542 0-.926.229a1.5 1.5 0 0 0-.583.632 2.1 2.1 0 0 0-.199.95v.506q0 .408.105.745.105.336.32.58.213.243.533.377.323.132.753.132.402 0 .697-.111a1.29 1.29 0 0 0 .788-.77q.097-.261.097-.551v-.797H1.717v.589h.823v.255q0 .199-.09.363a.67.67 0 0 1-.273.264 1 1 0 0 1-.457.096.87.87 0 0 1-.519-.146.9.9 0 0 1-.305-.413 1.8 1.8 0 0 1-.096-.615v-.499q0-.547.234-.85.237-.3.665-.301a1 1 0 0 1 .3.044q.136.044.236.126a.7.7 0 0 1 .17.19.8.8 0 0 1 .097.25zm1.353 2.801v-3.999H3.84v4h.79Zm1.493-1.59v1.59h-.791v-3.999H7.88v.653H6.124v1.117h1.605v.638z"/>',
+  svg: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2v-1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM0 14.841a1.13 1.13 0 0 0 .401.823q.194.162.478.252.285.091.665.091.507 0 .858-.158.355-.158.54-.44a1.17 1.17 0 0 0 .187-.656q0-.336-.135-.56a1 1 0 0 0-.375-.357 2 2 0 0 0-.565-.21l-.621-.144a1 1 0 0 1-.405-.176.37.37 0 0 1-.143-.299q0-.234.184-.384.187-.152.513-.152.214 0 .37.068a.6.6 0 0 1 .245.181.56.56 0 0 1 .12.258h.75a1.1 1.1 0 0 0-.199-.566 1.2 1.2 0 0 0-.5-.41 1.8 1.8 0 0 0-.78-.152q-.44 0-.776.15-.337.149-.528.421-.19.273-.19.639 0 .302.123.524t.351.367q.229.143.54.213l.618.144q.31.073.462.193a.39.39 0 0 1 .153.326.5.5 0 0 1-.085.29.56.56 0 0 1-.256.193q-.167.07-.413.07-.176 0-.32-.04a.8.8 0 0 1-.248-.115.58.58 0 0 1-.255-.384zm4.575 1.09h.952l1.327-3.999h-.879l-.887 3.138H5.05l-.897-3.138h-.917zm5.483-3.293q.114.228.14.492h-.776a.8.8 0 0 0-.096-.249.7.7 0 0 0-.17-.19.7.7 0 0 0-.237-.126 1 1 0 0 0-.3-.044q-.427 0-.664.302-.235.3-.235.85v.497q0 .352.097.616a.9.9 0 0 0 .305.413.87.87 0 0 0 .518.146 1 1 0 0 0 .457-.097.67.67 0 0 0 .273-.263q.09-.164.09-.364v-.254h-.823v-.59h1.576v.798q0 .29-.096.55a1.3 1.3 0 0 1-.293.457 1.4 1.4 0 0 1-.495.314q-.296.111-.698.111a2 2 0 0 1-.752-.132 1.45 1.45 0 0 1-.534-.377 1.6 1.6 0 0 1-.319-.58 2.5 2.5 0 0 1-.105-.745v-.507q0-.54.199-.949.202-.406.583-.633.383-.228.926-.228.357 0 .635.1.282.1.48.275.2.176.314.407"/>',
+  bmp: '<path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2v-1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM0 15.849h1.664q.408 0 .72-.132.315-.135.493-.386.18-.253.179-.61a1 1 0 0 0-.123-.51.85.85 0 0 0-.323-.325 1.1 1.1 0 0 0-.445-.14v-.036a1 1 0 0 0 .352-.16.8.8 0 0 0 .243-.294.9.9 0 0 0 .09-.422q0-.463-.322-.723-.322-.261-.858-.261H0zm.785-3.404h.7q.28 0 .431.14.155.138.155.384a.5.5 0 0 1-.082.296.5.5 0 0 1-.249.185 1.2 1.2 0 0 1-.433.064H.785zm0 1.62h.75q.231 0 .393.073a.5.5 0 0 1 .24.211.6.6 0 0 1 .082.325q0 .284-.205.434-.205.146-.671.146H.785zm3.474 1.784v-2.66h.038l.952 2.16h.515l.947-2.16h.038v2.66h.715V11.85h-.8l-1.14 2.596h-.026l-1.14-2.596h-.805v3.999zm3.918-3.999h1.6q.434 0 .732.179.302.176.46.477.159.302.159.677t-.162.677q-.158.299-.462.474a1.45 1.45 0 0 1-.733.173h-.803v1.342h-.79zm2.06 1.714a.8.8 0 0 0 .085-.381q0-.34-.185-.521-.185-.182-.512-.182h-.66v1.406h.66a.8.8 0 0 0 .375-.082.57.57 0 0 0 .237-.24"/>',
+  webp: '<path d="M6.502 7a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/><path d="M14 14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5L14 4.5zM4 1a1 1 0 0 0-1 1v10l2.224-2.224a.5.5 0 0 1 .61-.075L8 11l2.157-3.02a.5.5 0 0 1 .76-.063L13 10V4.5h-2A1.5 1.5 0 0 1 9.5 3V1z"/>'
+};
+FILE_TYPE_ICON_PATHS.tsv = FILE_TYPE_ICON_PATHS.csv;
+FILE_TYPE_ICON_PATHS.jsonl = FILE_TYPE_ICON_PATHS.json;
+FILE_TYPE_ICON_PATHS.gz = FILE_TYPE_ICON_PATHS.zip;
+FILE_TYPE_ICON_PATHS.tar = FILE_TYPE_ICON_PATHS.zip;
+FILE_TYPE_ICON_PATHS.jpeg = FILE_TYPE_ICON_PATHS.jpg;
+FILE_TYPE_ICON_PATHS.r =
+  '<path d="M10.478 1.647a.5.5 0 1 0-.956-.294l-4 13a.5.5 0 0 0 .956.294zM4.854 4.146a.5.5 0 0 1 0 .708L1.707 8l3.147 3.146a.5.5 0 0 1-.708.708l-3.5-3.5a.5.5 0 0 1 0-.708l3.5-3.5a.5.5 0 0 1 .708 0m6.292 0a.5.5 0 0 0 0 .708L14.293 8l-3.147 3.146a.5.5 0 0 0 .708.708l3.5-3.5a.5.5 0 0 0 0-.708l-3.5-3.5a.5.5 0 0 0-.708 0"/>'; // bi-code-slash
+FILE_TYPE_ICON_PATHS.rmd = FILE_TYPE_ICON_PATHS.r;
+
+// Built once at load, not per-render: the plain (unbadged) per-row file-type icon and the badged
+// "Download <EXT>" button icon, both keyed by extension and sourced from the same path table above.
+const FILE_TYPE_ICON_SVG = {};
+const FILE_TYPE_DOWNLOAD_ICON_SVG = {};
+for (const ext in FILE_TYPE_ICON_PATHS) {
+  FILE_TYPE_ICON_SVG[ext] = plainFileTypeIconSvg(FILE_TYPE_ICON_PATHS[ext]);
+  FILE_TYPE_DOWNLOAD_ICON_SVG[ext] = fileTypeDownloadIconSvg(FILE_TYPE_ICON_PATHS[ext]);
+}
+
 /* Shared by every "download this plot as PNG" affordance (Plots tab gallery card, inline plot in
    the Report tab) so the icon, filename convention, and click behavior stay in one place. */
 function createPlotDownloadButton(bitmap, label, plotIdx) {
@@ -3991,12 +4155,14 @@ function filePreviewSupported(ext) {
   return Boolean(TABULAR_DELIMITERS[ext]) || JSON_PREVIEW_EXTS.has(ext) || TEXT_PREVIEW_EXTS.has(ext);
 }
 
-function createFileActionButton(icon, text, ariaLabel) {
+// iconSvg is inline Bootstrap Icons SVG markup (see the "Every icon in this file" comment above),
+// assigned via innerHTML like every other icon button in this app -- not a text glyph.
+function createFileActionButton(iconSvg, text, ariaLabel) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "btn btn-secondary btn-sm";
   const iconEl = document.createElement("span");
-  iconEl.className = "btn-icon"; iconEl.setAttribute("aria-hidden", "true"); iconEl.textContent = icon;
+  iconEl.className = "btn-icon"; iconEl.setAttribute("aria-hidden", "true"); iconEl.innerHTML = iconSvg;
   const labelEl = document.createElement("span");
   labelEl.className = "btn-text"; labelEl.textContent = text;
   btn.append(iconEl, labelEl);
@@ -4156,9 +4322,10 @@ function appendFileRowButtons(row, f, ext) {
 
   if (filePreviewSupported(ext)) {
     const isTabular = Boolean(TABULAR_DELIMITERS[ext]);
-    const defaultLabel = isTabular ? "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows" : "Preview";
-    const previewBtn = createFileActionButton("👁", defaultLabel, null);
-    previewBtn.title = isTabular ? defaultLabel : "Preview this file";
+    const defaultLabel = "Preview";
+    const previewTooltip = isTabular ? "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows" : "Preview this file";
+    const previewBtn = createFileActionButton(EYE_ICON_SVG, defaultLabel, previewTooltip);
+    previewBtn.title = previewTooltip;
     let previewEl = null;
     previewBtn.addEventListener("click", () => {
       if (previewEl) { previewEl.remove(); previewEl = null; previewBtn.querySelector(".btn-text").textContent = defaultLabel; return; }
@@ -4172,16 +4339,21 @@ function appendFileRowButtons(row, f, ext) {
   const downloadLink = document.createElement("a");
   downloadLink.href = url; downloadLink.download = basenameOf(f.path);
   downloadLink.className = "btn btn-secondary btn-sm";
+  const downloadTitle = "Download " + basenameOf(f.path);
+  downloadLink.title = downloadTitle;
   downloadLink.setAttribute("aria-label", "Download " + f.path);
   const dlIcon = document.createElement("span");
-  dlIcon.className = "btn-icon"; dlIcon.setAttribute("aria-hidden", "true"); dlIcon.textContent = "⤓";
+  dlIcon.className = "btn-icon"; dlIcon.setAttribute("aria-hidden", "true");
+  dlIcon.innerHTML = FILE_TYPE_DOWNLOAD_ICON_SVG[ext] || DOWNLOAD_ICON_SVG;
   const dlLabel = document.createElement("span");
-  dlLabel.className = "btn-text"; dlLabel.textContent = "Download ." + ext;
+  dlLabel.className = "btn-text"; dlLabel.textContent = ext.toUpperCase();
   downloadLink.append(dlIcon, dlLabel);
   row.appendChild(downloadLink);
 
   if (TABULAR_DELIMITERS[ext]) {
-    const xlsxBtn = createFileActionButton("📗", "Download XLSX", "Download " + f.path + " as an Excel spreadsheet");
+    const xlsxTooltip = "Download as Excel (xlsx)";
+    const xlsxBtn = createFileActionButton(FILETYPE_XLSX_ICON_SVG, "Excel", xlsxTooltip);
+    xlsxBtn.title = xlsxTooltip;
     const xlsxName = basenameOf(f.path).replace(/\.[^.]+$/, "") + ".xlsx";
     xlsxBtn.addEventListener("click", () => handleFileActionClick(xlsxBtn,
       () => buildXlsxBlob(decodeUtf8(f.bytes), TABULAR_DELIMITERS[ext], basenameOf(f.path)), xlsxName));
@@ -4190,7 +4362,9 @@ function appendFileRowButtons(row, f, ext) {
 
   const pdfBuilder = getPdfBuilderForExt(f, ext, imgEl);
   if (pdfBuilder) {
-    const pdfBtn = createFileActionButton("📕", "Download PDF", "Download " + f.path + " as a PDF");
+    const pdfTooltip = "Download " + f.path + " as a PDF";
+    const pdfBtn = createFileActionButton(FILETYPE_PDF_ICON_SVG, "PDF", pdfTooltip);
+    pdfBtn.title = pdfTooltip;
     const pdfName = basenameOf(f.path).replace(/\.[^.]+$/, "") + ".pdf";
     pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, pdfBuilder, pdfName));
     row.appendChild(pdfBtn);
@@ -4201,11 +4375,19 @@ function appendFileRowButtons(row, f, ext) {
    output-file list, styled via .file-row-synthetic to read as a live view rather than a saved
    file. Buttons are deliberately different from the real rows' set, per spec. ### */
 
-function createSyntheticFileRow(icon, name, caption, buttons) {
+// iconSvg's click jumps to the tab it represents (activateTab), mirroring how a real file row's
+// icon jumps to its source chunk when attribution exists -- the row's own former Preview button
+// carried this link before, moved here so both kinds of row behave the same way.
+function createSyntheticFileRow(iconSvg, iconTitle, activateTabIndex, name, caption, buttons) {
   const row = document.createElement("div");
   row.className = "file-row file-row-synthetic";
-  const iconEl = document.createElement("div");
-  iconEl.className = "file-row-icon"; iconEl.setAttribute("aria-hidden", "true"); iconEl.textContent = icon;
+  const iconEl = document.createElement("button");
+  iconEl.type = "button";
+  iconEl.className = "file-row-icon file-row-icon-link";
+  iconEl.innerHTML = iconSvg;
+  iconEl.title = iconTitle;
+  iconEl.setAttribute("aria-label", iconTitle);
+  iconEl.addEventListener("click", () => activateTab(activateTabIndex));
   const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = name;
   const captionEl = document.createElement("div"); captionEl.className = "file-row-size"; captionEl.textContent = caption;
   row.append(iconEl, nameEl, captionEl, ...buttons);
@@ -4213,28 +4395,30 @@ function createSyntheticFileRow(icon, name, caption, buttons) {
 }
 
 function createReportSyntheticRow() {
-  const previewBtn = createFileActionButton("👁", "Preview", "Show the Report tab");
-  previewBtn.addEventListener("click", () => activateTab(0));
-
-  const scriptBtn = createFileActionButton("📥", "Download Script", "Download the active script's current source");
+  const scriptTooltip = "Download the active script's current source";
+  const scriptBtn = createFileActionButton(CODE_DOWNLOAD_ICON_SVG, "Code", scriptTooltip);
+  scriptBtn.title = scriptTooltip;
   scriptBtn.addEventListener("click", downloadActiveScript);
 
-  const pdfBtn = createFileActionButton("📕", "Download PDF", "Generate a PDF of the Report tab");
+  const pdfTooltip = "Generate a PDF of the Report tab";
+  const pdfBtn = createFileActionButton(FILETYPE_PDF_ICON_SVG, "PDF", pdfTooltip);
+  pdfBtn.title = pdfTooltip;
   pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, buildReportPdfBlob, exportFilenameFor("report", "pdf")));
 
   // This opens the browser's print dialog (same fallback the main toolbar Print button uses), not
-  // a real PDF file -- labeled "Print" rather than "Download PDF" so the button says what it does.
-  const printBtn = createFileActionButton("🖨️", "Print", "Print the Report tab");
+  // a real PDF file -- labeled "Print" rather than "PDF" so the button says what it does.
+  const printTooltip = "Print the Report tab";
+  const printBtn = createFileActionButton(PRINT_ICON_SVG, "Print", printTooltip);
+  printBtn.title = printTooltip;
   printBtn.addEventListener("click", () => { activateTab(0); window.print(); });
 
-  return createSyntheticFileRow("📄", "Report", "Live view -- not a saved file", [previewBtn, scriptBtn, pdfBtn, printBtn]);
+  return createSyntheticFileRow(REPORT_ROW_ICON_SVG, "Show the Report tab", 0, "Report", "Live view", [scriptBtn, pdfBtn, printBtn]);
 }
 
 function createPlotsSyntheticRow() {
-  const previewBtn = createFileActionButton("👁", "Preview", "Show the Plots tab");
-  previewBtn.addEventListener("click", () => activateTab(1));
-
-  const zipBtn = createFileActionButton("📦", "Download ZIP", "Download every plot from this run as a ZIP of PNG files");
+  const zipTooltip = "Download every plot from this run as a ZIP of PNG files";
+  const zipBtn = createFileActionButton(FILETYPE_ZIP_ICON_SVG, "Zip", zipTooltip);
+  zipBtn.title = zipTooltip;
   zipBtn.addEventListener("click", () => handleFileActionClick(zipBtn, async () => {
     const plotBitmaps = (App.lastRunInfo && App.lastRunInfo.plotBitmaps) || [];
     const entries = [];
@@ -4245,13 +4429,17 @@ function createPlotsSyntheticRow() {
     return zipEntriesToBlob(entries);
   }, "sharer-plots.zip"));
 
-  const pdfBtn = createFileActionButton("📕", "Download PDF", "Generate a PDF of the Plots tab");
+  const pdfTooltip = "Generate a PDF of the Plots tab";
+  const pdfBtn = createFileActionButton(FILETYPE_PDF_ICON_SVG, "PDF", pdfTooltip);
+  pdfBtn.title = pdfTooltip;
   pdfBtn.addEventListener("click", () => handleFileActionClick(pdfBtn, buildPlotsPdfBlob, exportFilenameFor("plots", "pdf")));
 
-  const printBtn = createFileActionButton("🖨️", "Print", "Print the Plots tab");
+  const printTooltip = "Print the Plots tab";
+  const printBtn = createFileActionButton(PRINT_ICON_SVG, "Print", printTooltip);
+  printBtn.title = printTooltip;
   printBtn.addEventListener("click", () => { activateTab(1); window.print(); });
 
-  return createSyntheticFileRow("🖼", "Plots", "Live view -- not a saved file", [previewBtn, zipBtn, pdfBtn, printBtn]);
+  return createSyntheticFileRow(PLOTS_ROW_ICON_SVG, "Show the Plots tab", 1, "Plots", "Live view", [zipBtn, pdfBtn, printBtn]);
 }
 
 function renderFilesTab(outputFiles, chunkByFilePath) {
@@ -4269,31 +4457,6 @@ function renderFilesTab(outputFiles, chunkByFilePath) {
     elTabFilesPanel.appendChild(p);
     return;
   }
-  const fileTypeIcons = {
-    csv: "📄",
-    tsv: "📄",
-    json: "📚",
-    jsonl: "📚",
-    xls: "📗",
-    xlsx: "📗",
-    html: "🌐",
-    xml: "🧾",
-    txt: "📝",
-    md: "📖",
-    r: "📊",
-    rmd: "📈",
-    pdf: "📕",
-    zip: "📦",
-    gz: "📦",
-    tar: "📦",
-    png: "🖼",
-    jpg: "🖼",
-    jpeg: "🖼",
-    gif: "🎞️",
-    svg: "📐",
-    webp: "🖼",
-    bmp: "🖼"
-  };
   for (const f of outputFiles) {
     const ext = extensionOf(f.path);
     const row = document.createElement("div");
@@ -4318,7 +4481,7 @@ function renderFilesTab(outputFiles, chunkByFilePath) {
       iconEl.setAttribute("aria-hidden", "true");
       iconEl.title = iconTitle;
     }
-    iconEl.textContent = fileTypeIcons[ext] || "📄";
+    iconEl.innerHTML = FILE_TYPE_ICON_SVG[ext] || FILE_EARMARK_ICON_SVG;
     const nameEl = document.createElement("div"); nameEl.className = "file-row-name"; nameEl.textContent = f.path;
     const sizeEl = document.createElement("div"); sizeEl.className = "file-row-size"; sizeEl.textContent = formatBytes(f.size);
     row.append(iconEl, nameEl, sizeEl);
@@ -5853,14 +6016,18 @@ const elSourceViewerFilenameText = document.getElementById("source-viewer-filena
 const elSourceCodeLines = document.getElementById("source-code-lines");
 const elSourceMaximizeButton = document.getElementById("source-maximize-button");
 const elSourceDownloadButton = document.getElementById("source-download-button");
+const elSourceRestoreButton = document.getElementById("source-restore-button");
 const elSourceMaximizeModal = document.getElementById("source-maximize-modal");
 const elSourceMaximizeTitle = document.getElementById("source-maximize-title");
 const elSourceMaximizeBody = document.getElementById("source-maximize-body");
 const elSourceMaximizeDownloadButton = document.getElementById("source-maximize-download-button");
+const elSourceMaximizeRestoreButton = document.getElementById("source-maximize-restore-button");
 const elCloseSourceMaximizeButton = document.getElementById("close-source-maximize-button");
 elSourceMaximizeButton.innerHTML = MAXIMIZE_ICON_SVG;
 elSourceDownloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+elSourceRestoreButton.innerHTML = REVERT_ICON_SVG;
 elSourceMaximizeDownloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+elSourceMaximizeRestoreButton.innerHTML = REVERT_ICON_SVG;
 elCloseSourceMaximizeButton.innerHTML = RESTORE_ICON_SVG;
 
 const elLoadModal = document.getElementById("load-script-modal");
@@ -6019,6 +6186,54 @@ function replaceStagedFile(path) {
   input.click();
 }
 
+/* Captures a restore point for every currently-staged file, once the initial repo/URL/local
+   staging race (source priority: local > URL > repo, StagedFileStore.upsert) has resolved -- see
+   App.originalFileBytes. Never overwrites an existing snapshot, so a path re-staged later keeps
+   its very first baseline; a file added afterward via "+ Add files" gets no snapshot at all, so it
+   correctly never offers a restore option (there is nothing to restore it to). */
+function snapshotOriginalFileBytes() {
+  for (const f of App.stagedStore.list()) {
+    const key = f.path.toLowerCase();
+    if (!App.originalFileBytes.has(key)) {
+      App.originalFileBytes.set(key, { bytes: f.bytes.slice(), source: f.source, sourceLabel: f.sourceLabel });
+    }
+  }
+}
+
+// Byte-for-byte compare against the snapshot from snapshotOriginalFileBytes -- backs the disabled
+// state of every restore icon. Returns false (never offer restore) when no snapshot exists.
+function isFileModified(path, bytes) {
+  const original = App.originalFileBytes.get(path.toLowerCase());
+  if (!original) return false;
+  const originalBytes = original.bytes;
+  if (originalBytes.length !== bytes.length) return true;
+  for (let i = 0; i < originalBytes.length; i++) {
+    if (originalBytes[i] !== bytes[i]) return true;
+  }
+  return false;
+}
+
+/* Reverts a staged file's bytes (and source/sourceLabel) back to the original snapshot, discarding
+   any in-editor edit or carousel Replace. Mutates the live staged entry directly and fires the
+   store's onChange itself, the same way the editor's own onUpdate handler already writes edits
+   straight into a staged entry's bytes -- going through stageBytes/upsert instead would incorrectly
+   refuse a repo file that was later replaced locally, since upsert's source-priority guard treats
+   local as higher-priority than repository and would block "downgrading" back to it. */
+function restoreStagedFile(path) {
+  const original = App.originalFileBytes.get(path.toLowerCase());
+  const staged = App.stagedStore.get(path);
+  if (!original || !staged) return;
+  staged.bytes = original.bytes.slice();
+  staged.size = staged.bytes.byteLength;
+  staged.source = original.source;
+  staged.sourceLabel = original.sourceLabel;
+  if (App.stagedStore.onChange) App.stagedStore.onChange();
+  if (path === App.selectedEntryPath) {
+    clearSourceViewerOutputMarkers();
+    renderSourceViewer();
+  }
+}
+
 /* Renders the "Input Data" carousel (ShareR-UI-Specification.md section 3): one card per staged
    non-script file. The entry script itself is represented by the source code editor below, not
    by a card here, so scripts (.R/.Rmd) are filtered out. */
@@ -6056,6 +6271,14 @@ function renderStagedFiles() {
     replaceBtn.setAttribute("aria-label", "Replace " + f.path + " with a file from your computer");
     replaceBtn.title = "Replace " + f.path;
     replaceBtn.addEventListener("click", () => replaceStagedFile(f.path));
+    const restoreBtn = document.createElement("button");
+    restoreBtn.type = "button";
+    restoreBtn.className = "btn btn-secondary btn-sm";
+    restoreBtn.innerHTML = REVERT_ICON_SVG;
+    restoreBtn.setAttribute("aria-label", "Restore original " + f.path);
+    restoreBtn.title = "Restore original " + f.path;
+    restoreBtn.disabled = !isFileModified(f.path, f.bytes);
+    restoreBtn.addEventListener("click", () => restoreStagedFile(f.path));
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "btn btn-secondary btn-sm";
@@ -6063,7 +6286,7 @@ function renderStagedFiles() {
     removeBtn.setAttribute("aria-label", "Remove " + f.path);
     removeBtn.title = "Remove " + f.path;
     removeBtn.addEventListener("click", () => { App.stagedStore.remove(f.path); updateSelectedEntry(); });
-    actions.append(replaceBtn, removeBtn);
+    actions.append(replaceBtn, restoreBtn, removeBtn);
     li.append(icon, name, status, actions);
     elDataFileCarousel.appendChild(li);
   }
@@ -6117,6 +6340,15 @@ function renderScriptPickerNode(node, chosenPath) {
 function renderScriptPicker(scripts, chosen) {
   elScriptPickerTree.innerHTML = "";
   if (scripts.length === 0) return;
+  // Repo name only (no owner) as the tree's top level when the scripts came from GitHub -- a
+  // plain URL or local-only entry has no repo to name, so the tree's own top-level folders (from
+  // the staged paths themselves) are left as the de facto root, unlabeled.
+  if (App.repoInfo) {
+    const rootLabel = document.createElement("div");
+    rootLabel.className = "script-picker-root";
+    rootLabel.textContent = App.repoInfo.repo;
+    elScriptPickerTree.appendChild(rootLabel);
+  }
   elScriptPickerTree.appendChild(renderScriptPickerNode(buildScriptPickerTree(scripts), chosen));
 }
 
@@ -6204,19 +6436,38 @@ function clearSourceViewerOutputMarkers() {
    executeSelectedEntry/writeStagedFilesToVfs pick up live edits with no changes of their own; the
    onUpdate handler reads App.selectedEntryPath live rather than closing over a path, since this
    editor instance is created once and reused across every later script switch. */
+// Enables the codebox restore icons (both the small view and the maximize dialog) only when the
+// active script's current bytes differ from its original snapshot -- recomputed on every load and
+// again on every keystroke (see the editor's onUpdate below), so the icon reflects live edits.
+function updateSourceRestoreButtons() {
+  const staged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+  const modified = Boolean(staged) && isFileModified(staged.path, staged.bytes);
+  elSourceRestoreButton.disabled = !modified;
+  elSourceMaximizeRestoreButton.disabled = !modified;
+}
+
 async function renderSourceViewer() {
   const path = App.selectedEntryPath;
   const staged = path ? App.stagedStore.get(path) : null;
   if (!staged) {
     elSourceEditor.hidden = true;
     elSourceViewerFilenameText.textContent = "";
+    elSourceViewerFilename.removeAttribute("title");
+    elSourceViewerFilename.removeAttribute("aria-label");
     elSourceMaximizeTitle.textContent = "";
     if (App.sourceEditor) { App.sourceEditor.remove(); App.sourceEditor = null; }
+    updateSourceRestoreButtons();
     return;
   }
   elSourceEditor.hidden = false;
-  elSourceViewerFilenameText.textContent = staged.path;
+  // Only the abbreviated file name is shown here -- the full repo-relative path is available via
+  // the script-picker tree this button opens, and via the title/aria-label below for a quick check
+  // without leaving the editor.
+  elSourceViewerFilenameText.textContent = truncateFilenameForHeader(staged.name);
+  elSourceViewerFilename.title = staged.name;
+  elSourceViewerFilename.setAttribute("aria-label", "Current script: " + staged.name + ". Choose a different script.");
   elSourceMaximizeTitle.textContent = staged.name;
+  updateSourceRestoreButtons();
   const text = decodeUtf8(staged.bytes);
   // "rmd" is a custom grammar registered by getPrismCodeEditor() -> registerRmdGrammar() below,
   // not a language prism-code-editor ships itself -- highlights only fenced R chunks (matching
@@ -6234,6 +6485,7 @@ async function renderSourceViewer() {
         if (!activeStaged) return;
         activeStaged.bytes = encodeUtf8(value);
         clearSourceViewerOutputMarkers();
+        updateSourceRestoreButtons();
       }
     });
   }
@@ -6864,6 +7116,7 @@ async function runStagingPipeline(params) {
     if (result.explicitEntryPath) App.explicitEntryPath = result.explicitEntryPath;
     renderStagingMessages(messages, false);
     updateSelectedEntry();
+    snapshotOriginalFileBytes();
     setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
     if (params.autorun && App.selectedEntryPath) await runEntry();
   } catch (err) {
@@ -6922,6 +7175,8 @@ elErrorModal.addEventListener("click", (e) => { if (e.target === elErrorModal) c
 elSourceMaximizeButton.addEventListener("click", () => openSourceMaximizeModal());
 elSourceDownloadButton.addEventListener("click", downloadActiveScript);
 elSourceMaximizeDownloadButton.addEventListener("click", downloadActiveScript);
+elSourceRestoreButton.addEventListener("click", () => { if (App.selectedEntryPath) restoreStagedFile(App.selectedEntryPath); });
+elSourceMaximizeRestoreButton.addEventListener("click", () => { if (App.selectedEntryPath) restoreStagedFile(App.selectedEntryPath); });
 // By the time the dialog's own "close" event fires, the [open] attribute is already gone and the
 // whole subtree (including the still-reparented editor.container) is unrendered -- every element
 // in it reports a zero-size, zero-position getBoundingClientRect(), which made

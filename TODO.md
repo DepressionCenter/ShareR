@@ -288,7 +288,84 @@ Same pattern as 2D.8, three buttons:
 
 **STATUS: COMPLETE (2026-08-03), pending human verification.** Implemented as specified, with one structural fix required beyond the original plan: `renderFilesTab` previously cleared the panel and early-returned a "No output files" message when `outputFiles.length === 0`, before any row rendered — since the two synthetic rows must always appear (a run essentially always has some report/plots even with zero real output files), the function now appends both synthetic rows unconditionally first, then branches into the empty-state message or the real-file loop. Visual distinction is a new `.file-row-synthetic` CSS modifier (dashed border, muted background, italic caption reading "Live view -- not a saved file") rather than a new color, per this stage's existing pattern of reusing established visual language. 2D.9's ZIP button required one small piece of new state: plot `ImageBitmap`s were previously discarded once rendered (only `plotItemIds` were retained on each chunk node), so `renderChunkResult` now also stashes `node.plotBitmaps`, flattened into `App.lastRunInfo.plotBitmaps` in `finalizeRun` alongside the existing `chunkByFilePath` walk over `runState.nodes` — the ZIP itself reuses `plotBitmapToPngBlob` (2D.4) and `zipEntriesToBlob` (the existing ZIP-all-outputs feature) verbatim, no new zip logic. **Verification was code-level only** — no browser automation available; a human still needs to confirm live that both rows render above real outputs (including on a zero-output run), read as visually distinct, and that all six buttons work.
 
-#### 2D.10 - Detect a script's own interactive-input calls and pre-fill them, unmodified
+#### 2D.10 - Files tab icon consistency + Workspace tab polish
+
+Inserted ahead of 2D.11 (the interactive-input work below, renumbered) at direct request, once the
+running app surfaced two rough spots: the Files tab (built across 2D.7-2D.9) used raw emoji/Unicode
+glyphs instead of the inline Bootstrap Icons SVG convention documented at the top of the icon
+constants block in `index.html`, and several Workspace-pane details (filename display, script tree,
+edit recovery, collapsed-panel styling) had never been revisited since 2D.1-2D.3.
+
+1. **Files tab icons** (`createFileActionButton`, `appendFileRowButtons`, `renderFilesTab`,
+   `createSyntheticFileRow`/`createReportSyntheticRow`/`createPlotsSyntheticRow`): every emoji/
+   Unicode glyph replaced with inline Bootstrap Icons SVG (`EYE_ICON_SVG`, `REVERT_ICON_SVG`,
+   `REPORT_ROW_ICON_SVG`, `PLOTS_ROW_ICON_SVG`, a new per-extension `FILE_TYPE_ICON_PATHS` table
+   feeding both an unbadged `FILE_TYPE_ICON_SVG` map and a badged `FILE_TYPE_DOWNLOAD_ICON_SVG` map
+   via the existing `fileTypeDownloadIconSvg()` composer) — path data pulled from the real Bootstrap
+   Icons v1.13.1 source (`github.com/twbs/icons`) rather than approximated. Confirmed with the user
+   before implementing: the maize download-corner-badge applies only to genuine download buttons
+   (CSV/Excel/PDF/Zip/Code), not to plain file-type or tab-jump icons. The two synthetic "Report"/
+   "Plots" rows' tab-jump link moved from their Preview button onto the row icon (now a real
+   `<button class="file-row-icon file-row-icon-link">`, matching how a real row's icon already jumps
+   to its source chunk), and both Preview buttons were removed. Buttons renamed: "Preview first N
+   rows" to "Preview", "Download .<ext>" to the bare uppercased extension, "Download XLSX" to
+   "Excel", "Download PDF" to "PDF", "Download ZIP" to "Zip", "Download Script" to "Code" (icon =
+   `bi-code-slash`, since Bootstrap Icons ships no R-language glyph — confirmed by a direct fetch
+   attempt, not assumed) — every button given matching `title`/`aria-label` text. Follow-up
+   feedback after a first look: the badge-wrapped icons had no `fill` set (SVG's default black), all
+   but invisible on the `.btn-secondary` blue background — fixed by adding `fill: currentColor` to
+   `.btn-icon svg` (the badge's own `<circle>`/`<g>` keep their explicit maize/dark-blue fill,
+   unaffected since an explicit fill always wins over the inherited value); and um-style.css's
+   global "every button is bold" rule was overridden back to normal weight for `.file-row .btn-text`
+   specifically, not app-wide.
+2. **Codebox filename truncation** (`renderSourceViewer`, new `truncateFilenameForHeader()`): the
+   small editor header now shows the active script's basename only (never the full path), abbreviated
+   to first-16 + "..." + last-4 characters (extension kept intact) when the base name exceeds 24
+   characters; the full name is always available via `title`/`aria-label`. The maximize dialog's
+   `<h2>` already showed the basename untruncated by design — left as-is, plus a 1-line CSS
+   ellipsis safety net for an unusually long name.
+3. **Script-picker tree root label** (`renderScriptPicker`): when `App.repoInfo` is set (a GitHub
+   repo), a non-interactive `.script-picker-root` label showing the bare repo name (no owner) is
+   prepended above the tree. No change when there's no known repo (a plain URL or local-only
+   entry) — the tree's existing top-level folders already serve as the de facto root.
+4. **Restore original file contents** (`App.originalFileBytes`, `snapshotOriginalFileBytes`,
+   `isFileModified`, `restoreStagedFile`): a new snapshot, captured once per file right after the
+   initial repo/URL/local staging race resolves, backs a restore icon (`bi-arrow-counterclockwise`,
+   a new `REVERT_ICON_SVG` — distinct from the pre-existing `RESTORE_ICON_SVG`, which is the
+   unrelated maximize-dialog close icon) on the codebox toolbar (both the small and maximized view,
+   left of Download) and on each Input Data carousel card (between Replace and Remove), disabled
+   until that file's current bytes diverge from its snapshot. Restoring mutates the live staged
+   entry directly and fires the store's `onChange` itself, rather than routing through
+   `stageBytes`/`upsert` — that path's source-priority guard would otherwise refuse to "downgrade" a
+   locally-replaced file back to its original repository bytes. Per direct confirmation, this
+   affordance was scoped to the codebox and the data carousel only, not the script-picker tree.
+5. **Collapsed Workspace panel styling** (`.workspace-pane.collapsed`, new
+   `.workspace-collapse-label`): background changed from bare white to the same gray
+   `--panel-header-bg` already used by `.panel-header`/`.results-tabs-row`; a new `aria-hidden`
+   "Workspace" label (bold, `writing-mode: vertical-rl` plus a 180° flip so the reading direction
+   lands at the requested 270° clockwise from horizontal) renders inside the collapsed rail — hidden
+   whenever `.collapsed` is absent, since the real heading already covers that state — with a
+   mobile (`≤900px`) override back to plain centered horizontal text, since collapsing shrinks
+   height there instead of width.
+
+**STATUS: COMPLETE (2026-08-04), pending human verification.** Implemented as specified above,
+including the two follow-up icon-contrast/font-weight fixes found on first look at the running app.
+**Verification was code-level only**: a custom regex/division-aware bracket-and-string balance
+checker confirmed the full inline `<script>` block parses with no unmatched braces/parens/brackets
+or unterminated strings; every new top-level identifier was grepped to confirm no duplicate
+declarations and at least one real call site; the running ZippyServe instance's MCP `scan_for_secrets`
+came back clean. No browser-automation tool is available in this environment (per `AGENTS.md`
+section 11), and the browser tab already open against this ZippyServe instance was serving a
+pre-edit page load, so its console log reflects only pre-existing, unrelated entries (a benign
+`ResizeObserver` loop notice, webR package-download progress) — a human still needs to refresh and
+confirm live: every renamed/re-iconed Files tab button renders and reads correctly (icons white and
+legible on the blue buttons, text no longer bold, badge only on true downloads), the synthetic rows'
+icons jump tabs with Preview gone, a long filename truncates correctly above the editor, a GitHub
+repo's name appears atop the script tree, the restore icons round-trip an edit/replace back to the
+original bytes and disable correctly, and the collapsed panel reads correctly gray/labeled at both a
+wide and a ≤900px viewport.
+
+#### 2D.11 - Detect a script's own interactive-input calls and pre-fill them, unmodified
 
 **Non-negotiable constraint driving this whole sub-stage:** the researcher's script is never touched or required to follow a ShareR-specific convention — no new chunk option, no wrapper function, no `sharer::` package to import. ShareR only ever *parses what's already there*. This directly follows from the project's own reason for existing (run an unmodified repository) — see the "Removed from the spec as over-engineering" table earlier in this plan, `sharer.json`/`.sharerignore` row.
 
@@ -323,7 +400,7 @@ Instead: pause at the **chunk boundary** (which already exists as a natural paus
 4. axe-core pass plus the manual checklist (keyboard, screen reader, 200 percent zoom, forced-colors) recorded in `docs/security-privacy-accessibility.md`. Per `AGENTS.md` section 11, record what was actually run; do not claim passes.
 5. Rewrite `README.md` from the EFDC template to match the as-built app, including the CORS limitation and the honest privacy language from spec 2.3.
 
-**Additional item picked up from Stage 2D:** explicitly re-verify keyboard operability and focus handling for the six new interactive components built in 2D (CM6 editor + maximize dialog, script-picker popover, workspace collapse/resize separator, per-plot ghost buttons, new file-row button sets, the interactive-input dialog from 2D.10) as part of the manual accessibility checklist in item 4 above — these are new enough that they shouldn't be assumed correct just because they reused native primitives (`<dialog>`, `popover`) elsewhere in this plan.
+**Additional item picked up from Stage 2D:** explicitly re-verify keyboard operability and focus handling for the six new interactive components built in 2D (CM6 editor + maximize dialog, script-picker popover, workspace collapse/resize separator, per-plot ghost buttons, new file-row button sets, the interactive-input dialog from 2D.11) as part of the manual accessibility checklist in item 4 above — these are new enough that they shouldn't be assumed correct just because they reused native primitives (`<dialog>`, `popover`) elsewhere in this plan.
 
 **Done when:** spec 15 items 14-22 pass and the README matches reality.
 
