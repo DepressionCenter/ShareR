@@ -155,10 +155,19 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 #### This work is based in part on the following projects, libraries and/or studies:
 + [webR](https://github.com/r-wasm/webr) - "The statistical language R compiled to WebAssembly via Emscripten, for use in web browsers and Node," by George Stagg and Lionel Henry. Runs the R and R Markdown scripts entirely inside the browser; it is ShareR's execution engine. License: GPL-3.
++ [DataLaVista™](https://github.com/DepressionCenter/DataLaVista) - A lightweight, client-side reporting and dashboard toolkit. This project re-uses some of the CORS proxy fallback functions and UI design ideas.
 + [fflate](https://github.com/101arrowz/fflate) - "High performance (de)compression in an 8kB package." Builds the downloadable ZIP archive of a run's output files, rendered report, execution log, manifest, and source script. License: MIT.
 + [js-yaml](https://github.com/nodeca/js-yaml) - "JavaScript YAML parser and dumper. Very fast." Parses an `.Rmd` file's YAML front matter (title, `params`, output options). License: MIT.
 + [marked](https://github.com/markedjs/marked) - "A markdown parser and compiler. Built for speed." Renders the Markdown prose in `.Rmd` chunks to HTML for the Report tab. License: MIT.
 + [DOMPurify](https://github.com/cure53/DOMPurify) - "A DOM-only, super-fast, uber-tolerant XSS sanitizer for HTML, MathML and SVG." Sanitizes that rendered HTML before it is ever inserted into the page - the app's one deliberate `innerHTML` assignment. License: Apache-2.0 or MPL-2.0 (dual-licensed).
++ [prism-code-editor](https://github.com/FIameCaster/prism-code-editor) - "Lightweight, extensible code editor component for the web using Prism." Powers the syntax-highlighted R/R Markdown script editor. License: MIT.
++ [docx](https://github.com/dolanmiu/docx) - "Easily generate and modify .docx files with JS/TS with a nice declarative API. Works for Node and on the Browser." Builds the downloadable Word export of a rendered report. License: MIT.
++ [PptxGenJS](https://github.com/gitbrent/PptxGenJS) - "Build PowerPoint presentations with JavaScript. Works with Node, React, web browsers, and more." Builds the downloadable PowerPoint export of a rendered report. License: MIT.
++ [ExcelJS](https://github.com/exceljs/exceljs) - "Excel Workbook Manager." Builds the downloadable Excel workbook export of a run's output tables. License: MIT.
++ [jsPDF](https://github.com/parallax/jsPDF) - "Client-side JavaScript PDF generation for everyone." Builds the downloadable PDF export of a rendered report. License: MIT.
++ [jsPDF-AutoTable](https://github.com/simonbengtsson/jsPDF-AutoTable) - "jsPDF plugin for generating PDF tables with javascript." Renders output tables inside the PDF exports jsPDF produces. License: MIT.
++ [Bootstrap Icons](https://github.com/twbs/icons) - "Official open source SVG icon library for Bootstrap with over 2,000 icons." Most icons in ShareR's interface are inline SVG path data copied from this library; there is no icon font or runtime request. License: MIT.
++ [fst](https://github.com/fstpackage/fst), [fstcore](https://github.com/fstpackage/fstcore), and [fstlib](https://github.com/fstpackage/fstlib) - "Lightning Fast Serialization of Data Frames for R" ([fst](https://github.com/fstpackage/fst)), its "R bindings to the fstlib library" ([fstcore](https://github.com/fstpackage/fstcore)), and the underlying "C++ library for lightning fast multi-threaded serialization of tabular data" ([fstlib](https://github.com/fstpackage/fstlib)). These libraries are cross-compiled for WebR and included here as they do not exist (yet) in official r-wasm repositories; see [`build/fst/build-fst.ps1`](build/fst/build-fst.ps1). License: AGPL-3.
 + [ZippyServe](https://github.com/DepressionCenter/ZippyServe) - A zero-dependency local web server. It lets you test single-page apps quickly. It serves directories, zips, HTML, and Markdown. It powers ShareR's `run-windows.ps1`/`run-linux.sh`/`run-mac.command` scripts so the app can be served locally without installing a full web server. License: GPL-3.0 or later. DOI: [10.5281/zenodo.21613944](https://doi.org/10.5281/zenodo.21613944).
 
 #### Library and Package Repositories
@@ -168,6 +177,7 @@ The following public repositories are used to download JavaScript, R and WebAsse
 + [repo.r-wasm.org](https://repo.r-wasm.org/) - "A CRAN-like repository hosted via CDN that provides pre-compiled R packages for WebAssembly." The primary repository webR's `install()` uses to fetch R packages a script requests.
 + [tidyverse.r-universe.dev](https://tidyverse.r-universe.dev/) - An [R-universe](https://github.com/r-universe-org) package-distribution repository, consulted as a fallback source for WebAssembly package binaries not found on repo.r-wasm.org.
 + [fstpackage.r-universe.dev](https://fstpackage.r-universe.dev/) - Another R-universe repository, consulted as the same kind of fallback source.
++ [ghcr.io/r-wasm/webr](https://github.com/r-wasm/webr/pkgs/container/webr) - A Docker container image maintained by the webR project, pre-loaded with the Emscripten toolchain and `rwasm` needed to cross-compile R packages to WebAssembly. Used only by [`build/fst/build-fst.ps1`](build/fst/build-fst.ps1) at build time, not by the running app, to compile the fst/fstcore/fstlib packages listed previously.
 
 
 
