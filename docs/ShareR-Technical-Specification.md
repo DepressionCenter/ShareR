@@ -425,7 +425,8 @@ Verified by direct request during specification of this feature (rows below the 
 | Google Drive | No CORS header. Same proxy retry as above; Google Drive's own anti-abuse checks make success less likely than for a plain static file host. |
 | Google Sites | No CORS header, and requests redirect to a login page — a proxy relay cannot complete a login, so this one reliably still fails. |
 | GitLab `/-/raw/` (gitlab.com or self-hosted) | No CORS header (a long-standing open GitLab feature request). Relies on the proxy fallback more than GitHub does. |
-| Bitbucket `/raw/` (`bitbucket.org`) | No native CORS support. Same proxy-fallback reliance as GitLab. |
+| Bitbucket `/raw/` (`bitbucket.org`, Cloud) | No native CORS support. Same proxy-fallback reliance as GitLab. |
+| Bitbucket Server `/raw/` (self-hosted) | No native CORS support. Same proxy-fallback reliance; an internal/institutional instance may also require being on the relevant network, which a public proxy relay cannot help with. |
 | `dl.dropboxusercontent.com` (the host a Dropbox share link is rewritten to, section 5.6) | Sends `access-control-allow-origin: *`; typically works without the proxy fallback. |
 | `drive.google.com/uc?export=download` (the rewritten Google Drive form) | No CORS header; relies on the proxy fallback, with a large-file virus-scan interstitial the proxy cannot resolve either. |
 | OneDrive/SharePoint raw hosts (`?download=1` trick) | No CORS header; relies on the proxy fallback. Only "anyone with the link" shares can work at all — an auth-required share cannot, proxy or not. |
@@ -504,23 +505,27 @@ A `.sharerignore` file with gitignore-style pattern matching was specified in an
 
 ### 6.6 GitLab and Bitbucket synchronization
 
-GitLab (gitlab.com and self-hosted) and Bitbucket Cloud (`bitbucket.org` only — Bitbucket Server/Data Center is a different product with a different URL shape and API, and is out of scope) get the same treatment as GitHub where the provider's own API makes it feasible, sharing every other stage of the pipeline (the dependency walk, auto-data-detection, and size budgets in sections 6.3–6.5 run unmodified regardless of provider).
+GitLab (gitlab.com and self-hosted), Bitbucket Cloud (`bitbucket.org`), and Bitbucket Server/Data Center (self-hosted, formerly "Stash" — a different product from Bitbucket Cloud with a different URL shape and REST API) all get the same treatment as GitHub where the provider's own API makes it feasible, sharing every other stage of the pipeline (the dependency walk, auto-data-detection, and size budgets in sections 6.3–6.5 run unmodified regardless of provider).
 
-**Recognizing a link, without a hostname allowlist.** GitLab's web UI always inserts a literal `/-/` marker segment immediately before `blob`, `raw`, or `tree` (`https://HOST/<project-path>/-/blob/<ref>/<path>`), regardless of how deep the project path is (arbitrary-depth subgroups) or which host serves it. Keying recognition off that marker instead of a hostname list is what lets a self-hosted instance work identically to gitlab.com with no per-host code. Bitbucket Cloud is hostname-gated to `bitbucket.org` and uses `/src/<ref>/<path>` for both a file and a directory view (a trailing `/` disambiguates, the same convention `data=` already uses).
+**Recognizing a link, without a hostname allowlist.** GitLab's web UI always inserts a literal `/-/` marker segment immediately before `blob`, `raw`, or `tree` (`https://HOST/<project-path>/-/blob/<ref>/<path>`), regardless of how deep the project path is (arbitrary-depth subgroups) or which host serves it. Bitbucket Server is recognized the same way, via its own distinctive `/projects/<KEY>/repos/<repo>/browse` or `/raw` marker — its ref, when given, travels in an `?at=<ref>` query parameter rather than a path segment. Keying recognition off these structural markers instead of a hostname list is what lets a self-hosted instance of either product work with no per-host code. Bitbucket Cloud is hostname-gated to `bitbucket.org` (a single fixed cloud service) and uses `/src/<ref>/<path>` for both a file and a directory view (a trailing `/` disambiguates, the same convention `data=` already uses).
 
 **Raw-content URL, single file:**
 
 - GitLab: rewrite `/-/blob/` or `/-/raw/` to `/-/raw/` on the same host — `https://HOST/<project-path>/-/raw/<ref>/<path>`.
-- Bitbucket: rewrite `/src/` to `/raw/` — `https://bitbucket.org/<workspace>/<repo>/raw/<ref>/<path>`.
+- Bitbucket Cloud: rewrite `/src/` to `/raw/` — `https://bitbucket.org/<workspace>/<repo>/raw/<ref>/<path>`.
+- Bitbucket Server: rewrite `/browse/` to `/raw/` on the same host, carrying the ref (if any) in `?at=` — `https://HOST/projects/<KEY>/repos/<repo>/raw/<path>[?at=<ref>]`.
 
-**Whole-project tree listing.** Neither provider exposes GitHub's single self-limiting `git/trees?recursive=1` call, so both are bounded by two new safety caps, `CONFIG.MAX_REPO_TREE_ENTRIES` and `CONFIG.MAX_REPO_TREE_REQUESTS`, and set the same `truncated: true` flag GitHub's own listing uses on hitting either:
+**Whole-project tree listing.** Bounded by two safety caps, `CONFIG.MAX_REPO_TREE_ENTRIES` and `CONFIG.MAX_REPO_TREE_REQUESTS`, and sets the same `truncated: true` flag GitHub's own listing uses on hitting either (none of the three self-hosted/Cloud non-GitHub providers exposes GitHub's single self-limiting `git/trees?recursive=1` call):
 
 - GitLab: `GET {host}/api/v4/projects/{url-encoded-project-path}/repository/tree?ref=X&recursive=true&per_page=100`, paginating via the `x-next-page` response header (empty on the last page).
-- Bitbucket: no recursive endpoint exists — Atlassian's own documentation warns that a large `max_depth` value on `/src/` can time out (HTTP 555) — so this walks one directory at a time via `GET https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/src/{ref}/{path}?pagelen=100`, following each response's own `next` URL and skipping (not recursing into) any `.git`/`.github` folder.
+- Bitbucket Cloud: no recursive endpoint exists — Atlassian's own documentation warns that a large `max_depth` value on `/src/` can time out (HTTP 555) — so this walks one directory at a time via `GET https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}/src/{ref}/{path}?pagelen=100`, following each response's own `next` URL and skipping (not recursing into) any `.git`/`.github` folder.
+- Bitbucket Server: unlike Bitbucket Cloud, its REST API 1.0 *does* expose a genuine recursive flat-file listing — `GET {host}/rest/api/1.0/projects/{KEY}/repos/{repo}/files?limit=1000&at=X`, paginated the classic Atlassian way (`values`/`isLastPage`/`nextPageStart`).
 
-**Default branch**, when `ref=` is omitted: GitLab via `GET {host}/api/v4/projects/{id}` → `default_branch`; Bitbucket via `GET /2.0/repositories/{workspace}/{repo}` → `mainbranch.name`. Neither gets GitHub's `main`/`master` silent-retry heuristic (section 6.3's ref resolution) — that heuristic exists because of GitHub's specific 2020 default-branch rename, not a demonstrated need elsewhere.
+**Default branch**, when `ref=` is omitted: GitLab via `GET {host}/api/v4/projects/{id}` → `default_branch`; Bitbucket Cloud via `GET /2.0/repositories/{workspace}/{repo}` → `mainbranch.name`; Bitbucket Server via `GET {host}/rest/api/1.0/projects/{KEY}/repos/{repo}/branches/default` → `displayId`. None of the three gets GitHub's `main`/`master` silent-retry heuristic (section 6.3's ref resolution) — that heuristic exists because of GitHub's specific 2020 default-branch rename, not a demonstrated need elsewhere.
 
-**Not supported:** self-hosted Bitbucket Server/Data Center; a bare self-hosted GitLab *project home* URL in `repo=` (no `/-/` marker to disambiguate a project from a group page by shape alone — paste a file link into `entry=`/`data=` instead, which is unambiguous).
+**`repo=` accepts a ref embedded in the URL itself** for GitLab and Bitbucket Server (a `.../-/tree/<ref>/` path segment or a `?at=<ref>` query parameter, respectively) when no separate `ref=`/`branch=` is also given — pasting a branch-specific link directly into `repo=` resolves that branch rather than silently falling back to the repository's default one. An explicit `ref=`/`branch=` always takes precedence when both are present.
+
+**Not supported:** a bare self-hosted GitLab *project home* URL in `repo=` (no `/-/` marker to disambiguate a project from a group page by shape alone — paste a file link into `entry=`/`data=` instead, which is unambiguous). Bitbucket Server has no equivalent gap: its `/projects/<KEY>/repos/<repo>/browse` marker is unambiguous even with no file path, so a bare repository-root URL works directly in `repo=`.
 
 ---
 
@@ -896,7 +901,7 @@ The build is not done until all of the following pass on current versions of Chr
 11. Directory listing by URL is best-effort outside of GitHub/GitLab/Bitbucket, because most web servers publish no index and there is no standard format for the ones that do (section 5.1). Dropbox, Google Drive, OneDrive, and SharePoint cannot be listed by URL at all — their folder views are rendered client-side and there is no key-free API to ask instead (section 5.6).
 12. The Content Security Policy is deliberately permissive and is **not** a security boundary (sections 0.1 and 3.4). `'unsafe-eval'` is required by webR's Emscripten runtime and cannot be removed. The guarantee that user data is never transmitted rests on the source code containing no upload path, which is verifiable by reading it, not on the browser refusing one.
 13. Clickjacking protection cannot be enforced from the page itself, because `frame-ancestors` is ignored in a `<meta>` policy. On a deployment target that cannot set response headers, such as GitHub Pages, ShareR can be framed by another site.
-14. GitLab support requires the URL to expose its `/-/blob/`, `/-/raw/`, or `/-/tree/` marker (any host, including self-hosted); a bare self-hosted GitLab project-home URL cannot be recognized (section 5.1). Bitbucket support is `bitbucket.org` (cloud) only — Bitbucket Server/Data Center is not supported (section 6.6).
+14. GitLab support requires the URL to expose its `/-/blob/`, `/-/raw/`, or `/-/tree/` marker (any host, including self-hosted); a bare self-hosted GitLab project-home URL cannot be recognized (section 5.1). Bitbucket support covers both `bitbucket.org` (Cloud) and self-hosted Bitbucket Server/Data Center (section 6.6).
 
 
 ## Contact

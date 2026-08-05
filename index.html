@@ -305,9 +305,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
      min/max styles from JS, never this class -- see setWorkspacePaneCollapsed. */
   .workspace-pane.collapsed .panel-header,
   .workspace-pane.collapsed .panel-scroll {
-    /* Also silences #staging-messages' aria-live region while collapsed -- accepted because
-       panel-scroll holds several interactive controls that a clip-based hide would leave
-       tabbable but invisible, a worse regression than a missed announcement. */
     display: none;
   }
   /* Same gray as .panel-header/.results-tabs-row, so the collapsed rail reads as an intentional
@@ -495,12 +492,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
     background-color: var(--um-white);
   }
 
-  .staging-messages { margin: 0.5rem 0 0; }
-  .staging-messages:empty { margin: 0; } /* no visible messages -- don't hold space open for them */
-  .staging-msg { padding: 0.3rem 0.5rem; border-radius: 4px; margin-bottom: 0.3rem; font-size: 0.85rem; }
-  .staging-msg-error { background-color: #fdecea; color: #7a1a12; border: 1px solid #e5a19a; }
-  .staging-msg-warning { background-color: #fff6d9; color: #5c4600; border: 1px solid var(--um-maize); }
-  .staging-msg-info { background-color: #eaf1fb; color: var(--um-dark-blue); border: 1px solid var(--um-medium-blue); }
 
   /* ---------- Workspace: Input Data carousel (ShareR-UI-Specification.md section 3) ---------- */
   .section { padding: 0.35rem 1rem 0.75rem; border-bottom: 1px solid var(--panel-border); }
@@ -897,6 +888,13 @@ with this program. If not, see https://www.gnu.org/licenses/.
     pointer-events: none;
     user-select: none;
     background: transparent;
+  }
+  /* An author-stylesheet display value always wins over the UA stylesheet's "[hidden] { display:
+     none }", regardless of selector specificity or source order (origin outranks specificity in
+     the cascade) -- so the unconditional "display: flex" above silently defeated the hidden
+     attribute JS relies on to show/hide this overlay. This restores it, at higher specificity. */
+  .report-loading-overlay[hidden] {
+    display: none;
   }
   .report-loading-card {
     max-width: min(100%, 22rem);
@@ -1488,8 +1486,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
         <button type="button" id="open-load-modal-empty-button" class="btn btn-action btn-sm">Load a script</button>
       </div>
 
-      <div id="staging-messages" class="staging-messages" role="status" aria-live="polite"></div>
-
       <div class="section">
         <div class="section-label-row">
           <span class="section-label" id="input-data-label">Input Data</span>
@@ -1818,10 +1814,23 @@ const CONFIG = Object.freeze({
   FIG_DPI:                 144,
   INSTALL_TIMEOUT_MS:      600000,
   STALL_WARNING_MS:        120000,
-  // A public CORS proxy relay is a best-effort third-party service, not infrastructure ShareR
-  // controls -- give it a generous but bounded timeout rather than letting a hung relay stall
-  // a data= / entry= load indefinitely (spec section 5.5, GitHub issue #10).
-  PROXY_TIMEOUT_MS:        12000,
+  // Bounds only the time to a *response* (headers received) for any single fetch attempt --
+  // direct or through a public CORS proxy relay -- never an already-in-progress body download,
+  // since the abort signal is cleared the moment fetch() itself resolves, before the body is ever
+  // read. A public proxy relay is a best-effort third-party service, not infrastructure ShareR
+  // controls, so this must be short enough that trying (up to) three of them in parallel plus a
+  // direct attempt still fails fast rather than stalling a data=/entry=/repo= load for a long time
+  // (spec section 5.5, GitHub issue #10; shortened from an original 12s per user direction).
+  FETCH_CONNECT_TIMEOUT_MS: 8000,
+  // Overall time budget for the repository-sync phase of a repo= load, applied only at the
+  // per-file fetch choke point (fetchAndStageRepoEntry) so the entry script, its source()/child=
+  // dependencies, and the data files they reference -- fetched first, before any lower-priority
+  // "every other script" or "whole data/ folder" sweep -- are the files most likely to finish
+  // before the deadline. Longer when there is a whole repository to search (no entry= given) than
+  // when a specific script was already named, since there is more legitimately necessary work to
+  // do in the former case.
+  REPO_SYNC_TIMEOUT_WITH_ENTRY_MS:    20000,
+  REPO_SYNC_TIMEOUT_WITHOUT_ENTRY_MS: 45000,
 
   APP_VERSION:             "0.9-beta1",
   CSV_PREVIEW_MAX_ROWS:    20,
@@ -2013,14 +2022,17 @@ function vfsPathFor(relativePath) {
 }
 
 /* Recognizes a bare "owner/repo" or "@owner/repo" (GitHub, unchanged for backward compatibility),
-   a github.com or bitbucket.org repository URL, or any GitLab URL (gitlab.com or self-hosted) that
-   names a file or directory via the "/-/" marker (see matchGitlabRefAndPath). A bare self-hosted
-   GitLab *project home* URL (no "/-/" segment) cannot be told apart from a group page by shape
-   alone and is deliberately rejected with an actionable message rather than guessed at -- paste a
-   link to a file into entry=/data= instead, which is unambiguous and already triggers the rewrite
-   at the top of stageFromParams. Every branch returns a uniform shape: `label` is the full
-   human-readable identity (owner/repo, or a GitLab project path) and `shortName` is just the
-   repo/project name, for the places that show only that (the script-picker root, export titles). */
+   a github.com or bitbucket.org repository URL, any GitLab URL (gitlab.com or self-hosted) that
+   names a file or directory via the "/-/" marker (see matchGitlabRefAndPath), or any Bitbucket
+   Server URL (self-hosted) that names a file or directory via its "/projects/<KEY>/repos/<repo>/"
+   marker (see matchBitbucketServerRefAndPath). A bare self-hosted GitLab *project home* URL (no
+   "/-/" segment) cannot be told apart from a group page by shape alone and is deliberately
+   rejected with an actionable message rather than guessed at -- paste a link to a file into
+   entry=/data= instead, which is unambiguous and already triggers the rewrite at the top of
+   stageFromParams; Bitbucket Server has no such ambiguity (a bare ".../browse" URL is already
+   unambiguous) and a repository-root URL is accepted directly. Every branch returns a uniform
+   shape: `label` is the full human-readable identity and `shortName` is just the repo/project
+   name, for the places that show only that (the script-picker root, export titles). */
 function parseRepoParam(value) {
   const s = value.trim();
   let u = null;
@@ -2038,10 +2050,20 @@ function parseRepoParam(value) {
       const m = u.pathname.match(/^\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
       if (m) return { providerId: "bitbucket", workspace: m[1], repo: m[2], label: m[1] + "/" + m[2], shortName: m[2] };
     }
+    // `ref` is included when the URL itself named one (GitLab's /-/tree/<ref>/ path segment,
+    // Bitbucket Server's ?at=<ref> query param) so that pasting a branch-specific URL directly
+    // into repo= -- without also filling in a separate ref= -- still resolves that branch, not
+    // silently falling back to the default one (stageFromParams prefers an explicit ref= when
+    // both are given).
     const gl = matchGitlabTreeUrl(u) || matchGitlabBlobUrl(u);
     if (gl) {
-      return { providerId: "gitlab", host: gl.host, projectPath: gl.projectPath,
+      return { providerId: "gitlab", host: gl.host, projectPath: gl.projectPath, ref: gl.ref || null,
         label: gl.projectPath, shortName: gl.projectPath.split("/").pop() };
+    }
+    const bbs = matchBitbucketServerTreeUrl(u) || matchBitbucketServerBlobUrl(u);
+    if (bbs) {
+      return { providerId: "bitbucketServer", host: bbs.host, projectKey: bbs.projectKey, repoSlug: bbs.repoSlug,
+        ref: bbs.ref || null, label: bbs.projectKey + "/" + bbs.repoSlug, shortName: bbs.repoSlug };
     }
     throw new ShareRError("Not a recognized GitHub, GitLab, or Bitbucket repository URL: " + value +
       ". For a self-hosted GitLab project, paste a link to a file (a \"blob\" or \"raw\" URL) instead.");
@@ -2168,11 +2190,11 @@ function gitlabRawUrl(host, projectPath, ref, path) {
     encodeURIComponent(ref) + "/" + path.split("/").map(encodeURIComponent).join("/");
 }
 
-/* Bitbucket Cloud (bitbucket.org) only -- Bitbucket Server/Data Center is a different product with
-   a different URL shape and a different REST API entirely, and self-hosting it is out of scope.
-   Bitbucket Cloud uses the same "/src/<ref>/<path>" route for both a file view and a directory
-   view, disambiguated the same way data= already disambiguates a directory target: a trailing
-   "/". */
+/* Bitbucket Cloud (bitbucket.org) only -- Bitbucket Server/Data Center (self-hosted) is a
+   different product with a different URL shape and a different REST API entirely, handled
+   separately below by matchBitbucketServerBlobUrl/TreeUrl. Bitbucket Cloud uses the same
+   "/src/<ref>/<path>" route for both a file view and a directory view, disambiguated the same way
+   data= already disambiguates a directory target: a trailing "/". */
 function matchBitbucketRefAndPath(pathname, kindSegment) {
   const m = pathname.match(new RegExp("^/([^/]+)/([^/]+)/(?:" + kindSegment + ")/([^/]+)/(.*)$"));
   if (!m) return null;
@@ -2198,6 +2220,39 @@ function bitbucketRawUrl(workspace, repo, ref, path) {
     path.split("/").map(encodeURIComponent).join("/");
 }
 
+/* Bitbucket Server / Data Center (self-hosted, formerly "Stash") -- structurally recognizable on
+   any host the same way self-hosted GitLab is, via a literal "/projects/<KEY>/repos/<repo>/" path
+   marker, rather than a hostname allowlist. Unlike self-hosted GitLab, a bare ".../browse" URL
+   with no further path is unambiguously the repository root (there is no group-vs-project
+   ambiguity to worry about, since this exact four-segment shape is unique to this product), so
+   repo= can accept one directly with no separate override needed. The ref, when given, travels in
+   an "?at=" query parameter rather than a path segment. */
+function matchBitbucketServerRefAndPath(pathname, kindSegment) {
+  const m = pathname.match(new RegExp("^/projects/([^/]+)/repos/([^/]+)/(?:" + kindSegment + ")(?:/(.*))?$"));
+  if (!m) return null;
+  return { projectKey: m[1], repoSlug: m[2], path: m[3] ? decodeURIComponent(m[3]) : "" };
+}
+
+function matchBitbucketServerTreeUrl(u) {
+  const m = matchBitbucketServerRefAndPath(u.pathname, "browse");
+  if (!m) return null;
+  return { host: u.origin, projectKey: m.projectKey, repoSlug: m.repoSlug,
+    ref: u.searchParams.get("at") || "", path: m.path.replace(/\/+$/, "") };
+}
+
+function matchBitbucketServerBlobUrl(u) {
+  const m = matchBitbucketServerRefAndPath(u.pathname, "browse|raw");
+  if (!m || !m.path || m.path.endsWith("/")) return null;
+  return { host: u.origin, projectKey: m.projectKey, repoSlug: m.repoSlug,
+    ref: u.searchParams.get("at") || "", path: m.path };
+}
+
+function bitbucketServerRawUrl(host, projectKey, repoSlug, ref, path) {
+  const base = host + "/projects/" + encodeURIComponent(projectKey) + "/repos/" + encodeURIComponent(repoSlug) +
+    "/raw/" + path.split("/").map(encodeURIComponent).join("/");
+  return ref ? base + "?at=" + encodeURIComponent(ref) : base;
+}
+
 /* Provider-dispatch wrapper for a "blob"/"raw" (single-file view) link, tried at every call site
    that used to check GitHub alone: stageEntryFileFromUrl, the data= single-file URL branch, and
    the entry= blob-URL rewrite at the top of stageFromParams. `raw` keeps each provider's own field
@@ -2220,6 +2275,12 @@ function matchGitHostBlobUrl(u) {
     return { providerId: "bitbucket", raw: bb, path: bb.path,
       rawUrl: bitbucketRawUrl(bb.workspace, bb.repo, bb.ref, bb.path), sourceLabel: bb.workspace + "/" + bb.repo + "@" + bb.ref };
   }
+  const bbs = matchBitbucketServerBlobUrl(u);
+  if (bbs) {
+    return { providerId: "bitbucketServer", raw: bbs, path: bbs.path,
+      rawUrl: bitbucketServerRawUrl(bbs.host, bbs.projectKey, bbs.repoSlug, bbs.ref, bbs.path),
+      sourceLabel: bbs.projectKey + "/" + bbs.repoSlug + (bbs.ref ? "@" + bbs.ref : "") };
+  }
   return null;
 }
 
@@ -2231,6 +2292,8 @@ function matchGitHostTreeUrl(u) {
   if (gl) return { providerId: "gitlab", raw: gl };
   const bb = matchBitbucketTreeUrl(u);
   if (bb) return { providerId: "bitbucket", raw: bb };
+  const bbs = matchBitbucketServerTreeUrl(u);
+  if (bbs) return { providerId: "bitbucketServer", raw: bbs };
   return null;
 }
 
@@ -2242,6 +2305,11 @@ function blobMatchesRepo(blobMatch, repoInfo) {
   if (repoInfo.providerId === "gitlab") {
     return blobMatch.raw.host.toLowerCase() === repoInfo.host.toLowerCase() &&
       blobMatch.raw.projectPath.toLowerCase() === repoInfo.projectPath.toLowerCase();
+  }
+  if (repoInfo.providerId === "bitbucketServer") {
+    return blobMatch.raw.host.toLowerCase() === repoInfo.host.toLowerCase() &&
+      blobMatch.raw.projectKey.toLowerCase() === repoInfo.projectKey.toLowerCase() &&
+      blobMatch.raw.repoSlug.toLowerCase() === repoInfo.repoSlug.toLowerCase();
   }
   const blobOwner = (blobMatch.raw.owner || blobMatch.raw.workspace || "").toLowerCase();
   const repoOwner = (repoInfo.owner || repoInfo.workspace || "").toLowerCase();
@@ -2410,12 +2478,22 @@ async function fetchWithTimeout(url, opts, ms) {
 }
 
 /* Returns a Response (like fetch() itself), so both binary (fetchArrayBufferWithRetry) and text
-   (fetchDirectoryListingHtml) callers can share one retry-then-proxy-fallback implementation. */
-async function fetchWithRetryAndCorsProxyFallback(url, { retries = 2, headers } = {}) {
+   (fetchDirectoryListingHtml) callers can share one retry-then-proxy-fallback implementation.
+   `connectTimeoutMs`, when given, bounds each direct attempt the same way the proxy attempts
+   below are always bounded -- opt-in (default: no timeout) because a large data-file download
+   over a slow-but-working connection must not be cut off just because the transfer itself takes
+   a while; a short JSON API call that should either respond quickly or be assumed unreachable is
+   the case this is for (see resolveGitlabDefaultBranch and friends). Either way, the timeout only
+   ever bounds time-to-response -- an already-in-progress body download is never aborted by it,
+   since fetchWithTimeout clears its timer the moment fetch() itself resolves, before any body is
+   read. */
+async function fetchWithRetryAndCorsProxyFallback(url, { retries = 2, headers, connectTimeoutMs } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, { headers });
+      const res = connectTimeoutMs
+        ? await fetchWithTimeout(url, { headers }, connectTimeoutMs)
+        : await fetch(url, { headers });
       if (!res.ok) {
         const err = new Error("HTTP " + res.status + " fetching " + url);
         err.httpStatus = res.status;
@@ -2438,12 +2516,16 @@ async function fetchWithRetryAndCorsProxyFallback(url, { retries = 2, headers } 
   if (isPrivateOrLocalHost(hostname)) throw lastErr;
 
   lastErr.proxyFallbackAttempted = true;
-  for (const buildProxyUrl of CORS_PROXY_URL_BUILDERS) {
-    try {
-      const res = await fetchWithTimeout(buildProxyUrl(url), { headers }, CONFIG.PROXY_TIMEOUT_MS);
-      if (res.ok) return res;
-    } catch { /* try the next proxy */ }
-  }
+  // Tried in parallel, not one after another: taking whichever public relay answers first bounds
+  // the whole fallback to one CONFIG.FETCH_CONNECT_TIMEOUT_MS window instead of one per relay
+  // (Promise.any resolves on the first fulfillment and only rejects once every one has).
+  try {
+    return await Promise.any(CORS_PROXY_URL_BUILDERS.map(async (buildProxyUrl) => {
+      const res = await fetchWithTimeout(buildProxyUrl(url), { headers }, CONFIG.FETCH_CONNECT_TIMEOUT_MS);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res;
+    }));
+  } catch { /* every relay failed; report the original error below -- it's the actionable one */ }
   throw lastErr; // report the original CORS failure -- it's the actionable one for the user
 }
 
@@ -2565,14 +2647,25 @@ function rawContentUrl(owner, repo, ref, path) {
 function buildRawUrl(repoInfo, ref, path) {
   if (repoInfo.providerId === "gitlab") return gitlabRawUrl(repoInfo.host, repoInfo.projectPath, ref, path);
   if (repoInfo.providerId === "bitbucket") return bitbucketRawUrl(repoInfo.workspace, repoInfo.repo, ref, path);
+  if (repoInfo.providerId === "bitbucketServer") {
+    return bitbucketServerRawUrl(repoInfo.host, repoInfo.projectKey, repoInfo.repoSlug, ref, path);
+  }
   return rawContentUrl(repoInfo.owner, repoInfo.repo, ref, path);
 }
 
+/* Routed through the CORS proxy fallback (unlike GitHub's own resolveRef/fetchRepoTree, which stay
+   on a plain fetch()): gitlab.com's API is already confirmed to send CORS headers directly, but an
+   institutional self-hosted instance is far less likely to have ever had CORS configured for its
+   API at all, and that is exactly the case this exists to support. */
 async function resolveGitlabDefaultBranch(host, projectPath) {
-  const res = await fetch(host + "/api/v4/projects/" + encodeURIComponent(projectPath));
-  if (res.status === 404) throw new ShareRError("GitLab project not found: " + projectPath);
-  if (!res.ok) throw new ShareRError("Could not look up GitLab project " + projectPath + " (HTTP " + res.status + ")");
-  const json = await res.json();
+  let json;
+  try {
+    const res = await fetchWithRetryAndCorsProxyFallback(host + "/api/v4/projects/" + encodeURIComponent(projectPath), { retries: 1, connectTimeoutMs: CONFIG.FETCH_CONNECT_TIMEOUT_MS });
+    json = await res.json();
+  } catch (err) {
+    if (err && err.httpStatus === 404) throw new ShareRError("GitLab project not found: " + projectPath);
+    throw new ShareRError("Could not look up GitLab project " + projectPath + ": " + summarizeError(err));
+  }
   if (!json.default_branch) throw new ShareRError("GitLab project " + projectPath + " has no default branch (is it empty?).");
   return json.default_branch;
 }
@@ -2588,13 +2681,35 @@ async function resolveBitbucketDefaultBranch(workspace, repo) {
   return json.mainbranch.name;
 }
 
+/* Routed through the CORS proxy fallback -- see resolveGitlabDefaultBranch's comment; a
+   self-hosted Bitbucket Server instance is the same kind of "probably never had CORS configured"
+   case. */
+async function resolveBitbucketServerDefaultBranch(host, projectKey, repoSlug) {
+  const url = host + "/rest/api/1.0/projects/" + encodeURIComponent(projectKey) + "/repos/" + encodeURIComponent(repoSlug) + "/branches/default";
+  let json;
+  try {
+    const res = await fetchWithRetryAndCorsProxyFallback(url, { retries: 1, connectTimeoutMs: CONFIG.FETCH_CONNECT_TIMEOUT_MS });
+    json = await res.json();
+  } catch (err) {
+    if (err && err.httpStatus === 404) throw new ShareRError("Bitbucket Server repository not found: " + projectKey + "/" + repoSlug);
+    throw new ShareRError("Could not look up Bitbucket Server repository " + projectKey + "/" + repoSlug + ": " + summarizeError(err));
+  }
+  if (!json.displayId) throw new ShareRError("Bitbucket Server repository " + projectKey + "/" + repoSlug + " has no default branch (is it empty?).");
+  return json.displayId;
+}
+
 /* GitLab's tree API paginates via classic offset pagination (an "x-next-page" response header,
    empty on the last page) rather than GitHub's single recursive-call-does-everything shape, so
    this loops -- bounded by CONFIG.MAX_REPO_TREE_ENTRIES/MAX_REPO_TREE_REQUESTS, since an unbounded
    loop against a very large public project would otherwise run indefinitely. Sets truncated:true
    on hitting either cap, reusing the same "some helper files may be missing" warning GitHub's own
    truncated flag already triggers in stageFromParams. Works unmodified against a self-hosted
-   instance: host is whatever origin the project's URL was matched against. */
+   instance: host is whatever origin the project's URL was matched against. Routed through the CORS
+   proxy fallback for the same reason resolveGitlabDefaultBranch is -- with one honest caveat: if a
+   request actually needs the proxy, the "x-next-page" header below may not survive the relay (not
+   every public proxy forwards every response header), which would understate the tree as "only one
+   page" rather than error outright. Accepted as consistent with the rest of the proxy fallback
+   being best-effort, not a guarantee. */
 async function fetchGitlabTree(host, projectPath, ref) {
   const entries = [];
   let page = 1, truncated = false, requestCount = 0;
@@ -2603,9 +2718,13 @@ async function fetchGitlabTree(host, projectPath, ref) {
     requestCount++;
     const url = host + "/api/v4/projects/" + encodeURIComponent(projectPath) +
       "/repository/tree?ref=" + encodeURIComponent(ref) + "&recursive=true&per_page=100&page=" + page;
-    const res = await fetch(url);
-    if (res.status === 404) throw new ShareRError("GitLab project or ref not found: " + projectPath + (ref ? " @ " + ref : ""));
-    if (!res.ok) throw new ShareRError("GitLab returned an error (" + res.status + ") listing " + projectPath);
+    let res;
+    try {
+      res = await fetchWithRetryAndCorsProxyFallback(url, { retries: 1, connectTimeoutMs: CONFIG.FETCH_CONNECT_TIMEOUT_MS });
+    } catch (err) {
+      if (err && err.httpStatus === 404) throw new ShareRError("GitLab project or ref not found: " + projectPath + (ref ? " @ " + ref : ""));
+      throw new ShareRError("Could not list " + projectPath + ": " + summarizeError(err));
+    }
     const json = await res.json();
     for (const item of json) {
       if (item.type === "blob" && !isVcsMetadataPath(item.path)) entries.push({ path: item.path, type: "blob" });
@@ -2657,11 +2776,49 @@ async function fetchBitbucketTree(workspace, repo, ref) {
   return { truncated, entries, sha: null };
 }
 
+/* Bitbucket Server's REST API 1.0 exposes a genuine recursive flat-file listing (unlike Bitbucket
+   Cloud) via .../files, paginated the classic Atlassian way (values/isLastPage/nextPageStart) --
+   the closest of the three non-GitHub providers to GitHub's own one-call recursive tree. Routed
+   through the CORS proxy fallback for the same reason resolveGitlabDefaultBranch is; unlike
+   fetchGitlabTree, pagination here reads only the JSON body, so there is no header-passthrough
+   caveat to worry about if a request needs the proxy. */
+async function fetchBitbucketServerTree(host, projectKey, repoSlug, ref) {
+  const entries = [];
+  let start = 0, truncated = false, requestCount = 0;
+  for (;;) {
+    if (requestCount >= CONFIG.MAX_REPO_TREE_REQUESTS) { truncated = true; break; }
+    requestCount++;
+    let url = host + "/rest/api/1.0/projects/" + encodeURIComponent(projectKey) + "/repos/" + encodeURIComponent(repoSlug) +
+      "/files?limit=1000&start=" + start;
+    if (ref) url += "&at=" + encodeURIComponent(ref);
+    let res;
+    try {
+      res = await fetchWithRetryAndCorsProxyFallback(url, { retries: 1, connectTimeoutMs: CONFIG.FETCH_CONNECT_TIMEOUT_MS });
+    } catch (err) {
+      if (err && err.httpStatus === 404) throw new ShareRError("Bitbucket Server project or repository not found: " + projectKey + "/" + repoSlug);
+      throw new ShareRError("Could not list " + projectKey + "/" + repoSlug + ": " + summarizeError(err));
+    }
+    const json = await res.json();
+    for (const path of json.values || []) {
+      if (!isVcsMetadataPath(path)) entries.push({ path, type: "blob" });
+    }
+    if (entries.length >= CONFIG.MAX_REPO_TREE_ENTRIES) { truncated = true; break; }
+    if (json.isLastPage !== false) break;
+    start = json.nextPageStart;
+  }
+  return { truncated, entries, sha: null };
+}
+
 async function resolveProjectRefAndTree(repoInfo, refRaw, messages) {
   if (repoInfo.providerId === "github") return resolveRefAndTree(repoInfo.owner, repoInfo.repo, refRaw, messages);
   if (repoInfo.providerId === "gitlab") {
     const ref = refRaw || await resolveGitlabDefaultBranch(repoInfo.host, repoInfo.projectPath);
     const tree = await fetchGitlabTree(repoInfo.host, repoInfo.projectPath, ref);
+    return { refUsed: ref, tree };
+  }
+  if (repoInfo.providerId === "bitbucketServer") {
+    const ref = refRaw || await resolveBitbucketServerDefaultBranch(repoInfo.host, repoInfo.projectKey, repoInfo.repoSlug);
+    const tree = await fetchBitbucketServerTree(repoInfo.host, repoInfo.projectKey, repoInfo.repoSlug, ref);
     return { refUsed: ref, tree };
   }
   const ref = refRaw || await resolveBitbucketDefaultBranch(repoInfo.workspace, repoInfo.repo);
@@ -2716,6 +2873,35 @@ async function stageBitbucketDirectoryListing(match, target, staged, messages) {
   }
 }
 
+/* Non-recursive single-directory listing for a data=<dir>/ target naming a specific Bitbucket
+   Server subpath, via its "browse" endpoint's JSON body (children.values), one directory level
+   only -- mirrors the same-shaped GitLab/Bitbucket Cloud directory listing functions above. */
+async function stageBitbucketServerDirectoryListing(match, target, staged, messages) {
+  let url = match.host + "/rest/api/1.0/projects/" + encodeURIComponent(match.projectKey) + "/repos/" +
+    encodeURIComponent(match.repoSlug) + "/browse" +
+    (match.path ? "/" + match.path.split("/").map(encodeURIComponent).join("/") : "") + "?limit=1000";
+  if (match.ref) url += "&at=" + encodeURIComponent(match.ref);
+  const res = await fetch(url);
+  if (!res.ok) { messages.push({ level: "warning", text: "Could not list Bitbucket Server directory: " + target + " (HTTP " + res.status + ")" }); return; }
+  const json = await res.json();
+  const children = (json.children && json.children.values) || [];
+  const files = children.filter((e) => e.type === "FILE" && e.path && (e.path.toString || e.path.name));
+  if (files.length === 0) { messages.push({ level: "warning", text: "No files found in Bitbucket Server directory: " + target }); return; }
+  const sourceLabel = match.projectKey + "/" + match.repoSlug + (match.ref ? "@" + match.ref : "");
+  for (const f of files) {
+    const name = f.path.toString || f.path.name;
+    const fullPath = (match.path ? match.path + "/" : "") + name;
+    if (isVcsMetadataPath(fullPath)) continue;
+    const rawUrl = bitbucketServerRawUrl(match.host, match.projectKey, match.repoSlug, match.ref, fullPath);
+    try {
+      const { buffer } = await fetchArrayBufferWithRetry(rawUrl);
+      stageBytes(staged, basenameOf(fullPath), new Uint8Array(buffer), "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
+    } catch (err) {
+      messages.push({ level: "warning", text: describeFetchFailure(rawUrl, err) });
+    }
+  }
+}
+
 /* ### Static analysis of R source text: which files does this script actually reference? ###
 
    Not a parser -- a set of narrow, honest heuristics over the raw text. Each one recognizes a
@@ -2735,8 +2921,10 @@ const DATA_READ_FUNCS = [
 const DATA_FUNCS_ALT = DATA_READ_FUNCS.join("|");
 
 const DATA_FILE_EXTENSIONS = new Set([
-  "csv", "tsv", "json", "xlsx", "xls", "rds", "rdata", "rda",
-  "sav", "dta", "por", "sas7bdat", "parquet", "feather", "ods"
+  "csv", "tsv", "json", "xml", "xlsx", "xls", "xlsm", "ods",
+  "rds", "rdata", "rda", "fst",
+  "parquet", "feather", "pkl", "pickle",
+  "sav", "dta", "por", "sas7bdat"
 ]);
 function isDataFilePath(path) {
   const ext = path.split(".").pop().toLowerCase();
@@ -2943,15 +3131,23 @@ function buildScriptVariableMap(text) {
    for both the source() walk and the data-file scan so nothing is fetched twice), and the set
    of files skipped for exceeding the per-file size cap (see fetchSkippedLargeFiles). */
 
-function makeRepoSyncCtx() {
-  return { budget: { totalBytes: 0, exceeded: false }, scriptTexts: new Map(), skippedForSize: new Set() };
+/* `deadline` (a Date.now()-comparable timestamp, or null for no limit) bounds the whole
+   repository-sync phase, enforced only at fetchAndStageRepoEntry's choke point below -- so
+   whichever calls happen first (the entry script, its source()/child= dependencies, and the data
+   files they reference, per stageFromParams's call order) are the ones most likely to finish
+   before it, and only the lower-priority "every other script" / "whole data/ folder" sweeps risk
+   being cut short. */
+function makeRepoSyncCtx(deadline) {
+  return { budget: { totalBytes: 0, exceeded: false }, scriptTexts: new Map(), skippedForSize: new Set(),
+    deadline: deadline || null, deadlineExceeded: false };
 }
 
-/* Fetches and stages one repository blob, honoring the per-file cap and the total-byte budget.
-   Returns the raw bytes (for callers that need to scan script text) or null if skipped/failed/
-   already staged. Skipping is intentionally silent beyond a staging-message warning: this is the
-   single choke point every other function in this section funnels through, so the cap and budget
-   are enforced consistently regardless of which discovery path found the file. */
+/* Fetches and stages one repository blob, honoring the per-file cap, the total-byte budget, and
+   the sync deadline. Returns the raw bytes (for callers that need to scan script text) or null if
+   skipped/failed/already staged. Skipping is intentionally silent beyond a staging-message
+   warning: this is the single choke point every other function in this section funnels through,
+   so the cap, budget, and deadline are enforced consistently regardless of which discovery path
+   found the file. */
 async function fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, messages, ctx) {
   if (staged.has(treeEntry.path)) return null;
   if (typeof treeEntry.size === "number" && treeEntry.size > CONFIG.MAX_REPO_FILE_BYTES) {
@@ -2961,6 +3157,14 @@ async function fetchAndStageRepoEntry(repoInfo, refUsed, treeEntry, staged, mess
     return null;
   }
   if (ctx.budget.exceeded) return null;
+  if (ctx.deadline && Date.now() > ctx.deadline) {
+    if (!ctx.deadlineExceeded) {
+      ctx.deadlineExceeded = true;
+      messages.push({ level: "warning", text: "Stopped downloading from the repository after a time limit; " +
+        "some files may be missing. The entry script and the files it directly depends on were fetched first." });
+    }
+    return null;
+  }
   try {
     const { buffer } = await fetchArrayBufferWithRetry(buildRawUrl(repoInfo, refUsed, treeEntry.path));
     ctx.budget.totalBytes += buffer.byteLength;
@@ -3073,8 +3277,10 @@ async function autoDetectAndStageData(repoInfo, tree, refUsed, ctx, staged, mess
   }
 
   // A folder literally named "data" or "data-*" anywhere in the repository is almost certainly
-  // input data regardless of whether any read call referencing it could be resolved.
-  const dataFolderEntries = tree.entries.filter((e) => isInDataFolder(e.path));
+  // input data regardless of whether any read call referencing it could be resolved -- but still
+  // only files with a recognized data extension: a README, a codebook PDF, or a figure sitting in
+  // that same folder is not data ShareR should fetch on the researcher's behalf.
+  const dataFolderEntries = tree.entries.filter((e) => isInDataFolder(e.path) && isDataFilePath(e.path));
   await runWithConcurrency(dataFolderEntries, CONFIG.FETCH_CONCURRENCY,
     (entry) => fetchAndStageRepoEntry(repoInfo, refUsed, entry, staged, messages, ctx));
 
@@ -3227,6 +3433,7 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
   }
   if (treeMatch && treeMatch.providerId === "gitlab") { await stageGitlabDirectoryListing(treeMatch.raw, target, staged, messages); return; }
   if (treeMatch && treeMatch.providerId === "bitbucket") { await stageBitbucketDirectoryListing(treeMatch.raw, target, staged, messages); return; }
+  if (treeMatch && treeMatch.providerId === "bitbucketServer") { await stageBitbucketServerDirectoryListing(treeMatch.raw, target, staged, messages); return; }
 
   let files;
   try { files = await fetchDirectoryListingHtml(u); }
@@ -3251,11 +3458,11 @@ async function stageDirectoryDataSpec(target, repoInfo, tree, refUsed, staged, m
 
 /* ### Staging orchestration: entry + data, from URL, repo, or already-staged local files ### */
 
-/* Rejections below throw rather than push a soft staging-messages entry: with no valid entry
-   script there is nothing for the researcher to run at all, so this is fatal the same way a
-   missing repository or a YAML parse error is -- it belongs in the same "Unable to Run Script"
-   dialog those use (showErrorModal, wired up in runStagingPipeline's catch), not buried in the
-   Workspace panel's message list alongside soft, recoverable warnings like a missing data file. */
+/* Rejections below throw rather than push a soft `messages` entry: with no valid entry script
+   there is nothing for the researcher to run at all, so this is fatal the same way a missing
+   repository or a YAML parse error is -- it belongs in the same "Unable to Run Script" dialog
+   those use (showErrorModal, wired up in runStagingPipeline's catch) immediately, not queued
+   alongside recoverable warnings like a missing data file (reportMessages). */
 async function stageEntryFileFromUrl(url, staged, messages) {
   if (isVcsMetadataPath(url.pathname)) {
     throw new ShareRError("ShareR does not load files from inside a .git or .github folder, " +
@@ -3269,21 +3476,18 @@ async function stageEntryFileFromUrl(url, staged, messages) {
   const blobMatch = matchGitHostBlobUrl(url);
   const name = decodeURIComponent(basenameOf(url.pathname)) || "entry.R";
   if (!isScriptFilename(name)) {
-    throw new ShareRError("ShareR only opens R and R Markdown scripts. \"" + name + "\" does not " +
-      "have an .R or .Rmd file name, so it was not loaded.");
+    throw new ShareRError("\"" + name + "\" isn't an .R or .Rmd file.");
   }
   const fetchUrl = blobMatch ? blobMatch.rawUrl : rewriteCloudStorageUrl(url).href;
   try {
     const { buffer, response } = await fetchArrayBufferWithRetry(fetchUrl);
     if (looksLikeHtmlOrJsContentType(response.headers.get("Content-Type"))) {
-      throw new ShareRError("\"" + name + "\" looks like a web page or script file, not R code, " +
-        "so ShareR did not load it. Check that the link points directly at the .R or .Rmd file.");
+      throw new ShareRError("\"" + name + "\" looks like a web page, not R code.");
     }
     const bytes = new Uint8Array(buffer);
     const sniffReason = sniffEntryContentRejection(bytes);
     if (sniffReason) {
-      throw new ShareRError("\"" + name + "\" does not look like real R or R Markdown code (" +
-        sniffReason + "), so ShareR did not load it.");
+      throw new ShareRError("\"" + name + "\" doesn't look like R code (" + sniffReason + ").");
     }
     const sourceLabel = blobMatch ? blobMatch.sourceLabel : url.hostname;
     stageBytes(staged, name, bytes, "url", sourceLabel, messages, CONFIG.MAX_REPO_FILE_BYTES);
@@ -3323,6 +3527,11 @@ async function stageFromParams(params, staged, messages, onProgress) {
         // both repo= and ref=, which is redundant but harmless.
         effectiveRepoRaw = blobMatch.raw.host + "/" + blobMatch.raw.projectPath +
           "/-/tree/" + encodeURIComponent(blobMatch.raw.ref) + "/";
+      } else if (blobMatch.providerId === "bitbucketServer") {
+        // Unlike GitLab, a bare ".../browse" URL is already unambiguous (see parseRepoParam), so
+        // this can just drop the file path rather than round-tripping through a directory form.
+        effectiveRepoRaw = blobMatch.raw.host + "/projects/" + blobMatch.raw.projectKey +
+          "/repos/" + blobMatch.raw.repoSlug + "/browse";
       } else {
         effectiveRepoRaw = "https://bitbucket.org/" + blobMatch.raw.workspace + "/" + blobMatch.raw.repo;
       }
@@ -3335,8 +3544,13 @@ async function stageFromParams(params, staged, messages, onProgress) {
   if (effectiveRepoRaw) {
     repoInfo = parseRepoParam(effectiveRepoRaw);
     if (effectiveRefRaw && !RE_REF.test(effectiveRefRaw)) throw new ShareRError("Not a valid branch, tag, or commit: " + effectiveRefRaw);
+    // An explicit ref=/branch= always wins; otherwise fall back to a ref the repo= URL itself
+    // named (a GitLab .../-/tree/<ref>/ link or a Bitbucket Server ?at=<ref> link pasted directly
+    // into repo=, per parseRepoParam), rather than silently defaulting to the repository's
+    // default branch when the URL was already specific about which one to use.
+    const refToResolve = effectiveRefRaw || repoInfo.ref || "";
     report("Resolving " + repoInfo.label + "...");
-    const resolved = await resolveProjectRefAndTree(repoInfo, effectiveRefRaw, messages);
+    const resolved = await resolveProjectRefAndTree(repoInfo, refToResolve, messages);
     refUsed = resolved.refUsed;
     tree = resolved.tree;
     if (tree.truncated) messages.push({ level: "warning", text: "The file listing for this repository was " +
@@ -3351,8 +3565,7 @@ async function stageFromParams(params, staged, messages, onProgress) {
     if (!RE_PATH.test(effectiveEntryRaw)) throw new ShareRError("Not a valid repository path: " + effectiveEntryRaw);
     if (isVcsMetadataPath(effectiveEntryRaw)) throw new ShareRError("ShareR does not load files from inside a " +
       ".git or .github folder, since those hold repository/version-control data, not analysis code.");
-    if (!isScriptFilename(effectiveEntryRaw)) throw new ShareRError("ShareR only opens R and R Markdown scripts. \"" +
-      effectiveEntryRaw + "\" does not have an .R or .Rmd file name, so it was not loaded.");
+    if (!isScriptFilename(effectiveEntryRaw)) throw new ShareRError("\"" + effectiveEntryRaw + "\" isn't an .R or .Rmd file.");
     const found = findTreeEntryCaseInsensitive(tree.entries, effectiveEntryRaw.replace(/^\/+/, ""));
     if (found) repoEntryPath = found.path;
     else messages.push({ level: "error", text: "Entry file not found in repository: " + effectiveEntryRaw });
@@ -3362,18 +3575,28 @@ async function stageFromParams(params, staged, messages, onProgress) {
 
   if (repoInfo) {
     report("Downloading repository files...");
-    repoSyncCtx = makeRepoSyncCtx();
+    // A specific script named up front has less legitimately necessary work ahead of it (just
+    // that script, its dependencies, and their data) than an unnamed whole-repository search
+    // does, so it gets a shorter budget -- see CONFIG.REPO_SYNC_TIMEOUT_WITH_ENTRY_MS's comment.
+    const deadline = Date.now() + (effectiveEntryRaw
+      ? CONFIG.REPO_SYNC_TIMEOUT_WITH_ENTRY_MS
+      : CONFIG.REPO_SYNC_TIMEOUT_WITHOUT_ENTRY_MS);
+    repoSyncCtx = makeRepoSyncCtx(deadline);
     if (repoEntryPath) {
       explicitEntryPath = repoEntryPath;
       await syncScriptDependencies(repoInfo, tree, refUsed, repoEntryPath, staged, messages, repoSyncCtx);
+      // Data the entry script and its dependencies actually reference is fetched next, before
+      // the lower-priority "every other script" sweep below -- if the deadline above is hit, it
+      // is the entry, its dependencies, and their data that already made it in, not some
+      // unrelated script from elsewhere in the repository.
+      if (params.dataValues.length === 0) {
+        await autoDetectAndStageData(repoInfo, tree, refUsed, repoSyncCtx, staged, messages);
+      }
       // Also stage every other script in the repo, entry= given or not -- otherwise the
       // script-picker popover (Stage 2D.2) would only ever offer whatever source()/child=
       // dependency-walking from this one entry happened to visit, not every script the researcher
       // could plausibly want to switch to.
       await stageAllScriptFiles(repoInfo, tree, refUsed, staged, messages, repoSyncCtx);
-      if (params.dataValues.length === 0) {
-        await autoDetectAndStageData(repoInfo, tree, refUsed, repoSyncCtx, staged, messages);
-      }
     }
   }
 
@@ -6558,7 +6781,11 @@ async function runEntry() {
   App.running = true;
   updateRunControls();
   clearResultsForNewRun();
-  showReportLoadingOverlay("Loading packages…", 0);
+  // Re-labels the "Loading" overlay runStagingPipeline already opened for the fetch phase (a
+  // harmless no-op update if a manual Run click opened it fresh here instead) -- this is the
+  // point the R engine itself actually starts loading, per its own getEngine() call inside
+  // executeSelectedEntry.
+  showReportLoadingOverlay("Loading R environment...", 0);
   await executeSelectedEntry(false);
 }
 
@@ -6633,7 +6860,10 @@ async function executeSelectedEntry(isRetry) {
       const fallbackMessages = [];
       await fetchSkippedLargeFiles(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
       await fallbackFetchEntireRepo(App.repoInfo, App.tree, App.refUsed, App.stagedStore, fallbackMessages, ctx);
-      renderStagingMessages(fallbackMessages, true);
+      // Logged only, no popup: this is a background retry, not a final outcome yet -- if the file
+      // still turns out to be missing, the retry's own failure surfaces through the normal fatal
+      // run-error path below, which is the actionable moment for the user.
+      logStagingMessages(fallbackMessages);
       clearResultsForNewRun();
       await executeSelectedEntry(true);
       return;
@@ -6676,7 +6906,6 @@ const elDataInput = document.getElementById("data-input");
 const elRepoInput = document.getElementById("repo-input");
 const elRefInput = document.getElementById("ref-input");
 const elStagingStatus = document.getElementById("staging-status");
-const elStagingMessages = document.getElementById("staging-messages");
 const elDataFileCarousel = document.getElementById("data-file-carousel");
 
 const elAddFilesButton = document.getElementById("add-files-button");
@@ -6831,15 +7060,21 @@ function appendLogLine(kind, text) {
   App.executionLogLines.push(fullText);
 }
 
-function renderStagingMessages(messages, append) {
-  if (!append) elStagingMessages.innerHTML = "";
+/* Every staging-related error/warning/note goes to the execution log unconditionally -- there is
+   no separate Workspace-panel message list any more (removed: it duplicated the dialog and old
+   messages could linger across a later, unrelated load). A warning never interrupts or gets a
+   popup of its own: it did not block anything, by definition, so it belongs in the log for anyone
+   who goes looking, not in front of the user's face. Only a genuine "error" level message means
+   something a researcher asked for did not load; the caller decides what to do about that (a short,
+   generic, user-friendly popup -- never the raw per-file text, which is exactly what "View
+   Execution Log" is for). Returns true when at least one "error" was logged. */
+function logStagingMessages(messages) {
+  let hadError = false;
   for (const m of messages) {
-    const div = document.createElement("div");
-    div.className = "staging-msg staging-msg-" + m.level;
-    const prefix = m.level === "error" ? "Error: " : m.level === "warning" ? "Warning: " : "Note: ";
-    div.textContent = prefix + m.text;
-    elStagingMessages.appendChild(div);
+    appendLogLine(m.level === "info" ? "message" : m.level, m.text);
+    if (m.level === "error") hadError = true;
   }
+  return hadError;
 }
 
 function disableSourceForm(disabled) {
@@ -6867,9 +7102,7 @@ function replaceStagedFile(path) {
     } catch (err) {
       messages.push({ level: "error", text: "Could not read " + file.name + ": " + (err && err.message ? err.message : err) });
     }
-    renderStagingMessages(messages, true);
-    const errs = messages.filter((m) => m.level === "error");
-    if (errs.length) setStatus(errs.map((m) => m.text).join(" "));
+    if (logStagingMessages(messages)) showErrorModal("Could not replace " + basenameOf(path) + ". See the execution log for details.");
     updateSelectedEntry();
   });
   document.body.appendChild(input);
@@ -7566,8 +7799,17 @@ function describeFatalRunError(message) {
   return "An error occurred while executing this R script. View log for details.";
 }
 
+/* Also closes the Load-a-script dialog and, unless a run is genuinely still in progress, the
+   "Loading" overlay: a fatal staging error and a fatal run error both already close/hide these
+   before this modal opens, but doing it again here is a cheap guarantee that dismissing the error
+   never leaves either one sitting behind it, regardless of which path led to the error being
+   shown. This dialog can also appear for a batch of non-fatal warnings while a run legitimately
+   continues underneath (reportMessages), so the overlay is only hidden when App.running is false
+   -- otherwise dismissing a warning would incorrectly hide the still-active run's own progress. */
 function closeErrorModal() {
   if (elErrorModal.open) elErrorModal.close();
+  closeLoadModal();
+  if (!App.running) hideReportLoadingOverlay();
 }
 
 /* ### UI: results tabs -- real ARIA tabs with roving tabindex (spec section 11.2) ###
@@ -7826,11 +8068,25 @@ function initWorkspacePaneCollapseAndResize() {
 /* ### Staging pipeline: ties URL-parameter parsing to the persistent staged file store ### */
 
 async function runStagingPipeline(params) {
+  // The "Loading" overlay belongs to the whole load, not just the run that (usually) follows it --
+  // show it the moment there is something to fetch (a URL or a repository), not merely because the
+  // page opened, and not for an empty/local-only form submission with nothing to fetch at all.
+  // runEntry() below re-labels it to "Loading R environment" once fetching is done and the R
+  // engine starts, and hides it itself once the run finishes -- so this function only needs to
+  // show it up front and hide it on any path that does NOT reach runEntry() (an error, or staging
+  // succeeding with nothing selected to run, e.g. an unresolved multi-script repository).
+  const isFetchingSomething = !!(params.entryRaw || params.dataValues.length || params.repoRaw);
+  if (isFetchingSomething) showReportLoadingOverlay("Loading script(s)...", 0);
   setStagingStatus("Working...");
   disableSourceForm(true);
   const messages = [];
   try {
-    const result = await stageFromParams(params, App.stagedStore, messages, setStagingStatus);
+    // Drives both the small status line inside the (usually closed) Load-a-script dialog and the
+    // big visible "Loading" overlay, so a slow repository sync -- resolving the project, walking
+    // its tree, fetching each file -- shows real progress the whole time instead of a static
+    // "Loading script(s)..." for however long that takes.
+    const report = (text) => { setStagingStatus(text); updateReportLoadingOverlay(text, 0); };
+    const result = await stageFromParams(params, App.stagedStore, messages, report);
     App.repoInfo = result.repoInfo;
     App.refUsed = result.refUsed;
     App.tree = result.tree;
@@ -7839,29 +8095,40 @@ async function runStagingPipeline(params) {
     App.packagesExplicitList = params.packagesRaw ? params.packagesRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
     if (result.explicitEntryPath) App.explicitEntryPath = result.explicitEntryPath;
-    renderStagingMessages(messages, false);
+    if (logStagingMessages(messages)) showErrorModal("Some files could not be loaded. See the execution log for details.");
     updateSelectedEntry();
     snapshotOriginalFileBytes();
     setStagingStatus(App.stagedStore.list().length + " file(s) staged.");
     // Running immediately once a script resolves is the whole point -- researchers open a link
     // to see results, not to find a Run button.
     if (App.selectedEntryPath) await runEntry();
+    else hideReportLoadingOverlay(); // nothing to run (e.g. an unresolved multi-script repository); don't leave the overlay stuck open
   } catch (err) {
+    // A fatal failure must never leave the "Loading" overlay sitting behind the error dialog --
+    // hide it here, immediately, rather than only when the error dialog is later dismissed.
+    hideReportLoadingOverlay();
+    // Logged, but never folded into the dialog text below: the dialog is for one short, friendly
+    // sentence, not a dump of every non-fatal problem that happened before the fatal one -- the
+    // execution log (the dialog's own "View Execution Log" button) is where those belong.
+    logStagingMessages(messages);
+    let fatalMessage;
     if (err instanceof ShareRRateLimitError) {
       const resetText = err.resetDate ? err.resetDate.toLocaleTimeString() : "an unknown time";
-      setStagingStatus("GitHub's anonymous request limit is reached for your network. It resets at " +
+      fatalMessage = "GitHub's anonymous request limit is reached for your network. It resets at " +
         resetText + ". You can still run your analysis now by opening the script and your data " +
-        "files from your computer.");
+        "files from your computer.";
     } else {
       // A fatal staging failure (no repository/ref found, no valid entry script at all) leaves
       // nothing to run, so it gets the same designed dialog a fatal run failure does
-      // (showErrorModal) instead of a status line easy to miss -- closing the Load-a-script dialog
-      // first so the error modal replaces it rather than stacking on top of it.
-      const message = err.message || String(err);
-      setStagingStatus(message);
-      closeLoadModal();
-      showErrorModal(message);
+      // (showErrorModal) instead of a status line easy to miss.
+      fatalMessage = err.message || String(err);
     }
+    setStagingStatus(fatalMessage);
+    appendLogLine("error", fatalMessage);
+    // Closes the Load-a-script dialog first so the error modal replaces it rather than stacking
+    // on top of it.
+    closeLoadModal();
+    showErrorModal(fatalMessage);
     console.error(err);
   } finally {
     disableSourceForm(false);
@@ -7880,9 +8147,7 @@ async function handleLocalFiles(items) {
       messages.push({ level: "error", text: "Could not read " + relPath + ": " + (err && err.message ? err.message : err) });
     }
   }
-  renderStagingMessages(messages, true);
-  const errs = messages.filter((m) => m.level === "error");
-  if (errs.length) setStagingStatus(errs.map((m) => m.text).join(" "));
+  if (logStagingMessages(messages)) showErrorModal("Some files could not be added. See the execution log for details.");
   updateSelectedEntry();
 }
 
@@ -8176,15 +8441,19 @@ function bootstrap() {
   App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
   if (params.entryRaw || params.dataValues.length || params.repoRaw) {
-    // The modal only appears once staging has actually had a chance to resolve an entry from
-    // the URL; runStagingPipeline() itself calls updateSelectedEntry(), which is what closes the
-    // modal on success, so this .then() only needs to handle the "still nothing to run" case.
+    // The modal only appears once staging has actually had a chance to resolve an entry from the
+    // URL, and only for the "nothing failed, but nothing was resolved either" case (e.g. a repo
+    // with several scripts and none auto-selected) -- a fatal staging error already shows its own
+    // error modal (runStagingPipeline's catch) and must not also get the Load-a-script dialog
+    // popping up behind or in front of it.
     runStagingPipeline(params).then(() => {
-      if (!App.selectedEntryPath) openLoadModal();
+      if (!App.selectedEntryPath && !elErrorModal.open) openLoadModal();
     });
   } else {
+    // No entry/data/repo in the URL at all -- nothing to stage, so there is nothing to show a
+    // "loading" dialog for. Leave the empty-state view (its own "Load a script" button) as the
+    // only way in, rather than popping the dialog open before the researcher has asked for it.
     updateSelectedEntry();
-    openLoadModal();
   }
 }
 
