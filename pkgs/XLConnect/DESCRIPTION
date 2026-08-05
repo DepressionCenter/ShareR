@@ -1,0 +1,10 @@
+Package: XLConnect
+Type: Package
+Title: WASM Surrogate for XLConnect Package
+Version: 1.0.10.9000
+Authors@R: person("Gabriel", "Mongefranco", role = c("aut", "cre"), email = "gabrielm@umich.edu")
+Description: Pure-R WebAssembly surrogate implementation of XLConnect delegating excel operations to readxl without rJava or JVM dependencies.
+License: GPL-3
+Imports: readxl
+Encoding: UTF-8
+RoxygenNote: 7.3.1

@@ -1,23 +1,7 @@
-Package: fst
-Version: 0.9.9
-Depends: R (>= 3.0.0)
-Imports: fstcore, Rcpp
-LinkingTo: Rcpp, fstcore
-Suggests: testthat, bit64, data.table, lintr, nanotime, crayon
-License: AGPL-3 | file LICENSE
-MD5sum: 00bed88925583eb8e7cf7ef3d64fbb02
-Built: R 4.6.0; wasm32-unknown-emscripten; 2026-07-30 23:12:16 UTC;
-        unix
-File: fst_0.9.9.tgz
-
-Package: fstcore
-Version: 0.10.0
-Depends: R (>= 3.0.0)
-Imports: Rcpp
-LinkingTo: Rcpp
-Suggests: testthat, lintr
-License: MPL-2.0 | file LICENSE
-MD5sum: 60ac0c85bd345bd809206b4b70f7c7e2
-Built: R 4.6.0; wasm32-unknown-emscripten; 2026-07-30 23:11:48 UTC;
-        unix
-File: fstcore_0.10.0.tgz
+Package: XLConnect
+Version: 1.0.10.9000
+Imports: readxl
+License: GPL-3
+MD5sum: 0ac0d9fd2f4017fa9e82f788b8c081f5
+Built: R 4.6.0; ; 2026-08-02 18:57:10 UTC; unix
+File: XLConnect_1.0.10.9000.tgz
