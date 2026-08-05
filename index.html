@@ -458,6 +458,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     align-items: center;
     flex-wrap: wrap;
   }
+  /* Stacks the staging-status line above its button (rather than beside it) for controls
+     placed at the bottom of a modal, so status text is read before the action it describes. */
+  .controls-stacked { flex-direction: column; align-items: flex-start; }
   .btn { display: inline-flex; align-items: center; gap: 0.35rem; }
   .btn-sm { padding: 4px 10px; font-size: 0.85rem; }
   .btn-icon { font-size: 0.9rem; line-height: 1; }
@@ -1477,7 +1480,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
   <section id="workspace-pane" class="panel workspace-pane" aria-labelledby="workspace-heading">
     <div class="panel-header">
       <h2 id="workspace-heading">Workspace</h2>
-      <button type="button" id="open-load-modal-button" class="btn btn-secondary btn-sm">Change script&hellip;</button>
+      <button type="button" id="open-load-modal-button" class="btn btn-secondary btn-sm">
+        <span class="btn-icon" aria-hidden="true"></span><span class="btn-text">Change script</span>
+      </button>
     </div>
     <div class="panel-scroll">
 
@@ -1629,10 +1634,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   </div>
   <div class="modal-body">
     <p class="help-text">
-      Paste a link to a script and, optionally, its data, or load a GitHub, GitLab, or Bitbucket
-      repository. Every field here corresponds to a URL parameter (<code>entry</code>,
-      <code>data</code>, <code>repo</code>, <code>ref</code>), so a filled-in form is always a
-      shareable link.
+      Enter a script or repo URL, or upload R scripts from your computer.
     </p>
     <form id="source-form">
       <div class="field">
@@ -1656,10 +1658,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
           <input type="text" id="ref-input" name="ref" placeholder="main" autocomplete="off">
         </div>
       </div>
-      <div class="controls">
-        <button type="submit" class="btn btn-primary">Load</button>
-        <span id="staging-status" role="status" aria-live="polite"></span>
-      </div>
     </form>
 
     <div class="field" style="margin-top: 1rem;">
@@ -1676,6 +1674,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </p>
       <input type="file" id="file-input" multiple hidden>
       <input type="file" id="folder-input" multiple webkitdirectory hidden>
+    </div>
+
+    <div class="controls controls-stacked">
+      <span id="staging-status" role="status" aria-live="polite"></span>
+      <button type="submit" form="source-form" class="btn btn-primary">Load</button>
     </div>
   </div>
 </dialog>
@@ -4652,6 +4655,11 @@ const X_ICON_SVG = // bi-x-lg
   '<path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>' +
   '</svg>';
 
+const CHANGE_SCRIPT_ICON_SVG = // bi-arrow-left-right
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
+  '<path fill-rule="evenodd" d="M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5m14-7a.5.5 0 0 1-.5.5H2.707l3.147 3.146a.5.5 0 1 1-.708.708l-4-4a.5.5 0 0 1 0-.708l4-4a.5.5 0 1 1 .708.708L2.707 4H14.5a.5.5 0 0 1 .5.5"/>' +
+  '</svg>';
+
 const PLUS_ICON_SVG = // bi-plus-lg
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
   '<path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>' +
@@ -6953,6 +6961,7 @@ const elLoadModal = document.getElementById("load-script-modal");
 const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
 const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
 const elAddMoreFilesButton = document.getElementById("add-more-files-button");
+elOpenLoadModalButton.querySelector(".btn-icon").innerHTML = CHANGE_SCRIPT_ICON_SVG;
 elCloseLoadModalButton.innerHTML = X_ICON_SVG;
 
 const elErrorModal = document.getElementById("error-modal");
