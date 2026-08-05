@@ -1,3 +1,0 @@
-export(askForPassword)
-export(isAvailable)
-export(getVersion)

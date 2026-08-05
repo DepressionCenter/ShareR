@@ -1,9 +1,0 @@
-Package: rstudioapi
-Type: Package
-Title: WASM Surrogate for rstudioapi Package
-Version: 0.16.0.9000
-Authors@R: person("Gabriel", "Mongefranco", role = c("aut", "cre"), email = "gabrielm@umich.edu")
-Description: Pure-R WebAssembly surrogate implementation of rstudioapi to prevent IDE interaction errors inside webR.
-License: GPL-3
-Encoding: UTF-8
-RoxygenNote: 7.3.1
