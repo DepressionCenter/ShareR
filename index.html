@@ -8464,6 +8464,20 @@ function bootstrap() {
     // only way in, rather than popping the dialog open before the researcher has asked for it.
     updateSelectedEntry();
   }
+  
+  // Load Google Analytics after everything else is loaded and only if we're on the production domain.
+  try{
+	  if (window.location.hostname === 'code.depressioncenter.org') {    
+		var gaScript = document.createElement('script');
+		gaScript.async = true;
+		gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-3Q455XWS5F';
+		document.head.appendChild(gaScript);
+		window.dataLayer = window.dataLayer || [];
+		function gtag(){dataLayer.push(arguments);}
+		gtag('js', new Date());
+		gtag('config', 'G-3Q455XWS5F');
+	  }
+  } catch (e) { }
 }
 
 bootstrap();
