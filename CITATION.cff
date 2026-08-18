@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 # This file is part of ShareR.
 # CITATION.cff
-# Copyright © 2026 The Regents of the University of Michigan
+# Copyright © YOUR_YEAR The Regents of the University of Michigan
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,12 +12,16 @@ cff-version: 1.2.0
 # GNU General Public License for more details.
 # You should have received a copy of the GNU General Public License along
 # with this program. If not, see https://www.gnu.org/licenses/.
+message: "If you find this repository, code or paper useful for your research, please cite it. ShareR is licensed under the GNU General Public License v3.0 or later. Copyright © 2026 The Regents of the University of Michigan | Eisenberg Family Depression Center (https://depressioncenter.org)."
 type: software
 title: "ShareR"
 doi: "10.5281/zenodo.21812997" # Use version-agnostic DOI
-url: "https://github.com/DepressionCenter/ShareR" # project website or repository URL
+url: "https://code.depressioncenter.org/ShareR" # project website or repository URL
 repository-code: "https://github.com/DepressionCenter/ShareR"
 license: "gpl-3.0-or-later"
+contact:
+  - name: "Eisenberg Family Depression Center, University of Michigan"
+    website: "https://depressioncenter.org"
 authors:
   - family-names: "Mongefranco"
     given-names: "Gabriel"
