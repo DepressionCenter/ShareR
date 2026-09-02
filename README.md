@@ -26,13 +26,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ### _Share your science. R in the browser, nothing to install._
 
 ## Description
-ShareR™ runs R and R Markdown scripts entirely inside a web browser. There is no server, no R installation, and no setup. Point it at a GitHub repository, add your own data files, and press Run.
+ShareR™ is an open-source, serverless R and R Markdown runner powered by webR and WebAssembly in the browser. Give it a GitHub repository or script, add local data files, and run the analysis without installing R or sending those files to a remote analysis server.
 
 <a href="https://code.depressioncenter.org/ShareR/?repo=DepressionCenter/EMA-CleanR" target="_blank" title="View live demo of ShareR">![Preview Image](./images/ShareR-preview-2.png "ShareR Preview")</a>
 
-ShareR™ lets you run an R analysis right in your web browser, no installation required. Share a link to your R script or R Markdown file on GitHub, and anyone can open it, add their own data, and run it instantly, even on a locked-down work laptop where they can't install software.
+ShareR installs compatible precompiled WebAssembly packages, streams analysis output, renders charts and tables, and packages generated files for download. Shareable URLs help research teams run the same browser-based analysis on locked-down devices and reproduce results with less setup.
 
-Everything happens on your computer. Your files are never uploaded anywhere, and there's no server behind ShareR that could receive them. When you run an analysis, you'll see the results build in real time: charts, tables, and any files the script creates, all wrapped up into a report you can view right away or download as a package to keep.
+ShareR supports browser-compatible R workflows rather than every desktop R environment: packages that require native compilation and full Pandoc-based R Markdown rendering are not supported.
 
 For research teams, that means anyone on the project can run the same analysis the same way, without needing R installed or any technical setup, just a link and a browser.
 
