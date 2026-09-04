@@ -7626,6 +7626,12 @@ const MAX_MARKERS_PER_SOURCE_LINE = 3;
 // iconHtml is either an icon SVG constant or a plain "+N" overflow label -- both are always this
 // file's own strings (never user/script-controlled text), so innerHTML is safe here.
 function appendOutputMarkerButton(row, index, iconHtml, label, onClick) {
+  // The editor row is hidden because its highlighted source duplicates the editable textarea.
+  // Expose the button while keeping every source token hidden from assistive technology.
+  row.querySelectorAll(":scope > :not(.output-marker)").forEach((sourceToken) => {
+    sourceToken.setAttribute("aria-hidden", "true");
+  });
+  row.removeAttribute("aria-hidden");
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "output-marker";
@@ -7633,7 +7639,7 @@ function appendOutputMarkerButton(row, index, iconHtml, label, onClick) {
   btn.innerHTML = iconHtml;
   btn.setAttribute("aria-label", label);
   btn.addEventListener("click", onClick);
-  row.appendChild(btn);
+  row.prepend(btn);
 }
 
 /* Adds a clickable marker to the source line that most likely produced each plot/file a chunk
@@ -7712,12 +7718,23 @@ function annotateSourceViewerOutputMarkers(runState) {
     if (!row) continue;
     const visible = markers.slice(0, MAX_MARKERS_PER_SOURCE_LINE);
     const overflow = markers.slice(MAX_MARKERS_PER_SOURCE_LINE);
-    visible.forEach((m, i) => appendOutputMarkerButton(row, i, m.glyph, m.label, m.onClick));
+    const markerDefinitions = visible.map((marker) => ({
+      glyph: marker.glyph,
+      label: marker.label,
+      onClick: marker.onClick
+    }));
     if (overflow.length) {
       let cycle = 0;
-      appendOutputMarkerButton(row, visible.length, "+" + overflow.length,
-        overflow.length + " more output" + (overflow.length === 1 ? "" : "s") + " on this line -- click to cycle through them",
-        () => { overflow[cycle % overflow.length].onClick(); cycle++; });
+      markerDefinitions.push({
+        glyph: "+" + overflow.length,
+        label: overflow.length + " more output" + (overflow.length === 1 ? "" : "s") + " on this line -- click to cycle through them",
+        onClick: () => { overflow[cycle % overflow.length].onClick(); cycle++; }
+      });
+    }
+    // prepend() protects prism-code-editor's token lookup; reverse insertion preserves tab order.
+    for (let index = markerDefinitions.length - 1; index >= 0; index--) {
+      const marker = markerDefinitions[index];
+      appendOutputMarkerButton(row, index, marker.glyph, marker.label, marker.onClick);
     }
   }
 }
