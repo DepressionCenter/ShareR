@@ -1,45 +1,39 @@
-# .gitignore - special file for Git telling it which files to ignore when committing changes to the repository
+# This file is part of ShareR™
+# .gitignore: Excludes local tools, credentials, caches, and temporary development files.
+# Author(s): Gabriel Mongefranco.
+# Created: 2026-07-27
+# Last Modified: 2026-09-04
+# Summary: Prevents local-only and sensitive files from entering version control while keeping
+#          ShareR source code, documentation, examples, and bundled server binaries trackable.
+# Notes: See README file for documentation and full license information.
+#
+# Copyright (c) 2026 The Regents of the University of Michigan
+#
+# GNU General Public License v3.0 or later: https://www.gnu.org/licenses/gpl-3.0.html
 
-# Ignore all data files except the one that's tracked
-# Example: .csv
+# Project data
+# Ignore data files here when needed, then negate any intentionally tracked samples.
+# Example: *.csv
 # Example: !sample-data.csv
 
-# Ignore RStudio project files/folders
-.Rproj.user/
-*.Rproj
-
-# Ignore R cache and history
-.RData
-.RHistory
-.Rhistory
-.Ruserdata
-.Rapp.history
-
-# Ignore OS cruft
+# Operating systems
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# Ignore Logs
-*.log
-log.txt
-logs.txt
-logs/*
-
-# Ignore Editor cruft
-.vscode/
+# Editors
 .idea/
+.vscode/
 *.swp
+*.swo
 
-# Ignore AI coding tool configuration files, except AGENTS.md
-.claude
-.claude/*
-.claudecode/*
-.gemini
-.gemini/*
+# AI-tool local configuration; AGENTS.md remains tracked
+.claude/
+.claudecode/
+.gemini/
+.github-copilot/
+.kimi/
 .github/copilot-instructions.md
-.github-copilot
-.github-copilot/*
-.kimi
 CLAUDE.md
 CLAUDECODE.md
 CONVENTIONS.md
@@ -48,7 +42,42 @@ KIMI.md
 CODEX.md
 CHATGPT.md
 
-# Ignore cache files
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Logs, caches, coverage, and temporary files
+*.log
+log.txt
+logs.txt
+logs/
 *.cache
+.cache/
+coverage/
+.coverage
+tmp/
+temp/
+
+# R and RStudio
+.Rproj.user/
+*.Rproj
+.RData
+.RHistory
+.Rhistory
+.Ruserdata
+.Rapp.history
+
+# Node-based development tools
+node_modules/
+.npm/
+.pnpm-store/
+
+# Python-based validation helpers
 __pycache__/
+*.py[cod]
 .venv/
