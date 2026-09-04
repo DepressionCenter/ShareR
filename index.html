@@ -640,6 +640,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     padding: clamp(1.5rem, 6vw, 4.5rem) 1.25rem;
   }
   .workspace-start[hidden] { display: none; }
+  #zoom-control[hidden] { display: none; }
   .workspace-start-content { width: min(620px, 100%); text-align: center; }
   .workspace-start-icon {
     width: 52px;
@@ -1614,9 +1615,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
       </div>
     </div>
     <div class="panel-scroll">
-      <section class="section" aria-labelledby="input-data-label">
+      <section class="section" aria-label="Current script inputs">
         <div class="section-label-row">
-          <span class="section-label" id="input-data-label">Current Script Inputs<span class="section-label-note">updates from editor</span></span>
+          <span class="section-label" id="input-data-label">Current Script Inputs <span class="section-label-note" aria-hidden="true">updates from editor</span></span>
         </div>
         <ul id="data-file-carousel" class="file-carousel" aria-labelledby="input-data-label"></ul>
       </section>
