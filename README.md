@@ -151,6 +151,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 #### Contributors:
 + [Eisenberg Family Depression Center](https://depressioncenter.org) [(@DepressionCenter)](https://github.com/DepressionCenter)
++ [Jonas Thiemann](https://github.com/jonpyt) [(@jonpyt)](https://github.com/jonpyt) - Reviewed the prism-code-editor integration and recommended accessibility and DOM-order improvements.
 
 
 #### This work is based in part on the following projects, libraries and/or studies:
