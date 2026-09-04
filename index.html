@@ -704,11 +704,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     --pce-line-number: var(--source-gutter);
     --pce-bg-highlight: rgba(255, 255, 255, 0.04);
     --pce-border-highlight: none;
-    /* --padding-inline is included on the *left* edge of the line-number gutter block (before the
-       right-aligned digits, per layout.css's --padding-left formula) -- widened here to reserve a
-       blank strip for the output-marker button placed by annotateSourceViewerOutputMarkers,
-       without needing to fight the digits' own box. Confirm spacing live once markers render. */
-    --padding-inline: 1.6em;
+    /* --padding-inline is included before the right-aligned line number. Reserve enough space for
+       three output markers plus the optional overflow marker without covering the number. */
+    --padding-inline: 5em;
     height: 100%;
     color: var(--source-fg);
     font-family: ui-monospace, Consolas, "Courier New", monospace;
@@ -1094,26 +1092,24 @@ with this program. If not, see https://www.gnu.org/licenses/.
     justify-content: center;
   }
   .output-marker:hover { transform: scale(1.15); }
-  /* Positioned into the blank strip --padding-inline reserves at the left edge of the line-number
-     gutter block (see .prism-code-editor above) -- sits over the sticky number column (layout.css
-     gives it z-index:2) rather than inside a dedicated slot element, since prism-code-editor's
-     line divs don't have one. Unscoped to .prism-code-editor (not ".editor-body .output-marker")
-     for the same reason as the theming rules above: markers must keep working if they happen to
-     be placed (or already present) while the editor is re-parented into the Maximize dialog.
-     pointer-events:auto is load-bearing, not decorative: layout.css sets pointer-events:none on
-     the whole .pce-wrapper (so mouse interaction routes through the real <textarea> layered on
-     top) and only opts the textarea itself back in -- without this override the marker inherits
-     "none" and renders visibly but can never be clicked. */
+  /* A sticky marker remains in the gutter during horizontal scrolling. Its negative leading
+     margin moves it left of the line number; the matching width and trailing margin keep the
+     highlighted code aligned with prism-code-editor's textarea. Unscoped to .editor-body because
+     Maximize re-parents the same editor outside that container. pointer-events:auto overrides
+     layout.css's non-interactive .pce-wrapper so each button remains clickable. */
   .prism-code-editor .output-marker {
-    position: absolute;
-    left: 2px;
-    top: 50%;
-    transform: translateY(-50%);
+    --output-marker-width: 13px;
+    position: sticky;
+    left: var(--output-marker-left);
+    width: var(--output-marker-width);
+    margin-left: calc(var(--output-marker-left) - var(--padding-left));
+    margin-right: calc(var(--padding-left) - var(--output-marker-left) - var(--output-marker-width));
+    vertical-align: middle;
     z-index: 3;
     font-size: 0.75rem;
     pointer-events: auto;
   }
-  .prism-code-editor .output-marker:hover { transform: translateY(-50%) scale(1.2); }
+  .prism-code-editor .output-marker:hover { transform: scale(1.2); }
   @keyframes sharerHighlightFlash {
     0% { background-color: #fef08a; box-shadow: 0 0 0 3px #eab308; }
     100% { background-color: inherit; box-shadow: none; }
@@ -7635,7 +7631,7 @@ function appendOutputMarkerButton(row, index, iconHtml, label, onClick) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "output-marker";
-  btn.style.left = (2 + index * 13) + "px";
+  btn.style.setProperty("--output-marker-left", (2 + index * 13) + "px");
   btn.innerHTML = iconHtml;
   btn.setAttribute("aria-label", label);
   btn.addEventListener("click", onClick);
