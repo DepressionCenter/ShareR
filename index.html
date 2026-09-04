@@ -995,6 +995,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
      operation applied uniformly to the whole subtree regardless of what's inside it, so it can't
      have that kind of element-specific inconsistency. */
   .tab-panel.zoom-outer { padding: 0; overflow: hidden; }
+  /* The normal report height is computed from its scaled .zoom-inner. The empty workspace hides
+     that element, so its measured height is zero; pin the panel to the available viewport instead
+     while the unscaled startup card is shown. !important intentionally wins over the stale inline
+     pixel height last written by refreshZoomFrameHeight(). */
+  .tab-panel.zoom-outer.workspace-empty { height: 100% !important; min-height: 100%; overflow-y: auto; }
   /* No transition on transform here, deliberately: a transitioned transform changed synchronously
      alongside the outer frame's height (applyZoom does both in the same call) reproduced a real,
      non-deterministic race in testing -- the very first change (before the browser had painted
@@ -7649,9 +7654,11 @@ function renderRunSourceLine() {
 /* Replaces the empty Report view with the start drop area until a runnable script is selected. */
 function updateWorkspaceEmptyState() {
   const empty = !App.selectedEntryPath;
+  elTabReportPanel.classList.toggle("workspace-empty", empty);
   elWorkspaceStart.hidden = !empty;
   elTabReportZoomInner.hidden = empty;
   elZoomControl.hidden = empty;
+  if (!empty) requestAnimationFrame(refreshZoomFrameHeight);
 }
 
 function updateRunControls() {
