@@ -3,7 +3,7 @@ This file is part of ShareR™
 index.html: Main HTML file for the ShareR™ application.
 Author(s): Gabriel Mongefranco.
 Created: 2026-07-27
-Last Modified: 2026-08-02
+Last Modified: 2026-09-04
 Summary: ShareR™ runs R and R Markdown scripts entirely inside a web browser via WebAssembly (webR).
          Provides a workspace / results two-pane layout, Report/Plots/Files tabs, a source viewer,
          package installation, and output rendering (plots, files, CSV preview, ZIP download).
@@ -293,6 +293,26 @@ with this program. If not, see https://www.gnu.org/licenses/.
     gap: 0.5rem;
   }
   .panel-header h2 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+  .workspace-header-actions { display: flex; align-items: center; gap: 0.15rem; }
+  .workspace-header-action {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--um-dark-blue);
+    cursor: pointer;
+  }
+  .workspace-header-action:hover,
+  .workspace-header-action:focus-visible {
+    background: var(--um-maize);
+    border-color: var(--panel-border);
+  }
+  .workspace-header-action svg { width: 15px; height: 15px; }
 
   .workspace-pane {
     position: relative;
@@ -365,9 +385,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
   .workspace-resize-handle[aria-disabled="true"] { cursor: default; }
   .workspace-resize-handle[aria-disabled="true"] .grip-pill { visibility: hidden; }
-  /* Reserves room so the header's own "Change script..." button never renders underneath the
-     collapse toggle below, which is positioned independently of header layout (it must survive
-     .panel-header being hidden on collapse, so it can't just be a normal header child). */
+  /* Reserves room so the header action row never renders underneath the collapse toggle below,
+     which is positioned independently of header layout and must survive a collapsed header. */
   #workspace-pane .panel-header { padding-right: 40px; }
   .workspace-collapse-btn {
     position: absolute;
@@ -435,7 +454,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .workspace-section > *:not(summary) { margin-top: 0.6rem; }
 
   .field { margin-bottom: 0.7rem; }
-  .field label, .local-files-label {
+  .field label {
     display: block;
     font-weight: bold;
     margin-bottom: 0.3rem;
@@ -484,21 +503,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-radius: 4px;
     margin: 0;
   }
-  .local-add-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
-  .dropzone {
-    border: 2px dashed var(--um-dark-grey);
-    background-color: var(--um-maize);
-    color: var(--um-dark-blue);
-  }
-  .dropzone.drag-over {
-    border-color: var(--um-dark-blue);
-    background-color: var(--um-white);
-  }
-
-
-  /* ---------- Workspace: Input Data carousel (ShareR-UI-Specification.md section 3) ---------- */
-  .section { padding: 0.35rem 1rem 0.75rem; border-bottom: 1px solid var(--panel-border); }
-  .section-label-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.4rem; }
+  /* ---------- Workspace: current-script inputs and project tree ---------- */
+  .section { padding: 0.35rem 0.65rem 0.65rem; border-bottom: 1px solid var(--panel-border); }
+  .section-label-row { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; margin-bottom: 0.35rem; }
   .section-label {
     font-size: 0.75rem;
     font-weight: 700;
@@ -506,47 +513,46 @@ with this program. If not, see https://www.gnu.org/licenses/.
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .link-button {
-    background: none;
-    border: none;
-    color: var(--um-medium-blue);
-    font-weight: 600;
-    font-size: 0.8rem;
-    cursor: pointer;
-    padding: 0;
+  .section-label-note {
+    margin-left: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
   }
-  .link-button:hover, .link-button:focus-visible { text-decoration: underline; }
-
   .file-carousel {
-    display: flex;
-    gap: 0.5rem;
-    overflow-x: auto;
-    padding: 0 0 0.35rem;
+    display: grid;
+    gap: 0.3rem;
+    padding: 0;
     margin: 0;
     list-style: none;
   }
   .empty-carousel-note { font-size: 0.8rem; color: var(--text-muted); font-style: italic; padding: 0.25rem 0; }
   .data-card {
-    flex: 0 0 auto;
-    width: 116px;
-    border: 1px dashed var(--um-dark-grey);
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--panel-border);
     border-radius: 4px;
-    padding: 0.5rem;
-    text-align: center;
+    padding: 0.3rem 0.35rem;
     background: #f8fafc;
   }
   .data-card:hover, .data-card:focus-within { border-color: var(--um-medium-blue); background: #eff6ff; }
-  .data-icon { font-size: 1.25rem; line-height: 1; }
+  .data-icon { color: var(--um-medium-blue); line-height: 1; }
+  .data-icon svg { width: 16px; height: 16px; }
+  .data-card-copy { min-width: 0; }
   .data-filename {
     font-weight: 600;
-    font-size: 0.7rem;
-    margin: 0.25rem 0 0.1rem;
+    font-size: 0.75rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .data-status { font-size: 0.65rem; color: var(--text-muted); margin-bottom: 0.35rem; }
-  .data-card-actions { display: flex; gap: 0.25rem; justify-content: center; }
+  .data-status { font-size: 0.65rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .data-card-actions { display: flex; gap: 0.1rem; justify-content: center; }
   .data-card-actions button {
     display: flex;
     align-items: center;
@@ -555,6 +561,126 @@ with this program. If not, see https://www.gnu.org/licenses/.
     width: 26px;
     height: 26px;
   }
+
+  .workspace-tree-section { padding: 0.35rem 0.4rem 0.55rem; }
+  .workspace-tree-section .section-label-row { padding: 0 0.25rem; }
+  .workspace-tree {
+    max-height: 170px;
+    overflow: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    scrollbar-width: thin;
+  }
+  .workspace-tree-list { margin: 0; padding: 0 0 0 0.9rem; list-style: none; }
+  .workspace-tree > .workspace-tree-list { padding-left: 0; }
+  .workspace-tree-folder > details > summary,
+  .workspace-tree-file {
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 4px;
+    padding: 0.15rem 0.25rem;
+    font-size: 0.75rem;
+  }
+  .workspace-tree-folder > details > summary { cursor: pointer; }
+  .workspace-tree-folder > details > summary::marker { color: var(--text-muted); }
+  .workspace-tree-folder > details > summary:hover,
+  .workspace-tree-folder > details > summary:focus-visible,
+  .workspace-tree-file:hover,
+  .workspace-tree-file:focus-within { background: #eff6ff; }
+  .workspace-tree-icon { flex: 0 0 auto; color: var(--um-medium-blue); }
+  .workspace-tree-icon svg { display: block; width: 15px; height: 15px; }
+  .workspace-tree-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button.workspace-tree-name {
+    border: 0;
+    padding: 0;
+    text-align: left;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+  button.workspace-tree-name[aria-current="true"] { color: var(--um-medium-blue); font-weight: 700; }
+  .workspace-tree-actions { display: flex; gap: 0.05rem; opacity: 0; transition: opacity 0.12s ease; }
+  .workspace-tree-file:hover .workspace-tree-actions,
+  .workspace-tree-file:focus-within .workspace-tree-actions { opacity: 1; }
+  @media (hover: none) {
+    .workspace-tree-actions { opacity: 1; }
+  }
+  .workspace-tree-action {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+  }
+  .workspace-tree-action:hover,
+  .workspace-tree-action:focus-visible { color: var(--um-dark-blue); background: var(--um-maize); }
+  .workspace-tree-action:disabled { opacity: 0.35; cursor: default; background: transparent; }
+  .workspace-tree-action svg { width: 13px; height: 13px; }
+
+  .workspace-start {
+    min-height: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: clamp(1.5rem, 6vw, 4.5rem) 1.25rem;
+  }
+  .workspace-start[hidden] { display: none; }
+  .workspace-start-content { width: min(620px, 100%); text-align: center; }
+  .workspace-start-icon {
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    color: var(--um-dark-blue);
+    background: var(--um-maize);
+  }
+  .workspace-start-icon svg { width: 26px; height: 26px; }
+  .workspace-start h2 { margin: 0 0 0.35rem; font-size: 1.25rem; }
+  .workspace-start-copy { margin: 0 0 1rem; color: var(--text-muted); }
+  .workspace-start-dropzone {
+    padding: 1.6rem 1rem;
+    border: 2px dashed var(--um-medium-blue);
+    border-radius: 8px;
+    background: #f7fbff;
+  }
+  .workspace-start-dropzone.drag-over,
+  main#main-content.workspace-drag-over .workspace-start-dropzone { background: #e6f2ff; border-color: var(--um-dark-blue); }
+  .workspace-start-upload-icon { display: inline-flex; color: var(--um-medium-blue); }
+  .workspace-start-upload-icon svg { width: 28px; height: 28px; }
+  .workspace-start-drop-title { margin: 0.45rem 0 0.2rem; font-weight: 700; }
+  .workspace-start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin-top: 0.9rem; }
+  .workspace-sample {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    background: var(--panel-header-bg);
+    text-align: left;
+  }
+  .workspace-sample strong { display: block; font-size: 0.85rem; }
+  .workspace-sample span { color: var(--text-muted); font-size: 0.75rem; }
 
   /* ---------- Source code editor: prism-code-editor (Stage 2D.1) ----------
      The editor library owns line/token DOM construction; ShareR only sets its CSS custom
@@ -1239,10 +1365,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
     outline-offset: 2px;
   }
 
-  /* ---------- "Load a script" modal (ShareR-UI-Specification.md section 3 + user direction:
-     URL parameters drive loading; this dialog only appears when the URL didn't already resolve
-     a script, or when the researcher explicitly asks to change one). ---------- */
-  dialog#load-script-modal {
+  /* ---------- Remote-source and new-workspace-item dialogs ---------- */
+  dialog#load-script-modal,
+  dialog#workspace-item-modal {
     border: none;
     border-radius: 8px;
     padding: 0;
@@ -1251,7 +1376,8 @@ with this program. If not, see https://www.gnu.org/licenses/.
     overflow: hidden;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
   }
-  dialog#load-script-modal::backdrop { background: rgba(0, 39, 76, 0.55); }
+  dialog#load-script-modal::backdrop,
+  dialog#workspace-item-modal::backdrop { background: rgba(0, 39, 76, 0.55); }
   .modal-header {
     display: flex;
     justify-content: space-between;
@@ -1276,10 +1402,11 @@ with this program. If not, see https://www.gnu.org/licenses/.
   .modal-close:hover, .modal-close:focus-visible { color: var(--um-maize); }
   .modal-close svg { width: 16px; height: 16px; }
   .modal-body { padding: 1rem 1.25rem 1.25rem; overflow-y: auto; max-height: calc(88vh - 3.5rem); }
+  .workspace-item-error { margin: 0.35rem 0 0; color: #9b1c1c; font-weight: 600; }
 
   /* ---------- Error modal: replaces a bare alert() so a run failure reads as a designed part of
      the app (spec/user direction 2026-07-29) rather than a raw browser dialog that just points at
-     the log. Same header treatment as the "Load a script" modal -- no alarm-red, just a plain,
+     the log. Same header treatment as the remote-source dialog -- no alarm-red, just a plain,
      calm dialog. The execution log is still one click away via the "View Execution Log" button,
      for anyone who wants the full technical detail, but the plain-language reason is already in
      the dialog body, not hidden behind that click. ---------- */
@@ -1360,8 +1487,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-color: #24282a;
   }
 
-  .workspace-empty-state .btn { margin-top: 0.3rem; }
-
   @media (max-width: 900px) {
     main#main-content { flex-direction: column; gap: 1rem; }
     .workspace-pane { max-width: none; resize: vertical; }
@@ -1380,6 +1505,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     /* Horizontal drag-resize is desktop-only (see initWorkspacePaneCollapseAndResize); the
        vertical axis here is covered by the native resize:vertical grip above instead. */
     .workspace-resize-handle { display: none; }
+    .workspace-sample { align-items: flex-start; flex-direction: column; }
     /* Collapsing shrinks height here, not width, so the chevron should point up/down rather than
        the desktop left/right -- same base icon, rotated an extra quarter-turn (composed with
        icon-flipped's own 180deg, not stacked as a separate transform, since only one transform
@@ -1476,24 +1602,31 @@ with this program. If not, see https://www.gnu.org/licenses/.
   <section id="workspace-pane" class="panel workspace-pane" aria-labelledby="workspace-heading">
     <div class="panel-header">
       <h2 id="workspace-heading">Workspace</h2>
-      <button type="button" id="open-load-modal-button" class="btn btn-secondary btn-sm">
-        <span class="btn-icon" aria-hidden="true"></span><span class="btn-text">Change script</span>
-      </button>
+      <div class="workspace-header-actions" role="group" aria-label="Workspace actions">
+        <button type="button" id="open-load-modal-button" class="workspace-header-action"
+          aria-label="Open script URL or repository" title="Open URL or repository"></button>
+        <button type="button" id="new-script-button" class="workspace-header-action"
+          aria-label="Create new script" title="Create new script"></button>
+        <button type="button" id="new-directory-button" class="workspace-header-action"
+          aria-label="Create new directory" title="Create new directory"></button>
+        <button type="button" id="workspace-add-files-button" class="workspace-header-action"
+          aria-label="Add files" title="Add files"></button>
+      </div>
     </div>
     <div class="panel-scroll">
-
-      <div id="workspace-empty-state" class="workspace-section" hidden>
-        <p class="help-text">No script loaded yet.</p>
-        <button type="button" id="open-load-modal-empty-button" class="btn btn-action btn-sm">Load a script</button>
-      </div>
-
-      <div class="section">
+      <section class="section" aria-labelledby="input-data-label">
         <div class="section-label-row">
-          <span class="section-label" id="input-data-label">Input Data</span>
-          <button type="button" id="add-more-files-button" class="link-button">+ Add files</button>
+          <span class="section-label" id="input-data-label">Current Script Inputs<span class="section-label-note">updates from editor</span></span>
         </div>
         <ul id="data-file-carousel" class="file-carousel" aria-labelledby="input-data-label"></ul>
-      </div>
+      </section>
+
+      <section class="section workspace-tree-section" aria-labelledby="workspace-files-label">
+        <div class="section-label-row">
+          <span class="section-label" id="workspace-files-label">Files</span>
+        </div>
+        <nav id="workspace-file-tree" class="workspace-tree" aria-label="Workspace files"></nav>
+      </section>
 
       <div id="source-editor" class="editor-container" hidden>
         <div class="editor-header">
@@ -1593,6 +1726,28 @@ with this program. If not, see https://www.gnu.org/licenses/.
               <div id="report-loading-status" class="report-loading-status">Preparing R environment…</div>
             </div>
           </div>
+          <div id="workspace-start" class="workspace-start" hidden>
+            <div class="workspace-start-content">
+              <div class="workspace-start-icon" aria-hidden="true"></div>
+              <h2>Start a ShareR workspace</h2>
+              <p class="workspace-start-copy">Bring an R script, R Markdown project, or data folder. Everything runs in this browser.</p>
+              <div id="workspace-start-dropzone" class="workspace-start-dropzone">
+                <span class="workspace-start-upload-icon" aria-hidden="true"></span>
+                <div class="workspace-start-drop-title">Drop files or folders here</div>
+                <div class="help-text">R, Rmd, CSV, Excel, and project folders</div>
+                <div class="workspace-start-actions">
+                  <button type="button" id="start-add-files-button" class="btn btn-primary">Choose files</button>
+                  <button type="button" id="start-add-folder-button" class="btn btn-secondary">Choose folder</button>
+                  <button type="button" id="start-new-script-button" class="btn btn-secondary">New script</button>
+                  <button type="button" id="start-open-remote-button" class="btn btn-secondary">Open URL or repository</button>
+                </div>
+              </div>
+              <div class="workspace-sample">
+                <div><strong>Try a sample project</strong><span>Explore EMA data cleaning with included sample data.</span></div>
+                <a class="btn btn-secondary btn-sm" href="?repo=DepressionCenter/EMA-CleanR">Open EMA-CleanR</a>
+              </div>
+            </div>
+          </div>
           <div id="tab-report-zoom-inner" class="zoom-inner">
             <p class="help-text">Run a script to see its report here.</p>
           </div>
@@ -1625,24 +1780,14 @@ with this program. If not, see https://www.gnu.org/licenses/.
 
 <dialog id="load-script-modal" class="load-modal" aria-labelledby="load-modal-title">
   <div class="modal-header">
-    <h2 id="load-modal-title">Load a script</h2>
+    <h2 id="load-modal-title">Open URL or Repository</h2>
     <button type="button" id="close-load-modal-button" class="modal-close" aria-label="Close"></button>
   </div>
   <div class="modal-body">
     <p class="help-text">
-      Enter a script or repo URL, or upload R scripts from your computer.
+      Open a public R script or repository. Use the Workspace buttons for files on this computer.
     </p>
     <form id="source-form">
-      <div class="field">
-        <label for="entry-input">Script URL or repository-relative path (entry)</label>
-        <input type="text" id="entry-input" name="entry"
-          placeholder="https://example.org/analysis.R or analysis/clean.R" autocomplete="off">
-      </div>
-      <div class="field">
-        <label for="data-input">Data file(s) (comma-separated URLs or repository paths; optional)</label>
-        <input type="text" id="data-input" name="data"
-          placeholder="https://example.org/data.csv, lookup.csv, data/" autocomplete="off">
-      </div>
       <div class="field-row">
         <div class="field">
           <label for="repo-input">Repository (optional)</label>
@@ -1654,30 +1799,47 @@ with this program. If not, see https://www.gnu.org/licenses/.
           <input type="text" id="ref-input" name="ref" placeholder="main" autocomplete="off">
         </div>
       </div>
-    </form>
-
-    <div class="field" style="margin-top: 1rem;">
-      <span id="local-files-label" class="local-files-label">Add files from your computer</span>
-      <div class="local-add-controls">
-        <button type="button" id="add-files-button" class="btn btn-action dropzone"
-          aria-describedby="local-files-help">Add files (click, drop, or paste)</button>
-        <button type="button" id="add-folder-button" class="btn btn-action">Add a folder</button>
+      <div class="field">
+        <label for="entry-input">Script URL or path within repository</label>
+        <input type="text" id="entry-input" name="entry"
+          placeholder="https://example.org/analysis.R or analysis/clean.R" autocomplete="off">
       </div>
-      <p id="local-files-help" class="help-text">
-        Click to browse, drag files onto the button above, or paste files copied from your file
-        manager. Files added here always take priority over a file from a URL or repository with
-        the same name, and the substitution is announced below.
-      </p>
-      <input type="file" id="file-input" multiple hidden>
-      <input type="file" id="folder-input" multiple webkitdirectory hidden>
-    </div>
-
+      <div class="field">
+        <label for="data-input">Additional data URLs or repository paths (optional)</label>
+        <input type="text" id="data-input" name="data"
+          placeholder="https://example.org/data.csv, lookup.csv, data/" autocomplete="off">
+      </div>
+    </form>
     <div class="controls controls-stacked">
       <span id="staging-status" role="status" aria-live="polite"></span>
-      <button type="submit" form="source-form" class="btn btn-primary">Load</button>
+      <button type="submit" form="source-form" class="btn btn-primary">Open</button>
     </div>
   </div>
 </dialog>
+
+<dialog id="workspace-item-modal" class="load-modal" aria-labelledby="workspace-item-modal-title">
+  <div class="modal-header">
+    <h2 id="workspace-item-modal-title">Create New Script</h2>
+    <button type="button" id="close-workspace-item-modal-button" class="modal-close" aria-label="Close"></button>
+  </div>
+  <div class="modal-body">
+    <form id="workspace-item-form">
+      <div class="field">
+        <label for="workspace-item-path">Path</label>
+        <input type="text" id="workspace-item-path" name="path" autocomplete="off" required>
+        <p id="workspace-item-help" class="help-text"></p>
+        <p id="workspace-item-error" class="workspace-item-error" role="alert" hidden></p>
+      </div>
+      <div class="controls">
+        <button type="submit" class="btn btn-primary">Create</button>
+        <button type="button" id="cancel-workspace-item-button" class="btn btn-secondary">Cancel</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<input type="file" id="file-input" multiple hidden>
+<input type="file" id="folder-input" multiple webkitdirectory hidden>
 
 <dialog id="error-modal" class="error-modal" aria-labelledby="error-modal-title" role="alertdialog">
   <div class="modal-header">
@@ -3712,6 +3874,12 @@ async function collectFilesFromDataTransfer(dataTransfer) {
 
 async function writeStagedFilesToVfs(engine, list) {
   const dirs = new Set([CONFIG.VFS_PROJECT_DIR]);
+  // Empty workspace directories have no file path from which to infer their existence, so include
+  // them explicitly before writing files. vfsPathFor applies the same traversal checks as uploads.
+  for (const relativeDir of App.workspaceDirectories) {
+    const markerPath = vfsPathFor(relativeDir + "/.sharer-directory");
+    dirs.add(markerPath.slice(0, markerPath.lastIndexOf("/")));
+  }
   for (const f of list) {
     const full = vfsPathFor(f.path);
     let d = full.slice(0, full.lastIndexOf("/"));
@@ -3768,6 +3936,9 @@ async function confirmWorkingDirectory(engine) {
 
 const App = {
   stagedStore: null,
+  // Empty directories created in the workspace cannot live in StagedFileStore because that store
+  // intentionally represents files only. Parent folders containing files are inferred at render.
+  workspaceDirectories: new Set(),
   // Snapshot of each staged file as first resolved (winning source-priority entry), captured once
   // after initial staging settles -- { bytes, source, sourceLabel } keyed by path.toLowerCase(),
   // matching StagedFileStore's own key. See snapshotOriginalFileBytes/isFileModified/
@@ -4724,12 +4895,6 @@ const REPLACE_ICON_SVG = // bi-upload
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
   '<path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/>' +
   '<path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708z"/>' +
-  '</svg>';
-
-const REMOVE_ICON_SVG = // bi-trash
-  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
-  '<path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>' +
-  '<path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>' +
   '</svg>';
 
 // Raw path data (no outer <svg>) for the two output-marker glyphs, shared by the plain
@@ -6911,9 +7076,15 @@ const elRepoInput = document.getElementById("repo-input");
 const elRefInput = document.getElementById("ref-input");
 const elStagingStatus = document.getElementById("staging-status");
 const elDataFileCarousel = document.getElementById("data-file-carousel");
+const elWorkspaceFileTree = document.getElementById("workspace-file-tree");
 
-const elAddFilesButton = document.getElementById("add-files-button");
-const elAddFolderButton = document.getElementById("add-folder-button");
+const elWorkspaceAddFilesButton = document.getElementById("workspace-add-files-button");
+const elStartAddFilesButton = document.getElementById("start-add-files-button");
+const elStartAddFolderButton = document.getElementById("start-add-folder-button");
+const elNewScriptButton = document.getElementById("new-script-button");
+const elNewDirectoryButton = document.getElementById("new-directory-button");
+const elStartNewScriptButton = document.getElementById("start-new-script-button");
+const elStartOpenRemoteButton = document.getElementById("start-open-remote-button");
 const elFileInput = document.getElementById("file-input");
 const elFolderInput = document.getElementById("folder-input");
 
@@ -6928,11 +7099,10 @@ const elLog = document.getElementById("output-log");
 
 const elHeaderCenterLabel = document.getElementById("header-center-label");
 const elWorkspacePane = document.getElementById("workspace-pane");
-const elWorkspaceEmptyState = document.getElementById("workspace-empty-state");
+const elWorkspaceStart = document.getElementById("workspace-start");
 const elMainContent = document.getElementById("main-content");
 const elWorkspaceResizeHandle = document.getElementById("workspace-resize-handle");
 const elWorkspaceCollapseToggle = document.getElementById("workspace-collapse-toggle");
-const elOpenLoadModalEmptyButton = document.getElementById("open-load-modal-empty-button");
 const elSourceEditor = document.getElementById("source-editor");
 const elSourceViewerFilename = document.getElementById("source-viewer-filename");
 const elSourceViewerFilenameText = document.getElementById("source-viewer-filename-text");
@@ -6956,9 +7126,24 @@ elCloseSourceMaximizeButton.innerHTML = RESTORE_ICON_SVG;
 const elLoadModal = document.getElementById("load-script-modal");
 const elOpenLoadModalButton = document.getElementById("open-load-modal-button");
 const elCloseLoadModalButton = document.getElementById("close-load-modal-button");
-const elAddMoreFilesButton = document.getElementById("add-more-files-button");
-elOpenLoadModalButton.querySelector(".btn-icon").innerHTML = CHANGE_SCRIPT_ICON_SVG;
+elOpenLoadModalButton.innerHTML = CHANGE_SCRIPT_ICON_SVG;
 elCloseLoadModalButton.innerHTML = X_ICON_SVG;
+
+const elWorkspaceItemModal = document.getElementById("workspace-item-modal");
+const elWorkspaceItemModalTitle = document.getElementById("workspace-item-modal-title");
+const elWorkspaceItemForm = document.getElementById("workspace-item-form");
+const elWorkspaceItemPath = document.getElementById("workspace-item-path");
+const elWorkspaceItemHelp = document.getElementById("workspace-item-help");
+const elWorkspaceItemError = document.getElementById("workspace-item-error");
+const elCloseWorkspaceItemModalButton = document.getElementById("close-workspace-item-modal-button");
+const elCancelWorkspaceItemButton = document.getElementById("cancel-workspace-item-button");
+elCloseWorkspaceItemModalButton.innerHTML = X_ICON_SVG;
+
+elNewScriptButton.innerHTML = CODE_ICON_SVG;
+elNewDirectoryButton.innerHTML = PLUS_ICON_SVG;
+elWorkspaceAddFilesButton.innerHTML = REPLACE_ICON_SVG;
+document.querySelector(".workspace-start-icon").innerHTML = CODE_ICON_SVG;
+document.querySelector(".workspace-start-upload-icon").innerHTML = REPLACE_ICON_SVG;
 
 const elErrorModal = document.getElementById("error-modal");
 const elErrorModalMessage = document.getElementById("error-modal-message");
@@ -7162,62 +7347,206 @@ function restoreStagedFile(path) {
   }
 }
 
-/* Renders the "Input Data" carousel (ShareR-UI-Specification.md section 3): one card per staged
-   non-script file. The entry script itself is represented by the source code editor below, not
-   by a card here, so scripts (.R/.Rmd) are filtered out. */
-function renderStagedFiles() {
-  const dataFiles = App.stagedStore.list().filter((f) => !/\.(r|rmd)$/i.test(f.path));
+/* Normalizes a statically-resolved path for the browser workspace. URL/absolute/traversal paths
+   are deliberately omitted: the workspace can only replace files inside its isolated project. */
+function normalizeWorkspaceReference(path) {
+  if (!path || /^[a-z][a-z0-9+.-]*:/i.test(path)) return null;
+  try {
+    return vfsPathFor(path.replace(/^\.\//, "")).slice(CONFIG.VFS_PROJECT_DIR.length + 1);
+  } catch {
+    return null;
+  }
+}
+
+/* Returns data paths referenced by the current editor text using the same narrow static-analysis
+   rules as repository auto-staging. Exact missing paths remain visible so Upload can satisfy them. */
+function currentScriptInputReferences() {
+  const staged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+  if (!staged) return [];
+  const text = decodeUtf8(staged.bytes);
+  const variableMap = buildScriptVariableMap(text);
+  const references = new Map();
+  const prefixes = [];
+
+  for (const resolution of findCallArgResolutions(text, DATA_FUNCS_ALT, variableMap)) {
+    if (!resolution) continue;
+    if (resolution.exact) {
+      const normalized = normalizeWorkspaceReference(resolution.exact);
+      if (normalized && isDataFilePath(normalized)) references.set(normalized.toLowerCase(), normalized);
+    } else if (resolution.prefix) {
+      const normalized = normalizeWorkspaceReference(resolution.prefix);
+      if (normalized) prefixes.push(normalized.replace(/\/$/, "") + "/");
+    }
+  }
+
+  for (const file of App.stagedStore.list()) {
+    if (!isDataFilePath(file.path)) continue;
+    if (prefixes.some((prefix) => file.path.toLowerCase().startsWith(prefix.toLowerCase()))) {
+      references.set(file.path.toLowerCase(), file.path);
+    }
+  }
+  return Array.from(references.values());
+}
+
+function createWorkspaceFileAction(iconSvg, label, disabled, onClick, className) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.innerHTML = iconSvg;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.disabled = disabled;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+/* Shows only files the current script text references. Re-running this after editor updates makes
+   the list follow literal/parameter path edits without treating arbitrary strings as file input. */
+function renderCurrentScriptInputs() {
+  const references = currentScriptInputReferences();
   elDataFileCarousel.innerHTML = "";
-  if (dataFiles.length === 0) {
+  if (references.length === 0) {
     const li = document.createElement("li");
     li.className = "empty-carousel-note";
-    li.textContent = "No data files staged yet.";
+    li.textContent = App.selectedEntryPath
+      ? "No input file paths detected in this script."
+      : "Select or create a script to detect its inputs.";
     elDataFileCarousel.appendChild(li);
     return;
   }
-  for (const f of dataFiles) {
+  for (const path of references) {
+    const f = App.stagedStore.get(path);
     const li = document.createElement("li");
     li.className = "data-card";
     const icon = document.createElement("div");
     icon.className = "data-icon";
     icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "\u{1F4C4}";
+    icon.innerHTML = FILE_EARMARK_ICON_SVG;
+    const copy = document.createElement("div");
+    copy.className = "data-card-copy";
     const name = document.createElement("div");
     name.className = "data-filename";
-    name.title = f.path;
-    name.textContent = basenameOf(f.path);
+    name.title = path;
+    name.textContent = basenameOf(path);
     const status = document.createElement("div");
     status.className = "data-status";
-    const dir = dirnameOf(f.path);
-    status.textContent = (dir ? dir + " · " : "") + formatBytes(f.size);
+    const dir = dirnameOf(path);
+    status.textContent = f
+      ? (dir ? dir + " · " : "") + formatBytes(f.size) + (isFileModified(path, f.bytes) ? " · local replacement" : "")
+      : (dir ? dir + " · " : "") + "Not loaded";
+    copy.append(name, status);
     const actions = document.createElement("div");
     actions.className = "data-card-actions";
-    const replaceBtn = document.createElement("button");
-    replaceBtn.type = "button";
-    replaceBtn.className = "btn btn-secondary btn-sm";
-    replaceBtn.innerHTML = REPLACE_ICON_SVG;
-    replaceBtn.setAttribute("aria-label", "Replace " + f.path + " with a file from your computer");
-    replaceBtn.title = "Replace " + f.path;
-    replaceBtn.addEventListener("click", () => replaceStagedFile(f.path));
-    const restoreBtn = document.createElement("button");
-    restoreBtn.type = "button";
-    restoreBtn.className = "btn btn-secondary btn-sm";
-    restoreBtn.innerHTML = REVERT_ICON_SVG;
-    restoreBtn.setAttribute("aria-label", "Restore original " + f.path);
-    restoreBtn.title = "Restore original " + f.path;
-    restoreBtn.disabled = !isFileModified(f.path, f.bytes);
-    restoreBtn.addEventListener("click", () => restoreStagedFile(f.path));
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "btn btn-secondary btn-sm";
-    removeBtn.innerHTML = REMOVE_ICON_SVG;
-    removeBtn.setAttribute("aria-label", "Remove " + f.path);
-    removeBtn.title = "Remove " + f.path;
-    removeBtn.addEventListener("click", () => { App.stagedStore.remove(f.path); updateSelectedEntry(); });
-    actions.append(replaceBtn, restoreBtn, removeBtn);
-    li.append(icon, name, status, actions);
+    actions.append(
+      createWorkspaceFileAction(REPLACE_ICON_SVG, "Upload replacement for " + path, false,
+        () => replaceStagedFile(path), "btn btn-secondary btn-sm"),
+      createWorkspaceFileAction(REVERT_ICON_SVG, "Restore original " + path,
+        !f || !isFileModified(path, f.bytes), () => restoreStagedFile(path), "btn btn-secondary btn-sm")
+    );
+    li.append(icon, copy, actions);
     elDataFileCarousel.appendChild(li);
   }
+}
+
+function addPathToWorkspaceTree(root, path, file) {
+  const parts = path.split("/").filter(Boolean);
+  let node = root;
+  parts.forEach((part, index) => {
+    if (!node.children.has(part)) node.children.set(part, { children: new Map(), file: null });
+    node = node.children.get(part);
+    if (index === parts.length - 1 && file) node.file = file;
+  });
+}
+
+function buildWorkspaceTree() {
+  const root = { children: new Map(), file: null };
+  for (const dir of App.workspaceDirectories) addPathToWorkspaceTree(root, dir, null);
+  for (const file of App.stagedStore.list()) addPathToWorkspaceTree(root, file.path, file);
+  return root;
+}
+
+function renderWorkspaceTreeNode(node) {
+  const ul = document.createElement("ul");
+  ul.className = "workspace-tree-list";
+  const entries = Array.from(node.children.entries()).sort((a, b) => {
+    const aIsDir = a[1].children.size > 0 || !a[1].file;
+    const bIsDir = b[1].children.size > 0 || !b[1].file;
+    return aIsDir === bIsDir ? a[0].localeCompare(b[0]) : (aIsDir ? -1 : 1);
+  });
+
+  for (const [name, child] of entries) {
+    const li = document.createElement("li");
+    if (child.children.size > 0 || !child.file) {
+      li.className = "workspace-tree-folder";
+      const details = document.createElement("details");
+      details.open = true;
+      const summary = document.createElement("summary");
+      summary.textContent = name;
+      details.append(summary, renderWorkspaceTreeNode(child));
+      li.appendChild(details);
+    } else {
+      const file = child.file;
+      li.className = "workspace-tree-file";
+      const icon = document.createElement("span");
+      icon.className = "workspace-tree-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = isScriptFilename(file.path) ? CODE_ICON_SVG : FILE_EARMARK_ICON_SVG;
+
+      let fileName;
+      if (isScriptFilename(file.path)) {
+        fileName = document.createElement("button");
+        fileName.type = "button";
+        fileName.className = "workspace-tree-name";
+        if (file.path === App.selectedEntryPath) fileName.setAttribute("aria-current", "true");
+        fileName.addEventListener("click", () => selectScriptFromPicker(file.path));
+      } else {
+        fileName = document.createElement("span");
+        fileName.className = "workspace-tree-name";
+      }
+      fileName.textContent = name;
+      fileName.title = file.path;
+
+      const actions = document.createElement("span");
+      actions.className = "workspace-tree-actions";
+      const uploadButton = createWorkspaceFileAction(REPLACE_ICON_SVG, "Upload replacement for " + file.path, false,
+        () => replaceStagedFile(file.path), "workspace-tree-action");
+      const restoreButton = createWorkspaceFileAction(REVERT_ICON_SVG, "Restore original " + file.path,
+        !isFileModified(file.path, file.bytes), () => restoreStagedFile(file.path), "workspace-tree-action");
+      restoreButton.dataset.restorePath = file.path;
+      actions.append(uploadButton, restoreButton);
+      li.append(icon, fileName, actions);
+    }
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function renderWorkspaceTree() {
+  elWorkspaceFileTree.innerHTML = "";
+  const tree = buildWorkspaceTree();
+  if (tree.children.size === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-carousel-note";
+    empty.textContent = "Drop files or folders here.";
+    elWorkspaceFileTree.appendChild(empty);
+    return;
+  }
+  elWorkspaceFileTree.appendChild(renderWorkspaceTreeNode(tree));
+}
+
+function updateWorkspaceTreeRestoreButtons() {
+  for (const button of elWorkspaceFileTree.querySelectorAll("[data-restore-path]")) {
+    const file = App.stagedStore.get(button.dataset.restorePath);
+    button.disabled = !file || !isFileModified(file.path, file.bytes);
+  }
+}
+
+function renderStagedFiles() {
+  renderCurrentScriptInputs();
+  renderWorkspaceTree();
 }
 
 /* Groups a flat staged-scripts array into a nested plain-object tree by "/"-splitting each path,
@@ -7284,9 +7613,10 @@ function renderScriptPicker(scripts, chosen) {
    handler used -- only the UI layer changed, not the selection state machine. */
 function selectScriptFromPicker(path) {
   App.explicitEntryPath = path;
-  syncUrlBar({ entry: path });
+  const staged = App.stagedStore.get(path);
+  syncUrlBar({ entry: staged && staged.source === "local" ? "" : path });
   updateSelectedEntry();
-  elScriptPickerPopover.hidePopover();
+  if (elScriptPickerPopover.matches(":popover-open")) elScriptPickerPopover.hidePopover();
 }
 
 /* Positions the popover under its trigger button via getBoundingClientRect rather than CSS anchor
@@ -7315,11 +7645,12 @@ function renderRunSourceLine() {
     : "No script loaded yet.";
 }
 
-/* Shows the "no script loaded" prompt in the workspace pane whenever there is nothing to run
-   (spec: URL parameters drive loading; researchers only see a way to add a script here, never an
-   always-on form). */
+/* Replaces the empty Report view with the start drop area until a runnable script is selected. */
 function updateWorkspaceEmptyState() {
-  elWorkspaceEmptyState.hidden = !!App.selectedEntryPath;
+  const empty = !App.selectedEntryPath;
+  elWorkspaceStart.hidden = !empty;
+  elTabReportZoomInner.hidden = empty;
+  elZoomControl.hidden = empty;
 }
 
 function updateRunControls() {
@@ -7374,6 +7705,15 @@ function updateSourceRestoreButtons() {
   elSourceMaximizeRestoreButton.disabled = !modified;
 }
 
+let currentInputRenderTimer = null;
+function scheduleCurrentScriptInputRender() {
+  clearTimeout(currentInputRenderTimer);
+  currentInputRenderTimer = setTimeout(() => {
+    renderCurrentScriptInputs();
+    updateWorkspaceTreeRestoreButtons();
+  }, 150);
+}
+
 async function renderSourceViewer() {
   const path = App.selectedEntryPath;
   const staged = path ? App.stagedStore.get(path) : null;
@@ -7412,8 +7752,10 @@ async function renderSourceViewer() {
         const activeStaged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
         if (!activeStaged) return;
         activeStaged.bytes = encodeUtf8(value);
+        activeStaged.size = activeStaged.bytes.byteLength;
         clearSourceViewerOutputMarkers();
         updateSourceRestoreButtons();
+        scheduleCurrentScriptInputRender();
       }
     });
   }
@@ -7766,6 +8108,7 @@ function updateSelectedEntry() {
   if (!chosen && scripts.length === 1) chosen = scripts[0].path;
   App.selectedEntryPath = chosen;
   renderScriptPicker(scripts, chosen);
+  renderStagedFiles();
   renderRunSourceLine();
   renderSourceViewer();
   updateHeaderSourceBadge();
@@ -7774,18 +8117,108 @@ function updateSelectedEntry() {
   maybeCloseLoadModalAfterStaging();
 }
 
-/* ### UI: "Load a script" modal ###
-   URL parameters (entry=/data=/repo=/ref=) are the primary way to load a script; this dialog
-   exists only for the case they don't already resolve one, or when a researcher explicitly wants
-   to change scripts (spec: ShareR-UI-Specification.md section 3; user direction 2026-07-28). */
+/* ### UI: remote-source dialog ###
+   URL parameters (entry=/data=/repo=/ref=) remain the primary shareable loading mechanism. This
+   dialog is opened only by an explicit Workspace action; script switching lives in the file tree
+   and the editor's existing picker instead of a second, competing workflow. */
 function openLoadModal(focusTarget) {
   if (elLoadModal.open) return;
   elLoadModal.showModal();
-  (focusTarget || elEntryInput).focus();
+  (focusTarget || elRepoInput).focus();
 }
 
 function closeLoadModal() {
   if (elLoadModal.open) elLoadModal.close();
+}
+
+function openWorkspaceItemModal(mode) {
+  const creatingScript = mode === "script";
+  elWorkspaceItemModal.dataset.mode = mode;
+  elWorkspaceItemModalTitle.textContent = creatingScript ? "Create New Script" : "Create New Directory";
+  elWorkspaceItemPath.value = creatingScript ? "analysis.R" : "data";
+  elWorkspaceItemHelp.textContent = creatingScript
+    ? "Use an .R or .Rmd path. Folders are created automatically."
+    : "Enter a project-relative directory path.";
+  elWorkspaceItemError.hidden = true;
+  elWorkspaceItemError.textContent = "";
+  elWorkspaceItemModal.showModal();
+  elWorkspaceItemPath.select();
+}
+
+function closeWorkspaceItemModal() {
+  if (elWorkspaceItemModal.open) elWorkspaceItemModal.close();
+}
+
+function addWorkspaceDirectory(path) {
+  const segments = path.split("/").filter(Boolean);
+  for (let i = 1; i <= segments.length; i++) {
+    App.workspaceDirectories.add(segments.slice(0, i).join("/"));
+  }
+}
+
+function workspacePathExists(path) {
+  const lower = path.toLowerCase();
+  if (App.stagedStore.has(path)) return true;
+  if (Array.from(App.workspaceDirectories).some((dir) => dir.toLowerCase() === lower)) return true;
+  return App.stagedStore.list().some((file) => file.path.toLowerCase().startsWith(lower + "/"));
+}
+
+function workspacePathHasFileAncestor(path) {
+  const parts = path.split("/").filter(Boolean);
+  for (let i = 1; i < parts.length; i++) {
+    if (App.stagedStore.has(parts.slice(0, i).join("/"))) return true;
+  }
+  return false;
+}
+
+function showWorkspaceItemError(message) {
+  elWorkspaceItemError.textContent = message;
+  elWorkspaceItemError.hidden = false;
+  elWorkspaceItemPath.focus();
+}
+
+function createWorkspaceItem() {
+  const mode = elWorkspaceItemModal.dataset.mode;
+  const path = sanitizePastedValue(elWorkspaceItemPath.value).replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!path || !RE_PATH.test(path)) {
+    showWorkspaceItemError("Use letters, numbers, periods, underscores, hyphens, and forward slashes only.");
+    return;
+  }
+  if (isVcsMetadataPath(path)) {
+    showWorkspaceItemError("The .git and .github directories are reserved and cannot be created here.");
+    return;
+  }
+  try { vfsPathFor(mode === "directory" ? path + "/.sharer-directory" : path); }
+  catch (err) { showWorkspaceItemError(err.message || String(err)); return; }
+  if (mode === "script" && !isScriptFilename(path)) {
+    showWorkspaceItemError("New scripts must use an .R or .Rmd extension.");
+    return;
+  }
+  if (workspacePathExists(path)) {
+    showWorkspaceItemError("That path already exists in this workspace.");
+    return;
+  }
+  if (workspacePathHasFileAncestor(path)) {
+    showWorkspaceItemError("A file already uses part of that directory path.");
+    return;
+  }
+
+  if (mode === "directory") {
+    addWorkspaceDirectory(path);
+    renderWorkspaceTree();
+    setStatus("Created directory " + path + ".");
+  } else {
+    const parent = dirnameOf(path);
+    if (parent) addWorkspaceDirectory(parent);
+    App.explicitEntryPath = path;
+    const messages = [];
+    stageBytes(App.stagedStore, path, encodeUtf8("# New ShareR script\n\n"), "local", "created in ShareR", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+    logStagingMessages(messages);
+    syncUrlBar({ entry: "" });
+    updateSelectedEntry();
+    setStatus("Created script " + path + ".");
+  }
+  closeWorkspaceItemModal();
 }
 
 /* Auto-closes the modal once loading resolved to a runnable entry script. Left open on a genuine
@@ -7850,7 +8283,7 @@ function activateTab(index) {
   });
   // Zoom only makes sense for Report/Plots (index 0/1) -- Files is a list of download rows, not
   // wide charts, so the floating control has nothing useful to do there.
-  elZoomControl.hidden = index === 2;
+  elZoomControl.hidden = index === 2 || !App.selectedEntryPath;
   // Print has no meaning for the Files tab (it's a list of download rows, not printable content);
   // the Download menu stays visible there since "Download all (.zip)" still applies.
   elPrintResultsButton.hidden = index === 2;
@@ -8176,13 +8609,20 @@ async function handleLocalFiles(items) {
 /* ### Event wiring ### */
 
 elOpenLoadModalButton.addEventListener("click", () => openLoadModal());
-elOpenLoadModalEmptyButton.addEventListener("click", () => openLoadModal());
-elAddMoreFilesButton.addEventListener("click", () => openLoadModal(elAddFilesButton));
+elStartOpenRemoteButton.addEventListener("click", () => openLoadModal());
 elCloseLoadModalButton.addEventListener("click", () => closeLoadModal());
 // Clicking the ::backdrop dispatches a click whose target is the <dialog> itself (nothing inside
 // it), which is how native <dialog> lets a click "outside" the visible box be told apart from a
 // click on its content.
 elLoadModal.addEventListener("click", (e) => { if (e.target === elLoadModal) closeLoadModal(); });
+
+elNewScriptButton.addEventListener("click", () => openWorkspaceItemModal("script"));
+elStartNewScriptButton.addEventListener("click", () => openWorkspaceItemModal("script"));
+elNewDirectoryButton.addEventListener("click", () => openWorkspaceItemModal("directory"));
+elCloseWorkspaceItemModalButton.addEventListener("click", closeWorkspaceItemModal);
+elCancelWorkspaceItemButton.addEventListener("click", closeWorkspaceItemModal);
+elWorkspaceItemModal.addEventListener("click", (e) => { if (e.target === elWorkspaceItemModal) closeWorkspaceItemModal(); });
+elWorkspaceItemForm.addEventListener("submit", (e) => { e.preventDefault(); createWorkspaceItem(); });
 
 elCloseErrorModalButton.addEventListener("click", () => closeErrorModal());
 elErrorModalOkButton.addEventListener("click", () => closeErrorModal());
@@ -8248,8 +8688,12 @@ elSourceForm.addEventListener("submit", (e) => {
   runStagingPipeline(parseAppParams(window.location.search));
 });
 
-elAddFilesButton.addEventListener("click", () => elFileInput.click());
-elAddFolderButton.addEventListener("click", () => elFolderInput.click());
+for (const button of [elWorkspaceAddFilesButton, elStartAddFilesButton]) {
+  button.addEventListener("click", () => elFileInput.click());
+}
+for (const button of [elStartAddFolderButton]) {
+  button.addEventListener("click", () => elFolderInput.click());
+}
 
 elFileInput.addEventListener("change", (e) => {
   handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.name })));
@@ -8260,17 +8704,24 @@ elFolderInput.addEventListener("change", (e) => {
   elFolderInput.value = "";
 });
 
-elAddFilesButton.addEventListener("dragover", (e) => { e.preventDefault(); elAddFilesButton.classList.add("drag-over"); });
-elAddFilesButton.addEventListener("dragleave", () => elAddFilesButton.classList.remove("drag-over"));
-elAddFilesButton.addEventListener("drop", async (e) => {
+function eventCarriesFiles(event) {
+  return event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files");
+}
+
+elMainContent.addEventListener("dragover", (e) => {
+  if (!eventCarriesFiles(e)) return;
   e.preventDefault();
-  elAddFilesButton.classList.remove("drag-over");
+  elMainContent.classList.add("workspace-drag-over");
+});
+elMainContent.addEventListener("dragleave", (e) => {
+  if (!elMainContent.contains(e.relatedTarget)) elMainContent.classList.remove("workspace-drag-over");
+});
+elMainContent.addEventListener("drop", async (e) => {
+  if (!eventCarriesFiles(e)) return;
+  e.preventDefault();
+  elMainContent.classList.remove("workspace-drag-over");
   const collected = await collectFilesFromDataTransfer(e.dataTransfer);
   handleLocalFiles(collected);
-});
-elAddFilesButton.addEventListener("paste", (e) => {
-  const files = e.clipboardData && e.clipboardData.files;
-  if (files && files.length) handleLocalFiles(Array.from(files).map((f) => ({ file: f, relPath: f.name })));
 });
 document.addEventListener("paste", (e) => {
   const tag = document.activeElement && document.activeElement.tagName;
@@ -8463,18 +8914,13 @@ function bootstrap() {
   App.reposExplicitList = params.reposRaw ? params.reposRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
 
   if (params.entryRaw || params.dataValues.length || params.repoRaw) {
-    // The modal only appears once staging has actually had a chance to resolve an entry from the
-    // URL, and only for the "nothing failed, but nothing was resolved either" case (e.g. a repo
-    // with several scripts and none auto-selected) -- a fatal staging error already shows its own
-    // error modal (runStagingPipeline's catch) and must not also get the Load-a-script dialog
-    // popping up behind or in front of it.
-    runStagingPipeline(params).then(() => {
-      if (!App.selectedEntryPath && !elErrorModal.open) openLoadModal();
-    });
+    // A repository with several scripts can leave selection unresolved; the Workspace tree is
+    // the chooser in that case. Do not cover it with the old automatic "change script" dialog.
+    runStagingPipeline(params);
   } else {
     // No entry/data/repo in the URL at all -- nothing to stage, so there is nothing to show a
-    // "loading" dialog for. Leave the empty-state view (its own "Load a script" button) as the
-    // only way in, rather than popping the dialog open before the researcher has asked for it.
+    // "loading" dialog for. Leave the main drop area as the way in rather than opening a dialog
+    // before the researcher has chosen local files, a new script, or a remote source.
     updateSelectedEntry();
   }
   

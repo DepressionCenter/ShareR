@@ -95,6 +95,8 @@ For research teams, that means anyone on the project can run the same analysis t
 
 ShareR always runs the script automatically once it and its files are staged; use the **Run** button to run again manually.
 
+With no URL parameters, ShareR opens an empty browser workspace. Drop files or a project folder into the main area, choose files with the Workspace controls, create a new `.R` or `.Rmd` script, or open the included EMA-CleanR sample. The Workspace tree supports script switching, new directories, and per-file replacement/restoration. The Current Script Inputs list follows supported file paths in the active editor text.
+
 **For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted in the same repository will be loaded automatically.
 
 **For maintainers:** all configuration lives in a single frozen `CONFIG` object at the top of `index.html`, including the pinned webR version, the package repository URL, size limits, and the trusted-owner allowlist. There are no secrets, no environment variables, and no build step. Editing `WEBR_VERSION` is the only supported way to upgrade the R engine, and doing so automatically invalidates the old cache.
