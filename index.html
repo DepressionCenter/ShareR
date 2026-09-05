@@ -7789,7 +7789,10 @@ function updateWorkspaceEmptyState() {
   elWorkspaceStart.hidden = !empty;
   elTabReportZoomInner.hidden = empty;
   elZoomControl.hidden = empty;
-  if (!empty) requestAnimationFrame(refreshZoomFrameHeight);
+  if (!empty) requestAnimationFrame(() => {
+    refreshZoomFrameHeight(elTabReportPanel, elTabReportZoomInner);
+    refreshZoomFrameHeight(elTabPlotsPanel, elTabPlotsZoomInner);
+  });
 }
 
 function updateRunControls() {
