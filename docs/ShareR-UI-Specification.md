@@ -34,22 +34,26 @@ Run Button: Prominent Maize background, Dark Blue text, featuring a play icon (�
 
 GitHub Link: White GitHub SVG icon, slightly transparent, turns fully opaque on hover. Links to the source repository.
 
-1. Left Pane: Workspace (Inputs & Code)
-Behavior: Horizontally resizable by the user. Defaults to a narrow column (max 320px). When the source code is toggled open, the panel expands to take up 50% of the screen.
+3. Left Pane: Workspace (Inputs & Code)
+Behavior: Horizontally resizable and collapsible by the user. The source editor remains inside this pane and is visible whenever a script is selected.
 
-Input Data Carousel:
+Workspace Actions:
 
-A horizontally scrollable row of small file cards.
+The pane header provides an icon button to open a URL or repository. The **Files** label row provides root-level actions to create a script, create a data file, create a directory, and add files. Buttons use Bootstrap Icons and have accessible names and tooltips.
 
-Card Design: Dashed borders, off-white background, file icon (📄), truncated filename, and status text (e.g., "Default").
+Current Script Inputs:
 
-Hover State: Border turns blue, background shifts to a faint blue tint to indicate clickability.
+A compact list shows only data paths detected in the current script. It updates while the researcher edits a path in the source editor. Each row preserves the path expected by the script and provides Upload Replacement and Restore Original actions. No Delete action is shown.
 
-Source Code Editor (Collapsible):
+File Tree:
 
-Toggle: A simple text button ("▸ Show Source Code"). When clicked, text changes to "▾ Hide Source Code" and the editor becomes visible.
+A nested tree shows the files and directories currently staged in the browser workspace. Directories can be expanded or collapsed. Script files can be selected from the tree, while the existing script picker in the editor header remains available.
 
-Editor Window: Dark theme (#1e1e1e background, light gray text), standard syntax highlighting colors for comments, strings, and functions.
+Every file row reveals ghost-style Upload Replacement and Restore Original buttons on hover or keyboard focus. The controls remain visible on devices without hover input.
+
+Source Code Editor:
+
+Editor Window: Dark theme (#1e1e1e background, light gray text), standard syntax highlighting colors for comments, strings, and functions. The editor stays in the Workspace pane when the pane is resized or collapsed.
 
 Interactive Gutters (Line Numbers): The left margin of the code features line numbers. Lines that generate specific outputs display interactive marker icons:
 
@@ -118,13 +122,13 @@ Here are the functional logic and interaction specifications, written as user fl
 
 * **Auto-Load:** When a user navigates to the app via a URL with repository parameters (e.g., `?repo=DepressionCenter/EMA-CleanR`), the application skips any preliminary setup screens.
 * **Auto-Stage:** The app automatically fetches the default files from the specified repository, stages them in the background, and immediately presents the split-pane workspace.
+* **Empty Start:** With no `entry`, `script`, `data`, or `repo` parameter, the Report area displays a file/folder drop target, file and folder picker buttons, New Script and Open URL or Repository actions, and a sample link to `?repo=DepressionCenter/EMA-CleanR`.
+* **Multiple Scripts:** When loading does not select one script automatically, the researcher chooses a script from the Workspace file tree or the editor's script picker. No source-selection dialog opens automatically.
 
 #### 2. Layout & View State Logic
 
-* **Dynamic Resizing (Code Toggle):**
-* *State A (Default):* Left pane is locked to a narrow width. Code editor is hidden.
-* *State B:* When "Show Source Code" is clicked, the left pane dynamically expands to occupy 50% of the viewport, pushing the right pane over. The code editor becomes visible.
-* The user can toggle back and forth without losing any context or execution state.
+* **Workspace Resizing:** The left pane can be resized horizontally on desktop and vertically in the stacked mobile layout. The resize separator is also keyboard operable.
+* **Workspace Collapse:** The left pane can be collapsed to a narrow rail and restored without losing files, editor text, selection, or execution state.
 
 
 * **Tab Navigation:**
@@ -148,12 +152,17 @@ Here are the functional logic and interaction specifications, written as user fl
 
 
 
-#### 4. Data Input & File Replacement Logic
+#### 4. Workspace File and Input Logic
 
-* **Trigger:** The user clicks one of the file cards in the "Input Data" carousel on the left pane.
-* **Action:** It opens the operating system's native file picker.
-* **Background Swap:** Once the user selects a new file, the app replaces the default staged file in the webR virtual filesystem with the user's new file.
-* **Crucial Rule:** The original filename expected by the R script (e.g., `EMA-Data.csv`) is preserved in the UI and the virtual filesystem, regardless of what the user's uploaded file is actually named. The UI card status updates from "Default" to "Custom Data Uploaded."
+* **Current Inputs:** ShareR statically resolves supported data-reading calls in the active editor text. Literal paths and safely resolvable path variables appear in Current Script Inputs; the list refreshes as the script changes.
+* **Replacement:** Upload Replacement opens the operating system's native file picker and writes the selected bytes to the existing workspace path. The filename expected by the script (for example, `EMA-Data.csv`) is preserved regardless of the selected file's local name.
+* **Restore:** Restore Original reverts a changed repository or URL file to its initial staged bytes. The button is disabled when no restore point exists or the file is unchanged.
+* **File Tree Actions:** The Upload Replacement, Restore Original, and Duplicate actions are available on every file row. Duplicate inserts `-1`, `-2`, and so on before the filename extension. Script rows also switch the active editor script.
+* **Directory Actions:** Every directory row provides actions to create a script, create a data file, create a sub-directory, and add files inside that directory.
+* **Adding Content:** Files may be added from the Files toolbar, a directory row, the empty-start buttons, paste, or drag and drop. Files and folders dropped from the computer retain their supplied relative paths and may target a specific tree directory.
+* **Moving Content:** Workspace files and directories can be dragged onto another directory or the root Files area. Every draggable row also provides a keyboard-operable Move action. A directory cannot be moved inside itself, and an existing destination path is never overwritten.
+* **Creating Content:** New `.R` and `.Rmd` scripts and new directories use project-relative, traversal-safe paths. Creating a script selects it immediately. Empty directories are created in the webR virtual filesystem on the next run.
+* **Browser Only:** Local files, new scripts, directories, edits, and replacements remain in the browser session; ShareR does not upload them to a server.
 
 #### 5. Execution & Export Logic
 
