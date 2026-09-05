@@ -8883,19 +8883,11 @@ async function handleLocalFiles(items, directoryPath) {
   updateSelectedEntry();
 }
 
+let pendingFileDestinationDirectory = "";
+
 function chooseFilesForDirectory(directoryPath) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
-  input.hidden = true;
-  input.addEventListener("change", () => {
-    const files = Array.from(input.files || []).map((file) => ({ file, relPath: file.name }));
-    document.body.removeChild(input);
-    if (files.length) handleLocalFiles(files, directoryPath);
-  });
-  input.addEventListener("cancel", () => input.remove());
-  document.body.appendChild(input);
-  input.click();
+  pendingFileDestinationDirectory = directoryPath;
+  elFileInput.click();
 }
 
 /* ### Event wiring ### */
@@ -8982,16 +8974,18 @@ elSourceForm.addEventListener("submit", (e) => {
 });
 
 for (const button of [elWorkspaceAddFilesButton, elStartAddFilesButton]) {
-  button.addEventListener("click", () => elFileInput.click());
+  button.addEventListener("click", () => chooseFilesForDirectory(""));
 }
 for (const button of [elStartAddFolderButton]) {
   button.addEventListener("click", () => elFolderInput.click());
 }
 
 elFileInput.addEventListener("change", (e) => {
-  handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.name })));
+  handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.name })), pendingFileDestinationDirectory);
+  pendingFileDestinationDirectory = "";
   elFileInput.value = "";
 });
+elFileInput.addEventListener("cancel", () => { pendingFileDestinationDirectory = ""; });
 elFolderInput.addEventListener("change", (e) => {
   handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.webkitRelativePath || f.name })));
   elFolderInput.value = "";
