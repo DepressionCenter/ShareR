@@ -39,7 +39,7 @@ Behavior: Horizontally resizable and collapsible by the user. The source editor 
 
 Workspace Actions:
 
-The pane header provides icon buttons to open a URL/repository, create a script, create a directory, and add files. Buttons use Bootstrap Icons and have accessible names and tooltips.
+The pane header provides an icon button to open a URL or repository. The **Files** label row provides root-level actions to create a script, create a data file, create a directory, and add files. Buttons use Bootstrap Icons and have accessible names and tooltips.
 
 Current Script Inputs:
 
@@ -157,8 +157,10 @@ Here are the functional logic and interaction specifications, written as user fl
 * **Current Inputs:** ShareR statically resolves supported data-reading calls in the active editor text. Literal paths and safely resolvable path variables appear in Current Script Inputs; the list refreshes as the script changes.
 * **Replacement:** Upload Replacement opens the operating system's native file picker and writes the selected bytes to the existing workspace path. The filename expected by the script (for example, `EMA-Data.csv`) is preserved regardless of the selected file's local name.
 * **Restore:** Restore Original reverts a changed repository or URL file to its initial staged bytes. The button is disabled when no restore point exists or the file is unchanged.
-* **File Tree Actions:** The same Upload Replacement and Restore Original pair is available on every file row in the Workspace tree. Script rows also switch the active editor script.
-* **Adding Content:** Files may be added from the Workspace header, from the empty-start buttons, by paste, or by dragging files/directories onto the main workspace. Folder paths are preserved when the browser supplies them.
+* **File Tree Actions:** The Upload Replacement, Restore Original, and Duplicate actions are available on every file row. Duplicate inserts `-1`, `-2`, and so on before the filename extension. Script rows also switch the active editor script.
+* **Directory Actions:** Every directory row provides actions to create a script, create a data file, create a sub-directory, and add files inside that directory.
+* **Adding Content:** Files may be added from the Files toolbar, a directory row, the empty-start buttons, paste, or drag and drop. Files and folders dropped from the computer retain their supplied relative paths and may target a specific tree directory.
+* **Moving Content:** Workspace files and directories can be dragged onto another directory or the root Files area. Every draggable row also provides a keyboard-operable Move action. A directory cannot be moved inside itself, and an existing destination path is never overwritten.
 * **Creating Content:** New `.R` and `.Rmd` scripts and new directories use project-relative, traversal-safe paths. Creating a script selects it immediately. Empty directories are created in the webR virtual filesystem on the next run.
 * **Browser Only:** Local files, new scripts, directories, edits, and replacements remain in the browser session; ShareR does not upload them to a server.
 

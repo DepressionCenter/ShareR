@@ -313,6 +313,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border-color: var(--panel-border);
   }
   .workspace-header-action svg { width: 15px; height: 15px; }
+  .workspace-file-actions { display: flex; align-items: center; gap: 0.05rem; }
 
   .workspace-pane {
     position: relative;
@@ -574,6 +575,12 @@ with this program. If not, see https://www.gnu.org/licenses/.
   }
   .workspace-tree-list { margin: 0; padding: 0 0 0 0.9rem; list-style: none; }
   .workspace-tree > .workspace-tree-list { padding-left: 0; }
+  .workspace-tree.drop-target,
+  .workspace-tree-folder > details > summary.drop-target {
+    background: #e6f2ff;
+    outline: 2px dashed var(--um-medium-blue);
+    outline-offset: -2px;
+  }
   .workspace-tree-folder > details > summary,
   .workspace-tree-file {
     min-height: 28px;
@@ -585,6 +592,10 @@ with this program. If not, see https://www.gnu.org/licenses/.
     font-size: 0.75rem;
   }
   .workspace-tree-folder > details > summary { cursor: pointer; }
+  .workspace-tree-folder > details > summary[draggable="true"],
+  .workspace-tree-file[draggable="true"] { cursor: grab; }
+  .workspace-tree-folder > details > summary.dragging,
+  .workspace-tree-file.dragging { opacity: 0.5; cursor: grabbing; }
   .workspace-tree-folder > details > summary::marker { color: var(--text-muted); }
   .workspace-tree-folder > details > summary:hover,
   .workspace-tree-folder > details > summary:focus-visible,
@@ -610,7 +621,9 @@ with this program. If not, see https://www.gnu.org/licenses/.
   button.workspace-tree-name[aria-current="true"] { color: var(--um-medium-blue); font-weight: 700; }
   .workspace-tree-actions { display: flex; gap: 0.05rem; opacity: 0; transition: opacity 0.12s ease; }
   .workspace-tree-file:hover .workspace-tree-actions,
-  .workspace-tree-file:focus-within .workspace-tree-actions { opacity: 1; }
+  .workspace-tree-file:focus-within .workspace-tree-actions,
+  .workspace-tree-folder > details > summary:hover .workspace-tree-actions,
+  .workspace-tree-folder > details > summary:focus-within .workspace-tree-actions { opacity: 1; }
   @media (hover: none) {
     .workspace-tree-actions { opacity: 1; }
   }
@@ -1611,12 +1624,6 @@ with this program. If not, see https://www.gnu.org/licenses/.
       <div class="workspace-header-actions" role="group" aria-label="Workspace actions">
         <button type="button" id="open-load-modal-button" class="workspace-header-action"
           aria-label="Open script URL or repository" title="Open URL or repository"></button>
-        <button type="button" id="new-script-button" class="workspace-header-action"
-          aria-label="Create new script" title="Create new script"></button>
-        <button type="button" id="new-directory-button" class="workspace-header-action"
-          aria-label="Create new directory" title="Create new directory"></button>
-        <button type="button" id="workspace-add-files-button" class="workspace-header-action"
-          aria-label="Add files" title="Add files"></button>
       </div>
     </div>
     <div class="panel-scroll">
@@ -1630,6 +1637,16 @@ with this program. If not, see https://www.gnu.org/licenses/.
       <section class="section workspace-tree-section" aria-labelledby="workspace-files-label">
         <div class="section-label-row">
           <span class="section-label" id="workspace-files-label">Files</span>
+          <div class="workspace-file-actions" role="group" aria-label="Root file actions">
+            <button type="button" id="new-script-button" class="workspace-header-action"
+              aria-label="Create new script in root" title="Create new script"></button>
+            <button type="button" id="new-data-file-button" class="workspace-header-action"
+              aria-label="Create new data file in root" title="Create new data file"></button>
+            <button type="button" id="new-directory-button" class="workspace-header-action"
+              aria-label="Create new directory in root" title="Create new directory"></button>
+            <button type="button" id="workspace-add-files-button" class="workspace-header-action"
+              aria-label="Add files to root" title="Add files"></button>
+          </div>
         </div>
         <nav id="workspace-file-tree" class="workspace-tree" aria-label="Workspace files"></nav>
       </section>
@@ -1831,7 +1848,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
   <div class="modal-body">
     <form id="workspace-item-form">
       <div class="field">
-        <label for="workspace-item-path">Path</label>
+        <label for="workspace-item-path" id="workspace-item-path-label">Path</label>
         <input type="text" id="workspace-item-path" name="path" autocomplete="off" required>
         <p id="workspace-item-help" class="help-text"></p>
         <p id="workspace-item-error" class="workspace-item-error" role="alert" hidden></p>
@@ -4838,6 +4855,33 @@ const PLUS_ICON_SVG = // bi-plus-lg
   '<path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2"/>' +
   '</svg>';
 
+const FILE_PLUS_ICON_SVG = // bi-file-earmark-plus
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M8 6.5a.5.5 0 0 1 .5.5v1.5H10a.5.5 0 0 1 0 1H8.5V11a.5.5 0 0 1-1 0V9.5H6a.5.5 0 0 1 0-1h1.5V7a.5.5 0 0 1 .5-.5"/>' +
+  '<path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h5.5zm-3 0A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4.5z"/>' +
+  '</svg>';
+
+const FOLDER_PLUS_ICON_SVG = // bi-folder-plus
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="m.5 3 .04.87a2 2 0 0 0-.342 1.311l.637 7A2 2 0 0 0 2.826 14H9v-1H2.826a1 1 0 0 1-.995-.91l-.637-7A1 1 0 0 1 2.19 4h11.62a1 1 0 0 1 .996 1.09L14.54 8h1.005l.256-2.819A2 2 0 0 0 13.81 3H9.828a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 6.172 1H2.5a2 2 0 0 0-2 2m5.672-1a1 1 0 0 1 .707.293L7.586 3H2.19q-.362.002-.683.12L1.5 2.98a1 1 0 0 1 1-.98z"/>' +
+  '<path d="M13.5 9a.5.5 0 0 1 .5.5V11h1.5a.5.5 0 1 1 0 1H14v1.5a.5.5 0 1 1-1 0V12h-1.5a.5.5 0 0 1 0-1H13V9.5a.5.5 0 0 1 .5-.5"/>' +
+  '</svg>';
+
+const FOLDER_ICON_SVG = // bi-folder
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181l-.637 7A2 2 0 0 1 13.174 14H2.826a2 2 0 0 1-1.991-1.819l-.637-7a2 2 0 0 1 .342-1.31zM2.19 4a1 1 0 0 0-.996 1.09l.637 7a1 1 0 0 0 .995.91h10.348a1 1 0 0 0 .995-.91l.637-7A1 1 0 0 0 13.81 4zm4.69-1.707A1 1 0 0 0 6.172 2H2.5a1 1 0 0 0-1 .981l.006.139q.323-.119.684-.12h5.396z"/>' +
+  '</svg>';
+
+const MOVE_ICON_SVG = // bi-arrows-move
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path fill-rule="evenodd" d="M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708zM8 10a.5.5 0 0 1 .5.5v3.793l1.146-1.147a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2a.5.5 0 0 1 .708-.708L7.5 14.293V10.5A.5.5 0 0 1 8 10M.146 8.354a.5.5 0 0 1 0-.708l2-2a.5.5 0 1 1 .708.708L1.707 7.5H5.5a.5.5 0 0 1 0 1H1.707l1.147 1.146a.5.5 0 0 1-.708.708zM10 8a.5.5 0 0 1 .5-.5h3.793l-1.147-1.146a.5.5 0 0 1 .708-.708l2 2a.5.5 0 0 1 0 .708l-2 2a.5.5 0 0 1-.708-.708L14.293 8.5H10.5A.5.5 0 0 1 10 8"/>' +
+  '</svg>';
+
+const COPY_ICON_SVG = // bi-copy
+  '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">' +
+  '<path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>' +
+  '</svg>';
+
 const MINUS_ICON_SVG = // bi-dash-lg
   '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">' +
   '<path fill-rule="evenodd" d="M2 8a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11A.5.5 0 0 1 2 8"/>' +
@@ -7088,6 +7132,7 @@ const elWorkspaceAddFilesButton = document.getElementById("workspace-add-files-b
 const elStartAddFilesButton = document.getElementById("start-add-files-button");
 const elStartAddFolderButton = document.getElementById("start-add-folder-button");
 const elNewScriptButton = document.getElementById("new-script-button");
+const elNewDataFileButton = document.getElementById("new-data-file-button");
 const elNewDirectoryButton = document.getElementById("new-directory-button");
 const elStartNewScriptButton = document.getElementById("start-new-script-button");
 const elStartOpenRemoteButton = document.getElementById("start-open-remote-button");
@@ -7138,6 +7183,7 @@ elCloseLoadModalButton.innerHTML = X_ICON_SVG;
 const elWorkspaceItemModal = document.getElementById("workspace-item-modal");
 const elWorkspaceItemModalTitle = document.getElementById("workspace-item-modal-title");
 const elWorkspaceItemForm = document.getElementById("workspace-item-form");
+const elWorkspaceItemPathLabel = document.getElementById("workspace-item-path-label");
 const elWorkspaceItemPath = document.getElementById("workspace-item-path");
 const elWorkspaceItemHelp = document.getElementById("workspace-item-help");
 const elWorkspaceItemError = document.getElementById("workspace-item-error");
@@ -7146,7 +7192,8 @@ const elCancelWorkspaceItemButton = document.getElementById("cancel-workspace-it
 elCloseWorkspaceItemModalButton.innerHTML = X_ICON_SVG;
 
 elNewScriptButton.innerHTML = CODE_ICON_SVG;
-elNewDirectoryButton.innerHTML = PLUS_ICON_SVG;
+elNewDataFileButton.innerHTML = FILE_PLUS_ICON_SVG;
+elNewDirectoryButton.innerHTML = FOLDER_PLUS_ICON_SVG;
 elWorkspaceAddFilesButton.innerHTML = REPLACE_ICON_SVG;
 document.querySelector(".workspace-start-icon").innerHTML = CODE_ICON_SVG;
 document.querySelector(".workspace-start-upload-icon").innerHTML = REPLACE_ICON_SVG;
@@ -7403,6 +7450,7 @@ function createWorkspaceFileAction(iconSvg, label, disabled, onClick, className)
   button.title = label;
   button.disabled = disabled;
   button.addEventListener("click", (event) => {
+    event.preventDefault();
     event.stopPropagation();
     onClick();
   });
@@ -7474,7 +7522,74 @@ function buildWorkspaceTree() {
   return root;
 }
 
-function renderWorkspaceTreeNode(node) {
+let draggedWorkspaceItem = null;
+
+function makeWorkspaceItemDraggable(element, path, kind) {
+  element.draggable = true;
+  element.addEventListener("dragstart", (event) => {
+    if (event.target.closest("button")) {
+      event.preventDefault();
+      return;
+    }
+    draggedWorkspaceItem = { path, kind };
+    element.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-sharer-workspace-item", path);
+  });
+  element.addEventListener("dragend", () => {
+    draggedWorkspaceItem = null;
+    element.classList.remove("dragging");
+    for (const target of elWorkspaceFileTree.querySelectorAll(".drop-target")) target.classList.remove("drop-target");
+  });
+}
+
+function makeWorkspaceDropTarget(element, directoryPath) {
+  element.addEventListener("dragover", (event) => {
+    if (!draggedWorkspaceItem && !eventCarriesFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = draggedWorkspaceItem ? "move" : "copy";
+    element.classList.add("drop-target");
+  });
+  element.addEventListener("dragleave", (event) => {
+    if (!element.contains(event.relatedTarget)) element.classList.remove("drop-target");
+  });
+  element.addEventListener("drop", async (event) => {
+    if (!draggedWorkspaceItem && !eventCarriesFiles(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.classList.remove("drop-target");
+    elMainContent.classList.remove("workspace-drag-over");
+    if (draggedWorkspaceItem) {
+      const item = draggedWorkspaceItem;
+      draggedWorkspaceItem = null;
+      moveWorkspaceItem(item.path, item.kind, directoryPath);
+      return;
+    }
+    const collected = await collectFilesFromDataTransfer(event.dataTransfer);
+    handleLocalFiles(collected, directoryPath);
+  });
+}
+
+function createDirectoryTreeActions(directoryPath) {
+  const actions = document.createElement("span");
+  actions.className = "workspace-tree-actions";
+  actions.append(
+    createWorkspaceFileAction(CODE_ICON_SVG, "Create new script in " + directoryPath, false,
+      () => openWorkspaceItemModal("script", directoryPath), "workspace-tree-action"),
+    createWorkspaceFileAction(FILE_PLUS_ICON_SVG, "Create new data file in " + directoryPath, false,
+      () => openWorkspaceItemModal("data", directoryPath), "workspace-tree-action"),
+    createWorkspaceFileAction(FOLDER_PLUS_ICON_SVG, "Create sub-directory in " + directoryPath, false,
+      () => openWorkspaceItemModal("directory", directoryPath), "workspace-tree-action"),
+    createWorkspaceFileAction(REPLACE_ICON_SVG, "Add files to " + directoryPath, false,
+      () => chooseFilesForDirectory(directoryPath), "workspace-tree-action"),
+    createWorkspaceFileAction(MOVE_ICON_SVG, "Move " + directoryPath, false,
+      () => openWorkspaceMoveModal(directoryPath, "directory"), "workspace-tree-action")
+  );
+  return actions;
+}
+
+function renderWorkspaceTreeNode(node, parentPath) {
   const ul = document.createElement("ul");
   ul.className = "workspace-tree-list";
   const entries = Array.from(node.children.entries()).sort((a, b) => {
@@ -7484,18 +7599,30 @@ function renderWorkspaceTreeNode(node) {
   });
 
   for (const [name, child] of entries) {
+    const path = parentPath ? parentPath + "/" + name : name;
     const li = document.createElement("li");
     if (child.children.size > 0 || !child.file) {
       li.className = "workspace-tree-folder";
       const details = document.createElement("details");
       details.open = true;
       const summary = document.createElement("summary");
-      summary.textContent = name;
-      details.append(summary, renderWorkspaceTreeNode(child));
+      const icon = document.createElement("span");
+      icon.className = "workspace-tree-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = FOLDER_ICON_SVG;
+      const folderName = document.createElement("span");
+      folderName.className = "workspace-tree-name";
+      folderName.textContent = name;
+      folderName.title = path;
+      summary.append(icon, folderName, createDirectoryTreeActions(path));
+      makeWorkspaceItemDraggable(summary, path, "directory");
+      makeWorkspaceDropTarget(summary, path);
+      details.append(summary, renderWorkspaceTreeNode(child, path));
       li.appendChild(details);
     } else {
       const file = child.file;
       li.className = "workspace-tree-file";
+      makeWorkspaceItemDraggable(li, file.path, "file");
       const icon = document.createElement("span");
       icon.className = "workspace-tree-icon";
       icon.setAttribute("aria-hidden", "true");
@@ -7522,7 +7649,11 @@ function renderWorkspaceTreeNode(node) {
       const restoreButton = createWorkspaceFileAction(REVERT_ICON_SVG, "Restore original " + file.path,
         !isFileModified(file.path, file.bytes), () => restoreStagedFile(file.path), "workspace-tree-action");
       restoreButton.dataset.restorePath = file.path;
-      actions.append(uploadButton, restoreButton);
+      const duplicateButton = createWorkspaceFileAction(COPY_ICON_SVG, "Duplicate " + file.path, false,
+        () => duplicateWorkspaceFile(file.path), "workspace-tree-action");
+      const moveButton = createWorkspaceFileAction(MOVE_ICON_SVG, "Move " + file.path, false,
+        () => openWorkspaceMoveModal(file.path, "file"), "workspace-tree-action");
+      actions.append(uploadButton, restoreButton, duplicateButton, moveButton);
       li.append(icon, fileName, actions);
     }
     ul.appendChild(li);
@@ -7540,7 +7671,7 @@ function renderWorkspaceTree() {
     elWorkspaceFileTree.appendChild(empty);
     return;
   }
-  elWorkspaceFileTree.appendChild(renderWorkspaceTreeNode(tree));
+  elWorkspaceFileTree.appendChild(renderWorkspaceTreeNode(tree, ""));
 }
 
 function updateWorkspaceTreeRestoreButtons() {
@@ -8139,16 +8270,38 @@ function closeLoadModal() {
   if (elLoadModal.open) elLoadModal.close();
 }
 
-function openWorkspaceItemModal(mode) {
+function openWorkspaceItemModal(mode, directoryPath) {
   const creatingScript = mode === "script";
+  const creatingData = mode === "data";
+  const basePath = directoryPath ? directoryPath.replace(/\/+$/, "") + "/" : "";
   elWorkspaceItemModal.dataset.mode = mode;
-  elWorkspaceItemModalTitle.textContent = creatingScript ? "Create New Script" : "Create New Directory";
-  elWorkspaceItemPath.value = creatingScript ? "analysis.R" : "data";
+  delete elWorkspaceItemModal.dataset.sourcePath;
+  delete elWorkspaceItemModal.dataset.sourceKind;
+  elWorkspaceItemModalTitle.textContent = creatingScript ? "Create New Script" :
+    (creatingData ? "Create New Data File" : "Create New Directory");
+  elWorkspaceItemPathLabel.textContent = "Path";
+  elWorkspaceItemForm.querySelector('[type="submit"]').textContent = "Create";
+  elWorkspaceItemPath.value = basePath + (creatingScript ? "analysis.R" : (creatingData ? "data.csv" : "new-folder"));
   elWorkspaceItemHelp.textContent = creatingScript
     ? "Use an .R or .Rmd path. Folders are created automatically."
-    : "Enter a project-relative directory path.";
+    : (creatingData ? "Enter a project-relative data file path." : "Enter a project-relative directory path.");
   elWorkspaceItemError.hidden = true;
   elWorkspaceItemError.textContent = "";
+  elWorkspaceItemModal.showModal();
+  elWorkspaceItemPath.select();
+}
+
+function openWorkspaceMoveModal(sourcePath, sourceKind) {
+  elWorkspaceItemModal.dataset.mode = "move";
+  elWorkspaceItemModal.dataset.sourcePath = sourcePath;
+  elWorkspaceItemModal.dataset.sourceKind = sourceKind;
+  elWorkspaceItemModalTitle.textContent = "Move " + basenameOf(sourcePath);
+  elWorkspaceItemPathLabel.textContent = "Destination directory";
+  elWorkspaceItemPath.value = dirnameOf(sourcePath) || ".";
+  elWorkspaceItemHelp.textContent = 'Enter an existing directory path, or "." for the workspace root.';
+  elWorkspaceItemError.hidden = true;
+  elWorkspaceItemError.textContent = "";
+  elWorkspaceItemForm.querySelector('[type="submit"]').textContent = "Move";
   elWorkspaceItemModal.showModal();
   elWorkspaceItemPath.select();
 }
@@ -8179,6 +8332,102 @@ function workspacePathHasFileAncestor(path) {
   return false;
 }
 
+function workspaceDirectoryExists(path) {
+  if (!path) return true;
+  const lower = path.toLowerCase();
+  if (App.stagedStore.has(path)) return false;
+  return Array.from(App.workspaceDirectories).some((directory) => directory.toLowerCase() === lower) ||
+    App.stagedStore.list().some((file) => file.path.toLowerCase().startsWith(lower + "/"));
+}
+
+function canonicalWorkspaceDirectory(path) {
+  if (!path) return "";
+  const lower = path.toLowerCase();
+  const explicit = Array.from(App.workspaceDirectories).find((directory) => directory.toLowerCase() === lower);
+  if (explicit) return explicit;
+  const descendant = App.stagedStore.list().find((file) => file.path.toLowerCase().startsWith(lower + "/"));
+  return descendant ? descendant.path.split("/").slice(0, path.split("/").length).join("/") : null;
+}
+
+function remapWorkspacePath(path, oldPrefix, newPrefix) {
+  return path === oldPrefix ? newPrefix : newPrefix + path.slice(oldPrefix.length);
+}
+
+function moveWorkspaceItem(sourcePath, kind, targetDirectory) {
+  targetDirectory = canonicalWorkspaceDirectory(targetDirectory);
+  if (targetDirectory === null) {
+    setStatus("Could not move " + sourcePath + ": destination directory does not exist.");
+    return;
+  }
+  const targetPath = targetDirectory ? targetDirectory + "/" + basenameOf(sourcePath) : basenameOf(sourcePath);
+  if (targetPath === sourcePath) return;
+  const sourceLower = sourcePath.toLowerCase();
+  const targetDirectoryLower = targetDirectory.toLowerCase();
+  if (kind === "directory" && (targetDirectoryLower === sourceLower || targetDirectoryLower.startsWith(sourceLower + "/"))) {
+    setStatus("A directory cannot be moved inside itself.");
+    return;
+  }
+  if (workspacePathExists(targetPath)) {
+    setStatus("Could not move " + sourcePath + ": " + targetPath + " already exists.");
+    return;
+  }
+
+  const matchesPath = (path) => kind === "file" ? path.toLowerCase() === sourceLower :
+    (path.toLowerCase() === sourceLower || path.toLowerCase().startsWith(sourceLower + "/"));
+  const movedFiles = App.stagedStore.list().filter((file) => matchesPath(file.path));
+  for (const file of movedFiles) App.stagedStore.byPath.delete(file.path.toLowerCase());
+  for (const file of movedFiles) {
+    const newPath = remapWorkspacePath(file.path, sourcePath, targetPath);
+    App.stagedStore.byPath.set(newPath.toLowerCase(), Object.assign({}, file, { path: newPath, name: basenameOf(newPath) }));
+    const original = App.originalFileBytes.get(file.path.toLowerCase());
+    if (original) {
+      App.originalFileBytes.delete(file.path.toLowerCase());
+      App.originalFileBytes.set(newPath.toLowerCase(), original);
+    }
+  }
+
+  if (kind === "directory") {
+    const movedDirectories = Array.from(App.workspaceDirectories).filter(matchesPath);
+    for (const directory of movedDirectories) App.workspaceDirectories.delete(directory);
+    addWorkspaceDirectory(targetPath);
+    for (const directory of movedDirectories) {
+      App.workspaceDirectories.add(remapWorkspacePath(directory, sourcePath, targetPath));
+    }
+  } else if (targetDirectory) {
+    addWorkspaceDirectory(targetDirectory);
+  }
+
+  if (App.selectedEntryPath && matchesPath(App.selectedEntryPath)) {
+    App.explicitEntryPath = remapWorkspacePath(App.selectedEntryPath, sourcePath, targetPath);
+  } else if (App.explicitEntryPath && matchesPath(App.explicitEntryPath)) {
+    App.explicitEntryPath = remapWorkspacePath(App.explicitEntryPath, sourcePath, targetPath);
+  }
+  updateSelectedEntry();
+  setStatus("Moved " + sourcePath + " to " + targetPath + ".");
+}
+
+function duplicateWorkspaceFile(path) {
+  const file = App.stagedStore.get(path);
+  if (!file) return;
+  const directory = dirnameOf(file.path);
+  const name = basenameOf(file.path);
+  const extensionIndex = name.lastIndexOf(".");
+  const stem = extensionIndex > 0 ? name.slice(0, extensionIndex) : name;
+  const extension = extensionIndex > 0 ? name.slice(extensionIndex) : "";
+  let copyNumber = 1;
+  let copyPath;
+  do {
+    const copyName = stem + "-" + copyNumber + extension;
+    copyPath = directory ? directory + "/" + copyName : copyName;
+    copyNumber++;
+  } while (workspacePathExists(copyPath));
+
+  const messages = [];
+  stageBytes(App.stagedStore, copyPath, file.bytes.slice(), "local", "duplicated in ShareR", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+  logStagingMessages(messages);
+  setStatus("Created " + copyPath + ".");
+}
+
 function showWorkspaceItemError(message) {
   elWorkspaceItemError.textContent = message;
   elWorkspaceItemError.hidden = false;
@@ -8187,7 +8436,18 @@ function showWorkspaceItemError(message) {
 
 function createWorkspaceItem() {
   const mode = elWorkspaceItemModal.dataset.mode;
-  const path = sanitizePastedValue(elWorkspaceItemPath.value).replace(/^\.\//, "").replace(/\/+$/, "");
+  let path = sanitizePastedValue(elWorkspaceItemPath.value).replace(/^\.\//, "").replace(/\/+$/, "");
+  if (mode === "move") {
+    const requestedDirectory = path === "." ? "" : path;
+    if (requestedDirectory && (!RE_PATH.test(requestedDirectory) || !workspaceDirectoryExists(requestedDirectory))) {
+      showWorkspaceItemError("Choose an existing workspace directory, or use . for the root.");
+      return;
+    }
+    moveWorkspaceItem(elWorkspaceItemModal.dataset.sourcePath, elWorkspaceItemModal.dataset.sourceKind,
+      canonicalWorkspaceDirectory(requestedDirectory));
+    closeWorkspaceItemModal();
+    return;
+  }
   if (!path || !RE_PATH.test(path)) {
     showWorkspaceItemError("Use letters, numbers, periods, underscores, hyphens, and forward slashes only.");
     return;
@@ -8200,6 +8460,10 @@ function createWorkspaceItem() {
   catch (err) { showWorkspaceItemError(err.message || String(err)); return; }
   if (mode === "script" && !isScriptFilename(path)) {
     showWorkspaceItemError("New scripts must use an .R or .Rmd extension.");
+    return;
+  }
+  if (mode === "data" && isScriptFilename(path)) {
+    showWorkspaceItemError("Use Create New Script for .R and .Rmd files.");
     return;
   }
   if (workspacePathExists(path)) {
@@ -8218,13 +8482,14 @@ function createWorkspaceItem() {
   } else {
     const parent = dirnameOf(path);
     if (parent) addWorkspaceDirectory(parent);
-    App.explicitEntryPath = path;
+    if (mode === "script") App.explicitEntryPath = path;
     const messages = [];
-    stageBytes(App.stagedStore, path, encodeUtf8("# New ShareR script\n\n"), "local", "created in ShareR", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+    const contents = mode === "script" ? "# New ShareR script\n\n" : "";
+    stageBytes(App.stagedStore, path, encodeUtf8(contents), "local", "created in ShareR", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
     logStagingMessages(messages);
-    syncUrlBar({ entry: "" });
+    if (mode === "script") syncUrlBar({ entry: "" });
     updateSelectedEntry();
-    setStatus("Created script " + path + ".");
+    setStatus("Created " + (mode === "script" ? "script " : "data file ") + path + ".");
   }
   closeWorkspaceItemModal();
 }
@@ -8600,18 +8865,34 @@ async function runStagingPipeline(params) {
 
 /* ### Local file add handlers ### */
 
-async function handleLocalFiles(items) {
+async function handleLocalFiles(items, directoryPath) {
   const messages = [];
   for (const { file, relPath } of items) {
+    const destinationPath = directoryPath ? directoryPath + "/" + relPath : relPath;
     try {
       const buffer = await file.arrayBuffer();
-      stageBytes(App.stagedStore, relPath, new Uint8Array(buffer), "local", "your computer", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
+      stageBytes(App.stagedStore, destinationPath, new Uint8Array(buffer), "local", "your computer", messages, CONFIG.MAX_UPLOAD_FILE_BYTES);
     } catch (err) {
-      messages.push({ level: "error", text: "Could not read " + relPath + ": " + (err && err.message ? err.message : err) });
+      messages.push({ level: "error", text: "Could not read " + destinationPath + ": " + (err && err.message ? err.message : err) });
     }
   }
   if (logStagingMessages(messages)) showErrorModal("Some files could not be added. See the execution log for details.");
   updateSelectedEntry();
+}
+
+function chooseFilesForDirectory(directoryPath) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.hidden = true;
+  input.addEventListener("change", () => {
+    const files = Array.from(input.files || []).map((file) => ({ file, relPath: file.name }));
+    document.body.removeChild(input);
+    if (files.length) handleLocalFiles(files, directoryPath);
+  });
+  input.addEventListener("cancel", () => input.remove());
+  document.body.appendChild(input);
+  input.click();
 }
 
 /* ### Event wiring ### */
@@ -8626,6 +8907,7 @@ elLoadModal.addEventListener("click", (e) => { if (e.target === elLoadModal) clo
 
 elNewScriptButton.addEventListener("click", () => openWorkspaceItemModal("script"));
 elStartNewScriptButton.addEventListener("click", () => openWorkspaceItemModal("script"));
+elNewDataFileButton.addEventListener("click", () => openWorkspaceItemModal("data"));
 elNewDirectoryButton.addEventListener("click", () => openWorkspaceItemModal("directory"));
 elCloseWorkspaceItemModalButton.addEventListener("click", closeWorkspaceItemModal);
 elCancelWorkspaceItemButton.addEventListener("click", closeWorkspaceItemModal);
@@ -8711,6 +8993,8 @@ elFolderInput.addEventListener("change", (e) => {
   handleLocalFiles(Array.from(e.target.files).map((f) => ({ file: f, relPath: f.webkitRelativePath || f.name })));
   elFolderInput.value = "";
 });
+
+makeWorkspaceDropTarget(elWorkspaceFileTree, "");
 
 function eventCarriesFiles(event) {
   return event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files");

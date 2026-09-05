@@ -95,7 +95,7 @@ For research teams, that means anyone on the project can run the same analysis t
 
 ShareR always runs the script automatically once it and its files are staged; use the **Run** button to run again manually.
 
-With no URL parameters, ShareR opens an empty browser workspace. Drop files or a project folder into the main area, choose files with the Workspace controls, create a new `.R` or `.Rmd` script, or open the included EMA-CleanR sample. The Workspace tree supports script switching, new directories, and per-file replacement/restoration. The Current Script Inputs list follows supported file paths in the active editor text.
+With no URL parameters, ShareR opens an empty browser workspace. Drop files or a project folder into the main area, choose files with the Workspace controls, create a new script or data file, or open the included EMA-CleanR sample. The Files toolbar and each directory provide contextual create/upload actions. Files and directories can be moved by dragging them to another directory or with the keyboard-friendly Move action, computer files can be dropped directly into a target directory, and any file can be duplicated with an automatically numbered name. The tree also supports script switching and per-file replacement/restoration. The Current Script Inputs list follows supported file paths in the active editor text.
 
 **For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted in the same repository will be loaded automatically.
 
