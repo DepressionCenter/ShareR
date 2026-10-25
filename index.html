@@ -1304,6 +1304,7 @@ with this program. If not, see https://www.gnu.org/licenses/.
     border: 1px solid var(--panel-border);
     padding: 0.2rem 0.4rem;
     text-align: left;
+    white-space: pre-line; /* show line breaks kept inside quoted cells */
   }
   .file-row-text-preview {
     width: 100%;
@@ -4719,8 +4720,22 @@ function splitDelimitedLine(line, delimiter) {
   return cells;
 }
 
+/* Splits text into rows only at line breaks outside quoted cells, so a quoted cell can hold
+   several lines (CRLF, LF or CR). A "" escape toggles twice, leaving the quote state unchanged. */
 function splitTabularRows(text, delimiter) {
-  return text.split(/\r\n|\r|\n/)
+  const lines = [];
+  let start = 0, inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuotes = !inQuotes; }
+    else if (!inQuotes && (c === "\n" || c === "\r")) {
+      lines.push(text.slice(start, i));
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      start = i + 1;
+    }
+  }
+  lines.push(text.slice(start));
+  return lines
     .filter((l, idx, arr) => l !== "" || idx < arr.length - 1)
     .map((line) => splitDelimitedLine(line, delimiter));
 }
