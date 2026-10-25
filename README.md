@@ -38,6 +38,12 @@ For research teams, that means anyone on the project can run the same analysis t
 
 
 ## Quick Start Guide
+**Try a small beginner example**
+
+Follow the [plant-growth walkthrough](examples/plant-growth/walkthrough.md) to run
+two small example files with invented data, one chart, and one summary CSV. No
+extra R packages are needed.
+
 **Run someone else's analysis**
 
 1. Open ShareR with the repository in the URL:
