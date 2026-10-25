@@ -161,7 +161,7 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 + [Eisenberg Family Depression Center](https://depressioncenter.org) [(@DepressionCenter)](https://github.com/DepressionCenter)
 + [Jonas Thiemann](https://github.com/jonpyt) [(@jonpyt)](https://github.com/jonpyt) - Reviewed the prism-code-editor integration and recommended accessibility and DOM-order improvements.
 + [@ub3dqy](https://github.com/ub3dqy)
-
++ [Sumeet Jha](https://github.com/O1sumitkumar) [(@O1sumitkumar)](https://github.com/O1sumitkumar)
 
 #### This work is based in part on the following projects, libraries and/or studies:
 + [webR](https://github.com/r-wasm/webr) - "The statistical language R compiled to WebAssembly via Emscripten, for use in web browsers and Node," by George Stagg and Lionel Henry. Runs the R and R Markdown scripts entirely inside the browser; it is ShareR's execution engine. License: GPL-3.
