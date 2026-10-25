@@ -25,9 +25,10 @@ Use a current browser with WebAssembly enabled and an Internet connection for
 ShareR's initial R-engine download. You do not need an account, an R installation,
 or extra R packages. The script uses only R's built-in functions.
 
-1. Download [plant-growth.R](plant-growth.R) and
-   [plant-growth.csv](plant-growth.csv). On GitHub, open each file and use
-   **Download raw file** to save it. Keep both names unchanged, including the
+1. Download [plant-growth.R](https://raw.githubusercontent.com/DepressionCenter/ShareR/refs/heads/main/examples/plant-growth/plant-growth.R) and
+   [plant-growth.csv](https://raw.githubusercontent.com/DepressionCenter/ShareR/refs/heads/main/examples/plant-growth/plant-growth.csv).
+   These links open the files directly. If your browser displays the text, use
+   **Save Page As** to save each file. Keep both names unchanged, including the
    `.R` and `.csv` extensions.
 2. Open [ShareR without URL parameters](https://code.depressioncenter.org/ShareR/).
    The Report tab should show **Start a ShareR workspace** and the Files area
