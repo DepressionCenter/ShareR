@@ -2544,10 +2544,14 @@ function parseAppParams(search) {
   return { entryRaw, dataValues, repoRaw, refRaw, packagesRaw, reposRaw };
 }
 
+/* Other names parseAppParams also reads for a setting. Saving or clearing a setting removes these
+   too; a leftover old name (e.g. file= or branch=) would otherwise be read again on the next load. */
+const URL_PARAM_ALIASES = { entry: ["script", "file"], ref: ["branch"] };
+
 function syncUrlBar(overrides) {
   const qp = new URLSearchParams(window.location.search);
-  qp.delete("script");
   for (const key of Object.keys(overrides)) {
+    for (const alias of URL_PARAM_ALIASES[key] || []) qp.delete(alias);
     const value = overrides[key];
     if (value) qp.set(key, value); else qp.delete(key);
   }
