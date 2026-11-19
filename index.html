@@ -5149,15 +5149,18 @@ function appendPlotToGallery(bitmap, label, plotIdx) {
    complete, correct dataset from it isn't reliably possible -- an export button there would risk
    silently handing a researcher an incomplete file with no indication anything was cut. */
 
-/* Shared by both format buttons -- disables the clicked button for the moment CSV/XLSX
-   serialization takes (XLSX in particular is async), and routes any failure to the log rather than
-   silently doing nothing, matching handleFileActionClick's build-then-download shape. */
+function showDownloadError(detail, error) {
+  appendLogLine("error", detail + ": " + (error && error.message ? error.message : error));
+  showErrorModal("ShareR could not create the download. View the execution log for details.", "Download Failed");
+}
+
+/* Disable only the table button whose export is being built. */
 async function handleTableDownloadClick(btn, buildBlob, filename) {
   btn.disabled = true;
   try {
     downloadBlob(await buildBlob(), filename);
   } catch (err) {
-    appendLogLine("error", "Could not build " + filename + ": " + (err && err.message ? err.message : err));
+    showDownloadError("Could not build " + filename, err);
   } finally {
     btn.disabled = false;
   }
@@ -5248,7 +5251,7 @@ async function handleFileActionClick(btn, buildBlob, filename) {
   try {
     downloadBlob(await buildBlob(), filename);
   } catch (err) {
-    appendLogLine("error", "Could not build " + filename + ": " + (err && err.message ? err.message : err));
+    showDownloadError("Could not build " + filename, err);
   } finally {
     btn.disabled = false; labelEl.textContent = originalLabel;
   }
@@ -5467,13 +5470,28 @@ function appendFileRowButtons(row, f, ext) {
     const defaultLabel = "Preview";
     const previewTooltip = isTabular ? "Preview first " + CONFIG.CSV_PREVIEW_MAX_ROWS + " rows" : "Preview this file";
     const previewBtn = createFileActionButton(EYE_ICON_SVG, defaultLabel, previewTooltip);
+    const previewLabel = previewBtn.querySelector(".btn-text");
+    const previewId = "output-preview-" + encodeURIComponent(f.path);
     previewBtn.title = previewTooltip;
+    previewBtn.setAttribute("aria-expanded", "false");
     let previewEl = null;
     previewBtn.addEventListener("click", () => {
-      if (previewEl) { previewEl.remove(); previewEl = null; previewBtn.querySelector(".btn-text").textContent = defaultLabel; return; }
-      previewEl = buildPreviewElement(f, ext);
-      row.appendChild(previewEl);
-      previewBtn.querySelector(".btn-text").textContent = "Hide preview";
+      if (previewEl) {
+        previewEl.remove();
+        previewEl = null;
+        previewBtn.removeAttribute("aria-controls");
+      } else {
+        previewEl = buildPreviewElement(f, ext);
+        previewEl.id = previewId;
+        row.appendChild(previewEl);
+        previewBtn.setAttribute("aria-controls", previewId);
+      }
+      const isExpanded = Boolean(previewEl);
+      const action = isExpanded ? "Hide preview" : previewTooltip;
+      previewLabel.textContent = isExpanded ? action : defaultLabel;
+      previewBtn.title = action;
+      previewBtn.setAttribute("aria-label", action);
+      previewBtn.setAttribute("aria-expanded", String(isExpanded));
     });
     row.appendChild(previewBtn);
   }
@@ -6973,7 +6991,7 @@ async function downloadResultsZip() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (err) {
-    appendLogLine("error", "Could not build the results ZIP: " + (err && err.message ? err.message : err));
+    showDownloadError("Could not build the results ZIP", err);
   } finally {
     elDownloadZipButton.disabled = false;
     zipButtonLabel.textContent = previousLabel;
@@ -8532,7 +8550,8 @@ function maybeCloseLoadModalAfterStaging() {
    why those are logged and let the run continue instead. textContent only, never innerHTML:
    message text can echo content pulled from a loaded script/repo (e.g. a YAML field), which must
    never be interpreted as markup. */
-function showErrorModal(message) {
+function showErrorModal(message, title = "Unable to Run Script") {
+  document.getElementById("error-modal-title").textContent = title;
   elErrorModalMessage.textContent = message;
   if (!elErrorModal.open) elErrorModal.showModal();
 }
@@ -9153,8 +9172,7 @@ function exportFilenameFor(kind, extension) {
 
 /* Shared by all five Report/Plots export buttons (Stage 2D.6): shows a transient "Building..."
    state on the clicked button only (the others stay clickable), names the file after the active
-   script plus which tab it came from, and surfaces a build failure the same way
-   downloadResultsZip already does -- into the log, never a silent failure. */
+   script plus which tab it came from. Build failures use the same dialog and log as the results ZIP. */
 async function handleExportButtonClick(button, buildBlob, extension) {
   if (button.disabled) return;
   const labelEl = button.querySelector(".btn-text");
@@ -9165,8 +9183,7 @@ async function handleExportButtonClick(button, buildBlob, extension) {
     const blob = await buildBlob();
     downloadBlob(blob, exportFilenameFor(getActiveTabIndex() === 1 ? "plots" : "report", extension));
   } catch (err) {
-    appendLogLine("error", "Could not build the " + extension.toUpperCase() + " export: " +
-      (err && err.message ? err.message : err));
+    showDownloadError("Could not build the " + extension.toUpperCase() + " export", err);
   } finally {
     button.disabled = false;
     labelEl.textContent = originalLabel;
