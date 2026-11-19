@@ -81,10 +81,9 @@ extra R packages are needed.
 
 #### Putting Up Your Own Copy
 
-1. Fork or copy this repository.
-2. In your repository's **Settings > Pages**, choose to publish from the `main` branch, root folder. Make sure **Enforce HTTPS** is turned on.
-3. Add your organization's name to `CONFIG.TRUSTED_OWNERS` in `index.html`, so that repositories you publish don't show visitors an "unknown author" warning.
-4. That's it. There's no build step, no software to install, nothing to compile. Whatever is in the repository is exactly what gets published.
+1. Fork this repository. Keep `index.html` and `.nojekyll` at the root of the branch you want to publish.
+2. In **Settings > Pages**, select **Deploy from a branch** as the source. Select `main` (or the branch with your copy), choose **/(root)**, and save. Enable **Enforce HTTPS** when available. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
+3. Once deployment finishes, open the site URL under **Settings > Pages** to check that ShareR loads. The repository already contains the files the site needs.
 
 
 ### Requirements and Configuration
@@ -98,6 +97,17 @@ extra R packages are needed.
 | `repo` | `Owner/RepoName` of a public GitHub repository, or a full GitHub/GitLab/Bitbucket repository URL | none, which starts ShareR in upload mode |
 | `ref` | Branch, tag, or commit SHA. `branch` is accepted as an alias. | the repository's default branch (main) |
 | `entry` or `script` | Path to the script to run or the URL to the script (if not using a repository) | auto-detected (when using a repository) |
+| `data` | Input files to load. Use paths relative to the repository or full file URLs. Separate files with commas or repeat `data`. | ShareR looks for files referenced by the entry script in the repository, when available. |
+| `packages` | Extra R package names to install, separated by commas. | ShareR uses its required packages and the ones it detects in staged scripts. |
+| `repos` | Extra URLs where ShareR can download browser-compatible R packages, separated by commas. Use an R package repository, such as an R-universe URL. | ShareR uses its built-in package repositories. |
+
+Replace the placeholder paths and URLs in these query examples with your own.
+
+- Two repository files with a named entry script: `?repo=OWNER/REPO&entry=report.R&data=sample.csv,lookup.csv`
+- A remote file staged as `sample.csv`: `?data=https%3A%2F%2Fexample.org%2Fdownload%3Fid%3D123%26format%3Dcsv%7Csample.csv`
+- Extra packages and a package repository: `?packages=tibble,tidyr&repos=https%3A%2F%2Ftidyverse.r-universe.dev`
+
+The rename form is `data=<file URL>|<filename>`. Encode the value before inserting it into the page URL. This protects characters such as `&` and `#` inside the file URL. ShareR reads commas as list separators and the first pipe as the rename separator after decoding the query. If the file URL itself contains one of those characters, keep it percent-escaped inside the file URL before encoding the query value.
 
 ShareR always runs the script automatically once it and its files are staged; use the **Run** button to run again manually.
 
@@ -105,15 +115,17 @@ With no URL parameters, ShareR opens an empty browser workspace. Drop files or a
 
 **For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted in the same repository will be loaded automatically.
 
-**For maintainers:** all configuration lives in a single frozen `CONFIG` object at the top of `index.html`, including the pinned webR version, the package repository URL, size limits, and the trusted-owner allowlist. There are no secrets, no environment variables, and no build step. Editing `WEBR_VERSION` is the only supported way to upgrade the R engine, and doing so automatically invalidates the old cache.
+**For maintainers:** the `CONFIG` object in `index.html` holds the pinned webR version, webR URLs, package repository URLs, and size limits. A standard deployment uses the values already in the repository.
 
 
 
 ### Privacy, Security, and Accessibility
 
-**Where your data goes:** nowhere but your own computer. Files you open in ShareR are only ever processed inside your browser. They are never uploaded, and there is no server on the other end that could receive them, even if it wanted to. ShareR is built so that it technically cannot send your files out, and it doesn't use analytics or tracking cookies either.
+**Analysis files:** ShareR processes scripts and data in your browser. Its file-opening and analysis code does not upload the files you select.
 
-**What ShareR does reach out for:** when you point it at a GitHub repository, it does contact GitHub to fetch that repository's files, which means GitHub can see which project you're running, the same as it would if you visited that page in your browser. ShareR also downloads the R software itself the first time you use it. None of this ever includes your own data. If you'd rather ShareR make no outside requests at all, you can use it with files from your computer once the R software is already cached.
+**Network requests:** ShareR fetches the R software, packages, and remote scripts or data that you ask it to open.
+
+**Website analytics:** ShareR loads Google Analytics when the page runs on `code.depressioncenter.org`. Copies on other hostnames skip that setup. Analytics setup is separate from analysis-file processing.
 
 **On compliance:** Always check with your IRB and your organization's cybersecurity or information assurance team before using this application with PHI or confidential data.
 
