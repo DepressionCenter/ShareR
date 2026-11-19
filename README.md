@@ -103,6 +103,8 @@ ShareR always runs the script automatically once it and its files are staged; us
 
 With no URL parameters, ShareR opens an empty browser workspace. Drop files or a project folder into the main area, choose files with the Workspace controls, create a new script or data file, or open the included EMA-CleanR sample. The Files toolbar and each directory provide contextual create/upload actions. Files and directories can be moved by dragging them to another directory or with the keyboard-friendly Move action, computer files can be dropped directly into a target directory, and any file can be duplicated with an automatically numbered name. The tree also supports script switching and per-file replacement/restoration. The Current Script Inputs list follows supported file paths in the active editor text.
 
+Use **Download Script** in the editor to keep a copy of your edits before leaving. Your browser may warn you before a reload or tab close while a script has edits. A warning can depend on how you interacted with the page and which browser you use.
+
 **For repository authors:** nothing is required. Optionally, include sample data for your script in your repo (preferably in a `data/` folder). Any files referenced by your script and hosted in the same repository will be loaded automatically.
 
 **For maintainers:** all configuration lives in a single frozen `CONFIG` object at the top of `index.html`, including the pinned webR version, the package repository URL, size limits, and the trusted-owner allowlist. There are no secrets, no environment variables, and no build step. Editing `WEBR_VERSION` is the only supported way to upgrade the R engine, and doing so automatically invalidates the old cache.
