@@ -3975,6 +3975,7 @@ const App = {
   engine: null,
   prismCodeEditor: null,   // cached lazy-loaded module exports (createEditor, languages, etc.)
   sourceEditor: null,      // the live PrismEditor instance mounted in #source-code-lines, if any
+  loadingSourceEditor: false,
   docxLib: null,           // cached lazy-loaded document-export libraries (Stage 2D.6/2D.7)
   pptxGenJsLib: null,
   excelJsLib: null,
@@ -7398,6 +7399,21 @@ function isFileModified(path, bytes) {
   return false;
 }
 
+function warnBeforeLeavingWithEdits(event) {
+  event.preventDefault();
+  event.returnValue = true;
+}
+
+function updateScriptLeaveWarning() {
+  for (const file of App.stagedStore.byPath.values()) {
+    if (file.editorBaseline) {
+      window.addEventListener("beforeunload", warnBeforeLeavingWithEdits);
+      return;
+    }
+  }
+  window.removeEventListener("beforeunload", warnBeforeLeavingWithEdits);
+}
+
 /* Reverts a staged file's bytes (and source/sourceLabel) back to the original snapshot, discarding
    any in-editor edit or carousel Replace. Mutates the live staged entry directly and fires the
    store's onChange itself, the same way the editor's own onUpdate handler already writes edits
@@ -7410,6 +7426,7 @@ function restoreStagedFile(path) {
   if (!original || !staged) return;
   staged.bytes = original.bytes.slice();
   staged.size = staged.bytes.byteLength;
+  delete staged.editorBaseline;
   staged.source = original.source;
   staged.sourceLabel = original.sourceLabel;
   if (App.stagedStore.onChange) App.stagedStore.onChange();
@@ -7904,21 +7921,39 @@ async function renderSourceViewer() {
   const language = /\.rmd$/i.test(staged.path) ? "rmd" : "r";
   const { createEditor } = await getPrismCodeEditor();
   if (path !== App.selectedEntryPath) return; // selection changed while the library was loading
-  if (App.sourceEditor) {
-    App.sourceEditor.setOptions({ language, value: text });
-  } else {
-    App.sourceEditor = createEditor(elSourceCodeLines, {
-      language, value: text, lineNumbers: true, readOnly: false,
-      onUpdate: (value) => {
-        const activeStaged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
-        if (!activeStaged) return;
-        activeStaged.bytes = encodeUtf8(value);
-        activeStaged.size = activeStaged.bytes.byteLength;
-        clearSourceViewerOutputMarkers();
-        updateSourceRestoreButtons();
-        scheduleCurrentScriptInputRender();
-      }
-    });
+  App.loadingSourceEditor = true;
+  try {
+    if (App.sourceEditor) {
+      App.sourceEditor.setOptions({ language, value: text });
+    } else {
+      App.sourceEditor = createEditor(elSourceCodeLines, {
+        language, value: text, lineNumbers: true, readOnly: false,
+        onUpdate: (value) => {
+          if (App.loadingSourceEditor) return;
+          const activeStaged = App.selectedEntryPath ? App.stagedStore.get(App.selectedEntryPath) : null;
+          if (!activeStaged) return;
+          // The editor works with LF even if the imported file used CRLF.
+          const baseline = activeStaged.editorBaseline || {
+            bytes: activeStaged.bytes,
+            text: decodeUtf8(activeStaged.bytes).replace(/\r\n?/g, "\n")
+          };
+          if (value === baseline.text) {
+            delete activeStaged.editorBaseline;
+            activeStaged.bytes = baseline.bytes;
+          } else {
+            activeStaged.editorBaseline = baseline;
+            activeStaged.bytes = encodeUtf8(value);
+          }
+          activeStaged.size = activeStaged.bytes.byteLength;
+          updateScriptLeaveWarning();
+          clearSourceViewerOutputMarkers();
+          updateSourceRestoreButtons();
+          scheduleCurrentScriptInputRender();
+        }
+      });
+    }
+  } finally {
+    App.loadingSourceEditor = false;
   }
 }
 
@@ -9210,7 +9245,10 @@ function bootstrap() {
   }
 
   App.stagedStore = new StagedFileStore();
-  App.stagedStore.onChange = renderStagedFiles;
+  App.stagedStore.onChange = () => {
+    updateScriptLeaveWarning();
+    renderStagedFiles();
+  };
   renderStagedFiles();
 
   const params = parseAppParams(window.location.search);
